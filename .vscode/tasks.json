@@ -1,0 +1,39 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "frontend-build",
+			"type": "shell",
+			"command": "cd frontend && npm run build",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			]
+		},
+		{
+			"label": "frontend-build",
+			"type": "shell",
+			"command": "cd 'C:\\Users\\Amos\\OneDrive\\מסמכים\\CalendAi\\frontend'; npm run build",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			]
+		},
+		{
+			"label": "frontend-build",
+			"type": "shell",
+			"command": "Set-Location 'C:\\Users\\Amos\\OneDrive\\מסמכים\\CalendAi\\frontend'; npm run build",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			]
+		},
+		{
+			"label": "frontend-build",
+			"type": "shell",
+			"command": "Set-Location 'C:\\Users\\Amos\\OneDrive\\מסמכים\\CalendAi\\frontend'; npm run build",
+			"isBackground": false,
+			"problemMatcher": []
+		}
+	]
+}

@@ -1,0 +1,28 @@
+# Render.com deployment configuration
+# הרץ את הפקודה למטה ב-git bash או cmd אחרי שמורידים את git:
+
+services:
+  - type: web
+    name: calendai
+    env: node
+    region: frankfurt  # קרוב לישראל
+    plan: free
+    buildCommand: cd frontend && npm install && npm run build
+    startCommand: cd backend && npm install && node server.js
+    envVars:
+      - key: PORT
+        value: "10000"
+      - key: GEMINI_API_KEY
+        sync: false  # יש להזין ידנית
+      - key: SESSION_SECRET
+        generateValue: true  # יווצר אוטומטית
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: CORS_ORIGIN
+        value: "*"
+      - key: GOOGLE_CALLBACK_URL
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
