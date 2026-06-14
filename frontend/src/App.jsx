@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback } from "react";
 import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2 } from "lucide-react";
 import MonthlyCalendar from "./components/MonthlyCalendar";
 
-const API_BASE = "";
+// API URL - use environment variable or default to Render backend
+const API_BASE = import.meta.env.VITE_API_URL || "";
 
 export default function App() {
   const [inputText, setInputText] = useState("");
