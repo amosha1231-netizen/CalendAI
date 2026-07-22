@@ -15,7 +15,7 @@ const PORT = process.env.PORT || 5000;
 // 1. Middleware
 // ──────────────────────────────────────────────
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || 'http://localhost:5173',
+  origin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : ['http://localhost:5173', 'https://calendai-backend-dfmi.onrender.com'],
   credentials: true
 }));
 app.use(express.json());
@@ -27,11 +27,16 @@ const path = require('path');
 const frontendDist = path.join(__dirname, '..', 'frontend', 'dist');
 app.use(express.static(frontendDist));
 
+const isProduction = process.env.NODE_ENV === 'production' || !!process.env.RENDER;
+
 app.use(session({
   secret: process.env.SESSION_SECRET || 'calendai-secret-key-change-me',
   resave: false,
   saveUninitialized: false,
-  cookie: { secure: false } // set true if using HTTPS
+  cookie: { 
+    secure: isProduction, // true when on Render (HTTPS)
+    sameSite: isProduction ? 'none' : 'lax'
+  }
 }));
 
 app.use(passport.initialize());
@@ -48,9 +53,8 @@ if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET &&
   passport.use(new GoogleStrategy({
     clientID: GOOGLE_CLIENT_ID,
     clientSecret: GOOGLE_CLIENT_SECRET,
-    callbackURL: process.env.GOOGLE_CALLBACK_URL || 'http://localhost:5000/api/auth/google/callback'
+    callbackURL: process.env.GOOGLE_CALLBACK_URL || "http://localhost:5000/api/auth/google/callback"
   }, (accessToken, refreshToken, profile, done) => {
-    // Create or find user – store minimal profile info
     const user = {
       id: profile.id,
       googleId: profile.id,
@@ -63,7 +67,6 @@ if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET &&
 
   passport.serializeUser((user, done) => done(null, user.id));
   passport.deserializeUser((id, done) => {
-    // In production, look up from DB. For now we just re‑create a stub.
     done(null, { id, displayName: 'User', email: '' });
   });
 }
@@ -71,7 +74,6 @@ if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET &&
 // ──────────────────────────────────────────────
 // 3. In‑memory schedule storage per user
 // ──────────────────────────────────────────────
-// Keyed by user id (or 'anonymous')
 const userSchedules = new Map();
 
 function getDefaultSchedule() {
@@ -91,7 +93,6 @@ function getUserId(req) {
   if (req.isAuthenticated && req.isAuthenticated()) {
     return req.user.id || req.user.googleId || 'anonymous';
   }
-  // If Google auth isn't configured, everyone is 'anonymous'
   return 'anonymous';
 }
 
@@ -103,11 +104,106 @@ function getUserSchedule(userId) {
 }
 
 // ──────────────────────────────────────────────
-// 4. AI & Parsing helpers
+// 4. Event expansion helpers
+// ──────────────────────────────────────────────
+
+/**
+ * Expand a recurring event into actual dates within a given month/year.
+ * recurrence can be: "once", "weekly", "monthly", "yearly", "forever"
+ */
+function expandEventForMonth(event, year, month) {
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const results = [];
+  const dayMap = {
+    Sunday: 0, Monday: 1, Tuesday: 2, Wednesday: 3,
+    Thursday: 4, Friday: 5, Saturday: 6
+  };
+  const targetDayOfWeek = dayMap[event.day];
+  if (targetDayOfWeek === undefined) return results;
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    const date = new Date(year, month, d);
+    const dow = date.getDay();
+
+    if (dow !== targetDayOfWeek) continue;
+
+    let include = false;
+
+    switch (event.recurrence || 'weekly') {
+      case 'once': {
+        // For "once" events: calculate the next occurrence of this day
+        const today = new Date();
+        const currentDayOfWeek = today.getDay();
+        let daysUntilTarget = targetDayOfWeek - currentDayOfWeek;
+        if (daysUntilTarget <= 0) daysUntilTarget += 7; // next week
+        const nextDate = new Date(today);
+        nextDate.setDate(today.getDate() + daysUntilTarget);
+        const nextDateStr = `${nextDate.getFullYear()}-${String(nextDate.getMonth()+1).padStart(2,'0')}-${String(nextDate.getDate()).padStart(2,'0')}`;
+        const thisDateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+        if (thisDateStr === nextDateStr) {
+          include = true;
+        }
+        break;
+      }
+      case 'weekly':
+        include = true;
+        break;
+      case 'monthly':
+        // Only the first occurrence of that day in the month (or match by week number)
+        include = true;
+        break;
+      case 'yearly':
+        // Only if it's the same month as the event was created
+        include = true;
+        break;
+      case 'forever':
+        include = true;
+        break;
+      default:
+        include = true;
+    }
+
+    if (include) {
+      results.push({
+        ...event,
+        date: `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`,
+        dayOfMonth: d,
+        dayOfWeek: dow
+      });
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Expand events for a full year, returning all occurrences.
+ */
+function expandEventsForYear(schedule, year) {
+  const allEvents = [];
+  for (let month = 0; month < 12; month++) {
+    for (const dayKey of Object.keys(schedule)) {
+      const dayEvents = schedule[dayKey] || [];
+      for (const event of dayEvents) {
+        const expanded = expandEventForMonth(event, year, month);
+        allEvents.push(...expanded);
+      }
+    }
+  }
+  return allEvents;
+}
+
+// ──────────────────────────────────────────────
+// 5. AI & Parsing helpers
 // ──────────────────────────────────────────────
 let ai = null;
-if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'your_gemini_api_key_here') {
-  ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+try {
+  if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'your_gemini_api_key_here') {
+    ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  }
+} catch (e) {
+  console.error('Failed to initialize Gemini AI:', e.message);
+  // ai stays null -> system falls back to Hebrew parser
 }
 
 function formatTime(hour, minute = '00', meridiem) {
@@ -152,11 +248,8 @@ const hebrewNumbers = {
 };
 
 function parseHebrewSingleTime(text) {
-  // מחפש ביטוי כמו "בשמונה", "בשמונה וחצי", "בשמונה בערב", "שמונה", "שמונה וחצי"
   const singlePatterns = [
-    // "בשמונה וחצי" or "בשמונה" (with ב prefix)
     /ב(שתיים|שלוש|ארבע|חמש|שש|שבע|שמונה|תשע|עשר|אחת|אחד|שנים|ששה|שבעה|שמונה|תשעה|עשרה)/,
-    // "שמונה" (without prefix)
     /\b(שתיים|שלוש|ארבע|חמש|שש|שבע|שמונה|תשע|עשר|אחת|אחד|שנים|ששה|שבעה|תשעה|עשרה)\b/
   ];
 
@@ -179,7 +272,6 @@ function parseHebrewSingleTime(text) {
 }
 
 function parseHebrewTime(text) {
-  // קודם תבניות "משעה X עד Y"
   const rangePatterns = [
     /משעה\s+(שתיים|שלוש|ארבע|חמש|שש|שבע|שמונה|תשע|עשר|אחת|אחד|שנים|ששה|שבעה|שמונה|תשעה|עשרה|ושישה|ושבעה|ושמונה|ותשע|ועשרה|ואחת|ואחד|ושתיים|ושלוש|ושלושה|וארבע|וארבעה|וחמש|וחמישה)\s*(?:וחצי)?\s*(?:ועד|ו?עד|עד)\s*(שתיים|שלוש|ארבע|חמש|שש|שבע|שמונה|תשע|עשר|אחת|אחד|שנים|ששה|שבעה|שמונה|תשעה|עשרה|ושישה|ושבעה|ושמונה|ותשע|ועשרה|ואחת|ואחד|ושתיים|ושלוש|ושלושה|וארבע|וארבעה|וחמש|וחמישה)\s*(?:וחצי)?/g,
     /משעה\s+(שתיים|שלוש|ארבע|חמש|שש|שבע|שמונה|תשע|עשר|אחת|אחד|שנים|ששה|שבעה|שמונה|תשעה|עשרה|ושישה|ושבעה|ושמונה|ותשע|ועשרה|ואחת|ואחד|ושתיים|ושלוש|ושלושה|וארבע|וארבעה|וחמש|וחמישה)\s+(?:ועד|עד)\s+(שתיים|שלוש|ארבע|חמש|שש|שבע|שמונה|תשע|עשר|אחת|אחד|שנים|ששה|שבעה|שמונה|תשעה|עשרה|ושישה|ושבעה|ושמונה|ותשע|ועשרה|ואחת|ואחד|ושתיים|ושלוש|ושלושה|וארבע|וארבעה|וחמש|וחמישה)/g
@@ -203,13 +295,12 @@ function parseHebrewTime(text) {
     }
   }
 
-  // אם לא מצאנו טווח, ננסה שעה בודדת
   const single = parseHebrewSingleTime(text);
   if (single) {
     return {
       startHour: single.hour,
       startMinute: single.minute,
-      endHour: single.hour + 1, // ברירת מחדל: שעה
+      endHour: single.hour + 1,
       endMinute: single.minute,
       isRange: false
     };
@@ -246,10 +337,8 @@ function fallbackParse(text) {
   });
 
   let days = [...new Set(foundDays)];
-  console.log('Found days:', days);
 
   if (days.length === 0) {
-    // Check for standalone "שני" or "ב׳" etc. - treat as recurring Monday
     const standaloneDayMatch = text.match(/\b(שני|ב|ב׳)\b/);
     if (standaloneDayMatch) {
       days = ['Monday'];
@@ -262,16 +351,13 @@ function fallbackParse(text) {
 
   let startHour = 18, startMinute = 0, endHour = 19, endMinute = 0;
 
-  // Try to extract time from Hebrew
   const hebrewTime = parseHebrewTime(text);
   if (hebrewTime) {
     startHour = hebrewTime.startHour;
     startMinute = hebrewTime.startMinute;
-    // If it was a single time (not a range), use same duration logic
     endHour = hebrewTime.endHour;
     endMinute = hebrewTime.endMinute;
   } else {
-    // Try numeric times
     const timeMatches = [...text.matchAll(/(\d{1,2})(?::(\d{2}))?/g)];
     if (timeMatches.length >= 2) {
       startHour = Number(timeMatches[0][1]);
@@ -279,7 +365,6 @@ function fallbackParse(text) {
       endHour = Number(timeMatches[1][1]);
       endMinute = Number(timeMatches[1][2] || 0);
     } else if (timeMatches.length === 1) {
-      // Single numeric time: assume 1 hour duration
       startHour = Number(timeMatches[0][1]);
       startMinute = Number(timeMatches[0][2] || 0);
       endHour = startHour + 1;
@@ -287,22 +372,9 @@ function fallbackParse(text) {
     }
   }
 
-  // Check for "בערב" or "בבוקר" context
-  const isEvening = text.includes('בערב') || text.includes('ערבית');
-  const isMorning = text.includes('בבוקר') || text.includes('בוקר');
-
-  // If hour is <= 12 and it's evening, add 12 for PM
-  if (isEvening && startHour <= 12) {
-    // Already handled by formatTime
-  }
-  if (isMorning && startHour >= 6 && startHour <= 11) {
-    // Already handled by formatTime
-  }
-
   const startTime = formatTime(startHour, startMinute);
   const endTime = formatTime(endHour, endMinute);
 
-  // Extract title: find text after time expressions
   let title = text
     .replace(/^.*?(?:וחצי)?\s*/, '')
     .replace(/^.*?(?:עד\s+[א-ת]+\s*(?:וחצי)?\s*)/, '')
@@ -329,7 +401,6 @@ function fallbackParse(text) {
     title = 'פגישה / אירוע';
   }
 
-  // Return events with isRecurring flag
   return days.map(day => ({
     title,
     day,
@@ -341,11 +412,9 @@ function fallbackParse(text) {
 
 async function parseWithGemini(text) {
   if (!ai) {
-    console.log('No Gemini API key found, running fallback parser.');
     return fallbackParse(text);
   }
 
-  // Improved prompt that understands Hebrew day names as RECURRING (weekly)
   const prompt = `
     You are an intelligent schedule/event parser. Parse the user's text and return JSON.
 
@@ -360,9 +429,28 @@ async function parseWithGemini(text) {
     8. Format times as 'HH:MM AM/PM'.
     9. Set "isRecurring" to true for weekly recurring events.
 
+    ## IMPORTANT: Title and Advice extraction
+    10. Extract a SHORT, CLEAN title (max 3-4 words) from the text. Remove time, day, and location details from the title.
+        Example: "אני צריך להכין משהו לאכול בשלישי בערב - לרביעי בבוקר" → title: "הכנת אוכל לבוקר"
+        Example: "שיעור תורה בכל יום שני אצלי בבית בשמונה וחצי" → title: "שיעור תורה"
+        Example: "פגישה עם יוסי במשרד ביום חמישי בעשר" → title: "פגישה עם יוסי"
+    11. hasAdvice (boolean): Set to true if the user is asking for a recommendation, idea, suggestion, or help managing time.
+        Examples: "תן לי רעיון", "תמצא זמן", "מה להכין", "תעזור לי", "תציע", "המלץ", "איך להתארגן"
+    12. aiAdvice (string): If hasAdvice is true, provide a short, practical recommendation in Hebrew (1-2 sentences max).
+        If hasAdvice is false, set aiAdvice to: "" (empty string).
+        Example: "אפשר להכין מרק עדשים וסלט ירקות - פשוט, מהיר ומספק."
+
     Return an array like:
     [
-      { "title": "Event Name", "day": "Monday", "startTime": "06:00 PM", "endTime": "07:00 PM", "isRecurring": true }
+      {
+        "title": "Short Title",
+        "day": "Monday",
+        "startTime": "06:00 PM",
+        "endTime": "07:00 PM",
+        "isRecurring": true,
+        "hasAdvice": false,
+        "aiAdvice": ""
+      }
     ]
 
     User text:
@@ -370,7 +458,6 @@ async function parseWithGemini(text) {
   `;
 
   try {
-    console.log('Sending to Gemini, prompt:', prompt.substring(0, 120) + '...');
     const response = await ai.models.generateContent({
       model: 'gemini-2.0-flash',
       contents: prompt,
@@ -381,29 +468,52 @@ async function parseWithGemini(text) {
     });
 
     const raw = response.text || '[]';
-    console.log('Gemini raw response:', raw);
     const parsed = JSON.parse(raw);
-    console.log('Gemini parsed:', JSON.stringify(parsed));
     const events = Array.isArray(parsed) ? parsed : [parsed];
 
-    // Ensure isRecurring is set properly
     return events.map(ev => ({
       ...ev,
-      isRecurring: ev.isRecurring !== undefined ? ev.isRecurring : true
+      isRecurring: ev.isRecurring !== undefined ? ev.isRecurring : true,
+      hasAdvice: ev.hasAdvice === true,
+      aiAdvice: ev.aiAdvice || ""
     }));
   } catch (error) {
     console.error('Gemini parse failed, using fallback:', error);
-    const fallbackResult = fallbackParse(text);
-    console.log('Fallback result:', JSON.stringify(fallbackResult));
-    return fallbackResult;
+    return fallbackParseAdvice(text);
   }
 }
 
+function fallbackParseAdvice(text) {
+  // Check if the text contains advice-related keywords
+  const adviceKeywords = ['תן לי','תמצא','תציע','המלץ','עזור','עזרי','רעיון','איך','מה להכין','מה לעשות','תעזור לי'];
+  const hasAdvice = adviceKeywords.some(kw => text.includes(kw));
+
+  let result;
+  try {
+    result = fallbackParse(text);
+  } catch (e) {
+    return [{
+      title: 'פגישה / אירוע',
+      day: 'Today',
+      startTime: '06:00 PM',
+      endTime: '07:00 PM',
+      isRecurring: false,
+      hasAdvice: hasAdvice,
+      aiAdvice: hasAdvice ? 'מומלץ לפצל את המשימה לשלבים קטנים ולהתחיל מוקדם.' : ''
+    }];
+  }
+
+  return result.map(ev => ({
+    ...ev,
+    hasAdvice: hasAdvice,
+    aiAdvice: hasAdvice ? 'מומלץ לפצל את המשימה לשלבים קטנים ולהתחיל מוקדם.' : ''
+  }));
+}
+
 // ──────────────────────────────────────────────
-// 5. Auth routes
+// 6. Auth routes
 // ──────────────────────────────────────────────
 
-// GET /api/auth/google – start Google OAuth
 app.get('/api/auth/google',
   (req, res, next) => {
     if (!GOOGLE_CLIENT_ID || GOOGLE_CLIENT_ID === 'your_google_client_id_here') {
@@ -414,16 +524,13 @@ app.get('/api/auth/google',
   passport.authenticate('google', { scope: ['profile', 'email'] })
 );
 
-// GET /api/auth/google/callback – Google OAuth callback
 app.get('/api/auth/google/callback',
   passport.authenticate('google', { failureRedirect: '/' }),
   (req, res) => {
-    // Successful authentication
     res.redirect(process.env.FRONTEND_URL || 'http://localhost:5173');
   }
 );
 
-// GET /api/auth/me – return current user info
 app.get('/api/auth/me', (req, res) => {
   if (req.isAuthenticated && req.isAuthenticated()) {
     res.json({ user: req.user });
@@ -432,7 +539,6 @@ app.get('/api/auth/me', (req, res) => {
   }
 });
 
-// POST /api/auth/logout – log out
 app.post('/api/auth/logout', (req, res) => {
   req.logout(err => {
     if (err) return res.status(500).json({ error: 'Logout failed' });
@@ -441,12 +547,12 @@ app.post('/api/auth/logout', (req, res) => {
 });
 
 // ──────────────────────────────────────────────
-// 6. Schedule routes
+// 7. Schedule routes
 // ──────────────────────────────────────────────
 
 // POST /api/parse-schedule – parse text and ADD to user's schedule
 app.post('/api/parse-schedule', async (req, res) => {
-  const { text } = req.body;
+  const { text, recurrence } = req.body;
   if (!text || !text.trim()) {
     return res.status(400).json({ error: 'Text input is required.' });
   }
@@ -456,21 +562,21 @@ app.post('/api/parse-schedule', async (req, res) => {
     const userId = getUserId(req);
     const schedule = getUserSchedule(userId);
 
-    // ADD parsed events to the schedule (append, don't replace)
     const addedEvents = [];
     parsedEvents.forEach(event => {
       const day = event.day || 'Today';
+      const eventWithRecurrence = {
+        ...event,
+        recurrence: recurrence || 'weekly'
+      };
       if (schedule[day]) {
-        schedule[day].push(event);
-        addedEvents.push(event);
+        schedule[day].push(eventWithRecurrence);
+        addedEvents.push(eventWithRecurrence);
       } else {
-        schedule['Today'].push(event);
-        addedEvents.push({ ...event, day: 'Today' });
+        schedule['Today'].push(eventWithRecurrence);
+        addedEvents.push({ ...eventWithRecurrence, day: 'Today' });
       }
     });
-
-    console.log(`User ${userId}: added ${addedEvents.length} events. Total now:`, 
-      Object.values(schedule).reduce((sum, arr) => sum + arr.length, 0));
 
     res.json({ 
       events: addedEvents,
@@ -487,6 +593,34 @@ app.get('/api/schedule', (req, res) => {
   const userId = getUserId(req);
   const schedule = getUserSchedule(userId);
   res.json({ schedule });
+});
+
+// GET /api/schedule/expanded – get expanded events for a specific month or year
+app.get('/api/schedule/expanded', (req, res) => {
+  const userId = getUserId(req);
+  const schedule = getUserSchedule(userId);
+  
+  const year = parseInt(req.query.year) || new Date().getFullYear();
+  const view = req.query.view || 'month';
+  
+  if (view === 'year') {
+    const allEvents = expandEventsForYear(schedule, year);
+    return res.json({ events: allEvents, year, view: 'year' });
+  }
+  
+  // Default: month view
+  const month = parseInt(req.query.month) !== undefined ? parseInt(req.query.month) : new Date().getMonth();
+  const monthEvents = [];
+  
+  for (const dayKey of Object.keys(schedule)) {
+    const dayEvents = schedule[dayKey] || [];
+    for (const event of dayEvents) {
+      const expanded = expandEventForMonth(event, year, month);
+      monthEvents.push(...expanded);
+    }
+  }
+  
+  res.json({ events: monthEvents, year, month, view: 'month' });
 });
 
 // DELETE /api/schedule/clear – clear all events for the user
@@ -513,14 +647,14 @@ app.delete('/api/schedule/event', (req, res) => {
 });
 
 // ──────────────────────────────────────────────
-// 7. Health
+// 8. Health
 // ──────────────────────────────────────────────
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, message: 'CalendAI backend is running.' });
 });
 
 // ──────────────────────────────────────────────
-// 8. Serve frontend for any non-API route
+// 9. Serve frontend for any non-API route
 // ──────────────────────────────────────────────
 app.get('*', (req, res) => {
   res.sendFile(path.join(frontendDist, 'index.html'));

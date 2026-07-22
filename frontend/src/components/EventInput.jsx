@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { Loader2, Send } from "lucide-react";
 
+const API_BASE = import.meta.env.VITE_API_URL || "";
+
 export default function EventInput({ onAddEvents }) {
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(false);
@@ -14,7 +16,7 @@ export default function EventInput({ onAddEvents }) {
     setError("");
 
     try {
-      const res = await fetch("http://localhost:5000/api/parse-schedule", {
+      const res = await fetch(`${API_BASE}/api/parse-schedule`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text })

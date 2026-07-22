@@ -1,16 +1,39 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2 } from "lucide-react";
+import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles } from "lucide-react";
 import MonthlyCalendar from "./components/MonthlyCalendar";
 
-// API URL - use environment variable or default to Render backend
+// API URL - use environment variable for production, empty for local dev (uses Vite proxy)
 const API_BASE = import.meta.env.VITE_API_URL || "";
+
+const RECURRENCE_OPTIONS = [
+  { value: "once", label: "חד פעמי" },
+  { value: "weekly", label: "שבועי" },
+  { value: "monthly", label: "חודשי" },
+  { value: "yearly", label: "שנתי" },
+  { value: "forever", label: "לכל החיים" }
+];
+
+const PLACEHOLDER_EXAMPLES = [
+  "לדוגמה: שיעור תורה כל יום שני בשמונה וחצי",
+  "תנסה אותי: תעזור לי למצוא זמן להיות עם הילדים השבוע",
+  "תנסה אותי: תמצא לי זמן לפגישה ביום שלישי בבוקר",
+  "תנסה אותי: תמצא לי זמן להכין אוכל ברביעי לקראת חמישי ותן רעיונות"
+];
+
+const SUGGESTION_CHIPS = [
+  "פגישה ביום שלישי בבוקר",
+  "זמן עם הילדים השבוע",
+  "להכין אוכל לרביעי בערב"
+];
 
 export default function App() {
   const [inputText, setInputText] = useState("");
+  const [recurrence, setRecurrence] = useState("weekly");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   
+  const [placeholder, setPlaceholder] = useState(PLACEHOLDER_EXAMPLES[0]);
   // User state
   const [user, setUser] = useState(null);
   
@@ -36,6 +59,16 @@ export default function App() {
       .catch(() => {});
   }, []);
 
+  // Effect for rotating placeholders
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setPlaceholder(prev => {
+        const nextIndex = (PLACEHOLDER_EXAMPLES.indexOf(prev) + 1) % PLACEHOLDER_EXAMPLES.length;
+        return PLACEHOLDER_EXAMPLES[nextIndex];
+      });
+    }, 3500);
+    return () => clearInterval(interval);
+  }, []);
   // Fetch full schedule on mount
   const fetchSchedule = useCallback(async () => {
     try {
@@ -65,7 +98,7 @@ export default function App() {
       const response = await fetch(`${API_BASE}/api/parse-schedule`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: inputText }),
+        body: JSON.stringify({ text: inputText, recurrence }),
         credentials: "include"
       });
 
@@ -73,7 +106,6 @@ export default function App() {
 
       const data = await response.json();
       
-      // Fetch the full updated schedule (with all accumulated events)
       await fetchSchedule();
       
       setSuccess(`נוספו ${data.events?.length || 0} אירועים חדשים! סה"כ: ${data.totalEvents || 0} אירועים`);
@@ -97,7 +129,6 @@ export default function App() {
         credentials: "include"
       });
       setUser(null);
-      // Reset schedule to default
       setSchedule({
         Sunday: [], Monday: [], Tuesday: [], Wednesday: [],
         Thursday: [], Friday: [], Saturday: [], Today: []
@@ -132,7 +163,6 @@ export default function App() {
         body: JSON.stringify({ day, index }),
         credentials: "include"
       });
-      // Update local state
       setSchedule(prev => {
         const updated = { ...prev };
         if (updated[day]) {
@@ -143,6 +173,14 @@ export default function App() {
     } catch (err) {
       console.error("Remove event failed:", err);
     }
+  };
+
+  const recurrenceLabels = {
+    once: "חד פעמי",
+    weekly: "שבועי",
+    monthly: "חודשי",
+    yearly: "שנתי",
+    forever: "לכל החיים"
   };
 
   // תרגום שמות הימים לעברית
@@ -160,7 +198,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-50 p-6 font-sans select-none" dir="rtl">
       {/* Header */}
-      <header className="max-w-5xl mx-auto mb-8 flex items-center justify-between border-b pb-4">
+      <header className="max-w-6xl mx-auto mb-8 flex items-center justify-between border-b pb-4">
         <div className="flex items-center gap-3">
           <Calendar className="w-8 h-8 text-blue-600" />
           <div>
@@ -199,24 +237,57 @@ export default function App() {
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto grid grid-cols-1 gap-6">
+      <main className="max-w-6xl mx-auto grid grid-cols-1 gap-6">
         {/* Input box */}
         <div className="bg-white p-6 rounded-xl shadow-sm border">
           <h2 className="text-lg font-semibold mb-2 text-slate-800">הזן לוח זמנים בשפה חופשית</h2>
           <p className="text-sm text-slate-400 mb-4">
-            לדוגמה: "בימים א ג ד ה משעה 18:30 עד 20:30 שיעור תורה בכפר יונה"<br />
-            או: "שני בשש בערב שיחת וידאו" (נוסף ליום שני הקיים)
+            לדוגמה: "שיעור תורה בכל יום שני אצלי בבית בשמונה וחצי בלי נדר"
           </p>
           
           <div className="relative">
             <textarea
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
-              className="w-full p-4 border rounded-lg text-slate-800 placeholder-slate-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none text-right"
+              className="w-full p-4 border rounded-lg text-slate-800 placeholder-slate-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none text-right transition-all"
               rows="3"
-              placeholder="כתוב כאן את הלוז שלך..."
+              placeholder={placeholder}
               onKeyDown={(e) => { if (e.key === 'Enter' && e.ctrlKey) handleParse(); }}
             />
+          </div>
+
+          {/* Suggestion Chips */}
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <span className="text-xs text-slate-400">נסה למשל:</span>
+            {SUGGESTION_CHIPS.map((suggestion, index) => (
+              <button
+                key={index}
+                onClick={() => setInputText(suggestion)}
+                className="px-2.5 py-1 text-xs rounded-full border transition bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100 hover:border-slate-300"
+              >
+                {suggestion}
+              </button>
+            ))}
+          </div>
+
+          {/* Recurrence Selector */}
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <span className="text-sm font-medium text-slate-600">תדירות:</span>
+            <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="תדירות">
+              {RECURRENCE_OPTIONS.map(opt => (
+                <button
+                  key={opt.value}
+                  onClick={() => setRecurrence(opt.value)}
+                  className={`px-3 py-1.5 text-sm rounded-lg border transition ${
+                    recurrence === opt.value
+                      ? "bg-blue-600 text-white border-blue-600 shadow-sm"
+                      : "bg-white text-slate-600 border-slate-300 hover:bg-slate-50"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           {error && (
@@ -290,8 +361,18 @@ export default function App() {
                             <Clock className="w-3 h-3 text-slate-400" />
                             <span dir="ltr">{event.startTime} - {event.endTime}</span>
                           </div>
-                          {event.isRecurring && (
-                            <span className="text-[10px] text-blue-500 font-medium">חוזר שבועי</span>
+                          {event.recurrence && (
+                            <span className="text-[10px] text-blue-500 font-medium">
+                              {recurrenceLabels[event.recurrence] || event.recurrence}
+                            </span>
+                          )}
+                          {event.hasAdvice && event.aiAdvice && (
+                            <div className="mt-1.5 bg-amber-50 border border-amber-200 rounded-lg p-2 text-xs text-amber-900">
+                              <div className="flex items-start gap-1.5">
+                                <span className="text-sm">💡</span>
+                                <span className="leading-relaxed">{event.aiAdvice}</span>
+                              </div>
+                            </div>
                           )}
                         </div>
                       ))
