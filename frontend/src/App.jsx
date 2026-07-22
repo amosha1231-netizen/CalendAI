@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles } from "lucide-react";
+import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2 } from "lucide-react";
 import MonthlyCalendar from "./components/MonthlyCalendar";
 
 // API URL - use environment variable for production, empty for local dev (uses Vite proxy)
@@ -14,16 +14,16 @@ const RECURRENCE_OPTIONS = [
 ];
 
 const PLACEHOLDER_EXAMPLES = [
-  "לדוגמה: שיעור תורה כל יום שני בשמונה וחצי",
-  "תנסה אותי: תעזור לי למצוא זמן להיות עם הילדים השבוע",
-  "תנסה אותי: תמצא לי זמן לפגישה ביום שלישי בבוקר",
-  "תנסה אותי: תמצא לי זמן להכין אוכל ברביעי לקראת חמישי ותן רעיונות"
+  "תנסה אותי: תמצא לי זמן להתאמן השבוע 4 פעמים",
+  "תנסה אותי: תפנה לי זמן לפגישה לשיעור תורה בערב",
+  "תנסה אותי: תארגן לי זמן להכין אוכל ברביעי בערב ותן רעיונות",
+  "תנסה אותי: תפנה לי שעתיים לזמן איכות עם המשפחה בסופ\"ש"
 ];
 
 const SUGGESTION_CHIPS = [
-  "פגישה ביום שלישי בבוקר",
-  "זמן עם הילדים השבוע",
-  "להכין אוכל לרביעי בערב"
+  "אימון 4 פעמים השבוע",
+  "שיעור תורה בערב",
+  "זמן איכות עם המשפחה"
 ];
 
 export default function App() {
@@ -34,6 +34,7 @@ export default function App() {
   const [success, setSuccess] = useState("");
   
   const [placeholder, setPlaceholder] = useState(PLACEHOLDER_EXAMPLES[0]);
+  const [placeholderVisible, setPlaceholderVisible] = useState(true);
   // User state
   const [user, setUser] = useState(null);
   
@@ -61,13 +62,18 @@ export default function App() {
 
   // Effect for rotating placeholders
   useEffect(() => {
-    const interval = setInterval(() => {
-      setPlaceholder(prev => {
-        const nextIndex = (PLACEHOLDER_EXAMPLES.indexOf(prev) + 1) % PLACEHOLDER_EXAMPLES.length;
-        return PLACEHOLDER_EXAMPLES[nextIndex];
-      });
+    const intervalId = setInterval(() => {
+      setPlaceholderVisible(false); // Start fade out
+      setTimeout(() => {
+        setPlaceholder(prev => {
+          const nextIndex = (PLACEHOLDER_EXAMPLES.indexOf(prev) + 1) % PLACEHOLDER_EXAMPLES.length;
+          return PLACEHOLDER_EXAMPLES[nextIndex];
+        });
+        setPlaceholderVisible(true); // Start fade in
+      }, 500); // Half a second for fade out transition
     }, 3500);
-    return () => clearInterval(interval);
+
+    return () => clearInterval(intervalId);
   }, []);
   // Fetch full schedule on mount
   const fetchSchedule = useCallback(async () => {
@@ -106,13 +112,32 @@ export default function App() {
 
       const data = await response.json();
       
+      // If user is logged in, try to add events to their Google Calendar
+      if (user && data.events && data.events.length > 0) {
+        for (const event of data.events) {
+          try {
+            await fetch(`${API_BASE}/api/add-to-google-calendar`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ event }),
+              credentials: "include"
+            });
+            // Optionally show a success message for each event added to GCal
+          } catch (gcalError) {
+            console.error("Failed to add event to Google Calendar:", gcalError);
+            // Optionally show a specific error for GCal failure
+          }
+        }
+      }
+      
       await fetchSchedule();
       
       setSuccess(`נוספו ${data.events?.length || 0} אירועים חדשים! סה"כ: ${data.totalEvents || 0} אירועים`);
       setInputText("");
+
     } catch (err) {
-      console.error(err);
-      setError("שגיאה בחיבור ל-Backend. ודא ששרת ה-Node.js שלך דולק.");
+      console.error("Error parsing schedule:", err);
+      setError(err.message || "שגיאה בחיבור לשרת. אנא נסה שוב מאוחר יותר.");
     } finally {
       setLoading(false);
     }
@@ -241,15 +266,12 @@ export default function App() {
         {/* Input box */}
         <div className="bg-white p-6 rounded-xl shadow-sm border">
           <h2 className="text-lg font-semibold mb-2 text-slate-800">הזן לוח זמנים בשפה חופשית</h2>
-          <p className="text-sm text-slate-400 mb-4">
-            לדוגמה: "שיעור תורה בכל יום שני אצלי בבית בשמונה וחצי בלי נדר"
-          </p>
           
-          <div className="relative">
+          <div className="relative mt-4">
             <textarea
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
-              className="w-full p-4 border rounded-lg text-slate-800 placeholder-slate-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none text-right transition-all"
+              className={`w-full p-4 border rounded-lg text-slate-800 placeholder-slate-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none text-right transition-all duration-500 ${placeholderVisible ? 'placeholder-opacity-100' : 'placeholder-opacity-0'}`}
               rows="3"
               placeholder={placeholder}
               onKeyDown={(e) => { if (e.key === 'Enter' && e.ctrlKey) handleParse(); }}
@@ -291,14 +313,15 @@ export default function App() {
           </div>
 
           {error && (
-            <div className="flex items-center gap-2 text-red-600 text-sm mt-2 bg-red-50 p-2 rounded">
+            <div className="flex items-center gap-2 text-red-600 text-sm mt-4 bg-red-50 p-3 rounded-lg border border-red-200">
               <AlertCircle className="w-4 h-4" />
               <span>{error}</span>
             </div>
           )}
 
           {success && (
-            <div className="flex items-center gap-2 text-green-600 text-sm mt-2 bg-green-50 p-2 rounded">
+            <div className="flex items-center gap-2 text-green-700 text-sm mt-4 bg-green-50 p-3 rounded-lg border border-green-200">
+              <Sparkles className="w-4 h-4 text-green-600" />
               <span>{success}</span>
             </div>
           )}
@@ -307,10 +330,13 @@ export default function App() {
             <button
               onClick={handleParse}
               disabled={loading}
-              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg font-medium transition disabled:bg-blue-300"
+              className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg font-medium transition disabled:bg-blue-400 disabled:cursor-not-allowed w-48"
             >
-              <Send className="w-4 h-4 rotate-180" />
-              {loading ? "מנתח נתונים..." : "הוסף ללוח שנה"}
+              {loading ? (
+                <><Loader2 className="w-4 h-4 animate-spin" /> <span>מפענח...</span></>
+              ) : (
+                <><Send className="w-4 h-4 rotate-180" /> <span>הוסף ללוח שנה</span></>
+              )}
             </button>
             
             <button

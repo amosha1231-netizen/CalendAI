@@ -5,6 +5,7 @@ const session = require('express-session');
 const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const { GoogleGenAI } = require('@google/genai');
+const { google } = require('googleapis');
 
 dotenv.config();
 
@@ -62,12 +63,17 @@ if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET &&
       email: profile.emails?.[0]?.value || '',
       photo: profile.photos?.[0]?.value || ''
     };
-    return done(null, user);
+    // Pass accessToken to the session
+    return done(null, { ...user, accessToken });
   }));
 
   passport.serializeUser((user, done) => done(null, user.id));
+
   passport.deserializeUser((id, done) => {
-    done(null, { id, displayName: 'User', email: '' });
+    // This is a simplified deserialize. In a real app, you'd fetch the full user from a DB.
+    // For now, we just pass a placeholder. The full user object with accessToken is in req.session.passport.user
+    const placeholderUser = { id, displayName: 'User', email: '' };
+    done(null, placeholderUser);
   });
 }
 
@@ -521,7 +527,7 @@ app.get('/api/auth/google',
     }
     next();
   },
-  passport.authenticate('google', { scope: ['profile', 'email'] })
+  passport.authenticate('google', { scope: ['profile', 'email', 'https://www.googleapis.com/auth/calendar.events'] })
 );
 
 app.get('/api/auth/google/callback',
@@ -533,7 +539,11 @@ app.get('/api/auth/google/callback',
 
 app.get('/api/auth/me', (req, res) => {
   if (req.isAuthenticated && req.isAuthenticated()) {
-    res.json({ user: req.user });
+    // req.user from deserialize is minimal. The full user is in the session.
+    const sessionUser = req.session.passport?.user;
+    // Don't send the accessToken to the client, but confirm it exists.
+    const userForClient = sessionUser ? { ...sessionUser, hasToken: !!sessionUser.accessToken } : null;
+    res.json({ user: userForClient });
   } else {
     res.json({ user: null });
   }
@@ -542,7 +552,10 @@ app.get('/api/auth/me', (req, res) => {
 app.post('/api/auth/logout', (req, res) => {
   req.logout(err => {
     if (err) return res.status(500).json({ error: 'Logout failed' });
-    res.json({ ok: true });
+    req.session.destroy(err => {
+      if (err) return res.status(500).json({ error: 'Session destruction failed' });
+      res.clearCookie('connect.sid').json({ ok: true });
+    });
   });
 });
 
@@ -585,6 +598,58 @@ app.post('/api/parse-schedule', async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to parse schedule.' });
+  }
+});
+
+// POST /api/add-to-google-calendar - Add an event to the user's Google Calendar
+app.post('/api/add-to-google-calendar', async (req, res) => {
+  if (!req.isAuthenticated() || !req.session.passport?.user?.accessToken) {
+    return res.status(401).json({ error: 'User not authenticated or token missing.' });
+  }
+
+  const { event } = req.body;
+  if (!event || !event.title || !event.startTime || !event.day) {
+    return res.status(400).json({ error: 'Invalid event data provided.' });
+  }
+
+  const accessToken = req.session.passport.user.accessToken;
+  const oauth2Client = new google.auth.OAuth2();
+  oauth2Client.setCredentials({ access_token: accessToken });
+
+  const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+
+  // Simple date calculation for the next occurrence of the event's day
+  const dayMap = { Sunday: 0, Monday: 1, Tuesday: 2, Wednesday: 3, Thursday: 4, Friday: 5, Saturday: 6 };
+  const targetDay = dayMap[event.day];
+  if (targetDay === undefined) {
+    return res.status(400).json({ error: 'Invalid day for Google Calendar event.' });
+  }
+
+  const today = new Date();
+  const eventDate = new Date(today);
+  eventDate.setDate(today.getDate() + (targetDay + 7 - today.getDay()) % 7);
+
+  const [startHour, startMinute] = event.startTime.match(/\d+/g).map(Number);
+  const [endHour, endMinute] = event.endTime.match(/\d+/g).map(Number);
+  const startIsPM = event.startTime.includes('PM');
+  const endIsPM = event.endTime.includes('PM');
+
+  const startDateTime = new Date(eventDate.setHours(startIsPM && startHour !== 12 ? startHour + 12 : startHour, startMinute, 0, 0));
+  const endDateTime = new Date(eventDate.setHours(endIsPM && endHour !== 12 ? endHour + 12 : endHour, endMinute, 0, 0));
+
+  try {
+    const gcalEvent = await calendar.events.insert({
+      calendarId: 'primary',
+      requestBody: {
+        summary: event.title,
+        start: { dateTime: startDateTime.toISOString(), timeZone: 'Asia/Jerusalem' },
+        end: { dateTime: endDateTime.toISOString(), timeZone: 'Asia/Jerusalem' },
+      },
+    });
+    res.json({ ok: true, message: 'Event added to Google Calendar!', link: gcalEvent.data.htmlLink });
+  } catch (error) {
+    console.error('Error adding event to Google Calendar:', error);
+    res.status(500).json({ error: 'Failed to add event to Google Calendar.' });
   }
 });
 
