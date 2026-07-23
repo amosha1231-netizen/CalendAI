@@ -18,20 +18,37 @@ export default function MonthlyCalendar({ schedule }) {
   const [viewMode, setViewMode] = useState('month'); // 'month' or 'year'
   const [expandedEvents, setExpandedEvents] = useState([]);
 
+  // Rolling 12-month window: always show 12 months starting from current month
+  const rollingStartMonth = today.getMonth();
+  const rollingStartYear = today.getFullYear();
+
   const fetchExpandedEvents = useCallback(async () => {
     try {
-      const params = viewMode === 'year'
-        ? `year=${currentYear}&view=year`
-        : `year=${currentYear}&month=${currentMonth}&view=month`;
-      const res = await fetch(`${API_BASE}/api/schedule/expanded?${params}`, { credentials: "include" });
-      if (res.ok) {
-        const data = await res.json();
-        setExpandedEvents(data.events || []);
+      if (viewMode === 'year') {
+        // For year view, fetch all 12 rolling months
+        const allEvents = [];
+        for (let offset = 0; offset < 12; offset++) {
+          const m = (rollingStartMonth + offset) % 12;
+          const y = rollingStartYear + Math.floor((rollingStartMonth + offset) / 12);
+          const res = await fetch(`${API_BASE}/api/schedule/expanded?year=${y}&month=${m}&view=month`, { credentials: "include" });
+          if (res.ok) {
+            const data = await res.json();
+            allEvents.push(...(data.events || []));
+          }
+        }
+        setExpandedEvents(allEvents);
+      } else {
+        const params = `year=${currentYear}&month=${currentMonth}&view=month`;
+        const res = await fetch(`${API_BASE}/api/schedule/expanded?${params}`, { credentials: "include" });
+        if (res.ok) {
+          const data = await res.json();
+          setExpandedEvents(data.events || []);
+        }
       }
     } catch (err) {
       console.error("Failed to fetch expanded events:", err);
     }
-  }, [currentYear, currentMonth, viewMode]);
+  }, [currentYear, currentMonth, viewMode, rollingStartMonth, rollingStartYear]);
 
   useEffect(() => {
     fetchExpandedEvents();
@@ -135,70 +152,66 @@ export default function MonthlyCalendar({ schedule }) {
     );
   };
 
-  // ─── Year View ───
+  // ─── Year View (rolling 12 months from current month) ───
   const renderYearView = () => {
     const months = [];
-    for (let m = 0; m < 12; m++) {
-      const firstDay = new Date(currentYear, m, 1).getDay();
-      const daysInMonth = new Date(currentYear, m + 1, 0).getDate();
+    for (let offset = 0; offset < 12; offset++) {
+      const m = (rollingStartMonth + offset) % 12;
+      const y = rollingStartYear + Math.floor((rollingStartMonth + offset) / 12);
+      const firstDay = new Date(y, m, 1).getDay();
+      const daysInMonth = new Date(y, m + 1, 0).getDate();
 
       const cells = [];
       for (let i = 0; i < firstDay; i++) cells.push(null);
       for (let i = 1; i <= daysInMonth; i++) cells.push(i);
 
-      months.push({ index: m, cells, daysInMonth });
+      months.push({ index: m, year: y, cells, daysInMonth });
     }
 
     return (
       <div>
-        {/* Year navigation */}
-        <div className="flex items-center justify-between mb-6">
-          <button onClick={prevYear} className="p-2 hover:bg-slate-100 rounded-lg transition">
-            <ChevronRight className="w-5 h-5 text-slate-600" />
-          </button>
-          <h3 className="text-xl font-bold text-slate-700">{currentYear}</h3>
-          <button onClick={nextYear} className="p-2 hover:bg-slate-100 rounded-lg transition">
-            <ChevronLeft className="w-5 h-5 text-slate-600" />
-          </button>
-        </div>
+        <p className="text-center text-sm text-slate-400 mb-2">תצוגה מתגלגלת - 12 חודשים קדימה מהחודש הנוכחי</p>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {months.map(({ index: m, cells }) => (
-            <div key={m} className="border rounded-xl bg-white p-3 shadow-sm">
-              <h4 className="font-bold text-slate-700 text-center mb-2 border-b pb-1">
-                {monthNames[m]} {currentYear}
-              </h4>
-              <div className="grid grid-cols-7 gap-0.5">
-                {dayNames.map(name => (
-                  <div key={name} className="text-center text-[10px] font-bold text-slate-400 py-1">
-                    {name}
-                  </div>
-                ))}
-                {cells.map((dayNum, idx) => {
-                  if (!dayNum) {
-                    return <div key={`empty-${idx}`} className="text-center p-1"></div>;
-                  }
-                  const isToday = dayNum === today.getDate() && m === today.getMonth() && currentYear === today.getFullYear();
-                  const dayEvents = getEventsForDate(currentYear, m, dayNum);
-                  const hasEvents = dayEvents.length > 0;
-
-                  return (
-                    <div 
-                      key={`day-${dayNum}`}
-                      className={`text-center p-1 text-xs rounded ${
-                        isToday ? 'bg-indigo-600 text-white font-bold' : 
-                        hasEvents ? 'bg-indigo-100 text-indigo-800 font-medium' : 'text-slate-600'
-                      }`}
-                      title={hasEvents ? dayEvents.map(e => e.title).join(', ') : ''}
-                    >
-                      {dayNum}
-                      {hasEvents && <div className="w-1 h-1 bg-indigo-500 rounded-full mx-auto mt-0.5"></div>}
+          {months.map(({ index: m, year: y, cells }) => {
+            const isCurrentMonth = y === today.getFullYear() && m === today.getMonth();
+            return (
+              <div key={`${y}-${m}`} className={`border rounded-xl bg-white p-3 shadow-sm ${isCurrentMonth ? 'ring-2 ring-indigo-400' : ''}`}>
+                <h4 className="font-bold text-slate-700 text-center mb-2 border-b pb-1">
+                  {monthNames[m]} {y}
+                </h4>
+                <div className="grid grid-cols-7 gap-0.5">
+                  {dayNames.map(name => (
+                    <div key={name} className="text-center text-[10px] font-bold text-slate-400 py-1">
+                      {name}
                     </div>
-                  );
-                })}
+                  ))}
+                  {cells.map((dayNum, idx) => {
+                    if (!dayNum) {
+                      return <div key={`empty-${idx}`} className="text-center p-1"></div>;
+                    }
+                    const isToday = dayNum === today.getDate() && m === today.getMonth() && y === today.getFullYear();
+                    const dayEvents = getEventsForDate(y, m, dayNum);
+                    const hasEvents = dayEvents.length > 0;
+
+                    return (
+                      <div 
+                        key={`day-${dayNum}`}
+                        className={`text-center p-1 text-xs rounded ${
+                          isToday ? 'bg-indigo-600 text-white font-bold' : 
+                          hasEvents ? 'bg-indigo-100 text-indigo-800 font-medium' : 'text-slate-600'
+                        }`}
+                        title={hasEvents ? dayEvents.map(e => e.title).join(', ') : ''}
+                      >
+                        {dayNum}
+                        {hasEvents && <div className="w-1 h-1 bg-indigo-500 rounded-full mx-auto mt-0.5"></div>}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     );

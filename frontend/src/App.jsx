@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2 } from "lucide-react";
+import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle } from "lucide-react";
 import MonthlyCalendar from "./components/MonthlyCalendar";
 
 // API URL - use environment variable for production, empty for local dev (uses Vite proxy)
@@ -14,16 +14,23 @@ const RECURRENCE_OPTIONS = [
 ];
 
 const PLACEHOLDER_EXAMPLES = [
-  "תנסה אותי: תמצא לי זמן להתאמן השבוע 4 פעמים",
-  "תנסה אותי: תפנה לי זמן לפגישה לשיעור תורה בערב",
-  "תנסה אותי: תארגן לי זמן להכין אוכל ברביעי בערב ותן רעיונות",
-  "תנסה אותי: תפנה לי שעתיים לזמן איכות עם המשפחה בסופ\"ש"
+  "תפנה לי זמן איכות עם המשפחה בסופ\"ש",
+  "תמצא לי זמן לשיעור תורה בשני בערב",
+  "תזמן לי 3 אימונים השבוע בבוקר",
+  "תארגן לי זמן להכין אוכל ברביעי בערב",
+  "קבע לי פגישת עבודה ביום שני ב-10:00",
+  "תזכיר לי לשלם חשבונות בראשון בערב",
+  "תארגן לי זמן ללימודים פעמיים השבוע"
 ];
 
 const SUGGESTION_CHIPS = [
-  "אימון 4 פעמים השבוע",
-  "שיעור תורה בערב",
-  "זמן איכות עם המשפחה"
+  "זמן איכות עם המשפחה",
+  "שיעור תורה בשני בערב",
+  "3 אימונים השבוע בבוקר",
+  "הכנת אוכל ברביעי בערב",
+  "פגישת עבודה ביום שני",
+  "תשלום חשבונות",
+  "לימודים פעמיים השבוע"
 ];
 
 export default function App() {
@@ -34,6 +41,7 @@ export default function App() {
   const [success, setSuccess] = useState("");
   
   const [placeholderIndex, setPlaceholderIndex] = useState(0);
+  const [conflicts, setConflicts] = useState([]);
   // User state
   const [user, setUser] = useState(null);
   
@@ -59,13 +67,28 @@ export default function App() {
       .catch(() => {});
   }, []);
 
-  // Effect for rotating placeholders
+  // Effect for rotating placeholders - infinite vertical roll
+  const [isTransitioning, setIsTransitioning] = useState(false);
+  const displayedPlaceholders = [...PLACEHOLDER_EXAMPLES, PLACEHOLDER_EXAMPLES[0], PLACEHOLDER_EXAMPLES[1]];
+  
   useEffect(() => {
     const intervalId = setInterval(() => {
-      setPlaceholderIndex(prevIndex => (prevIndex + 1) % PLACEHOLDER_EXAMPLES.length);
+      setIsTransitioning(true);
+      setPlaceholderIndex(prevIndex => prevIndex + 1);
     }, 3500);
     return () => clearInterval(intervalId);
   }, []);
+
+  // When we reach the duplicate items, reset without transition
+  useEffect(() => {
+    if (placeholderIndex >= PLACEHOLDER_EXAMPLES.length) {
+      const timeoutId = setTimeout(() => {
+        setIsTransitioning(false);
+        setPlaceholderIndex(0);
+      }, 500);
+      return () => clearTimeout(timeoutId);
+    }
+  }, [placeholderIndex]);
   // Fetch full schedule on mount
   const fetchSchedule = useCallback(async () => {
     try {
@@ -103,22 +126,30 @@ export default function App() {
 
       const data = await response.json();
       
-      // If user is logged in, try to add events to their Google Calendar
+      // If user is logged in, try to add events to their Google Calendar in parallel
       if (user && data.events && data.events.length > 0) {
-        for (const event of data.events) {
-          try {
-            await fetch(`${API_BASE}/api/add-to-google-calendar`, {
+        const results = await Promise.allSettled(
+          data.events.map(event =>
+            fetch(`${API_BASE}/api/add-to-google-calendar`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ event }),
               credentials: "include"
-            });
-            // Optionally show a success message for each event added to GCal
-          } catch (gcalError) {
-            console.error("Failed to add event to Google Calendar:", gcalError);
-            // Optionally show a specific error for GCal failure
-          }
+            })
+          )
+        );
+        const succeeded = results.filter(r => r.status === 'fulfilled' && r.value.ok).length;
+        const failed = results.filter(r => r.status === 'rejected' || !r.value?.ok).length;
+        if (failed > 0) {
+          console.error(`${failed} event(s) failed to sync to Google Calendar`);
         }
+      }
+      
+      // Check for conflicts
+      if (data.conflicts && data.conflicts.length > 0) {
+        setConflicts(data.conflicts);
+      } else {
+        setConflicts([]);
       }
       
       await fetchSchedule();
@@ -258,21 +289,24 @@ export default function App() {
         <div className="bg-white p-4 sm:p-6 rounded-xl shadow-sm border">
           <h2 className="text-lg font-semibold mb-2 text-slate-800">הזן לוח זמנים בשפה חופשית</h2>
           
-          <div className="relative mt-4" style={{ minHeight: '96px' }}>
+          <div className="relative mt-4" style={{ minHeight: '120px' }}>
             <textarea
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
               className="w-full p-4 border rounded-lg text-slate-800 placeholder-transparent focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none text-right"
-              rows="3"
+              rows="4"
               placeholder=" "
               onKeyDown={(e) => { if (e.key === 'Enter' && e.ctrlKey) handleParse(); }}
             />
-            {/* Custom animated placeholder */}
+            {/* Custom animated placeholder - infinite vertical roll */}
             {!inputText && (
-              <div className="absolute top-4 right-4 h-6 pointer-events-none overflow-hidden text-slate-400">
-                <div className="transition-transform duration-500 ease-in-out" style={{ transform: `translateY(-${placeholderIndex * 1.5}rem)` }}>
-                  {PLACEHOLDER_EXAMPLES.map((text, index) => (
-                    <div key={index} className="h-6 leading-6">{text}</div>
+              <div className="absolute top-4 right-4 pointer-events-none overflow-hidden text-slate-400" style={{ height: '1.75rem' }}>
+                <div
+                  className={`${isTransitioning ? 'transition-transform duration-500 ease-in-out' : ''}`}
+                  style={{ transform: `translateY(-${placeholderIndex * 1.75}rem)` }}
+                >
+                  {displayedPlaceholders.map((text, index) => (
+                    <div key={index} className="h-7 leading-7 whitespace-nowrap text-right" style={{ direction: 'rtl' }}>{text}</div>
                   ))}
                 </div>
               </div>
@@ -324,6 +358,44 @@ export default function App() {
             <div className="flex items-center gap-2 text-green-700 text-sm mt-4 bg-green-50 p-3 rounded-lg border border-green-200">
               <Sparkles className="w-4 h-4 text-green-600" />
               <span>{success}</span>
+            </div>
+          )}
+
+          {/* Conflict warnings */}
+          {conflicts.length > 0 && (
+            <div className="mt-4 space-y-3">
+              {conflicts.map((conflict, idx) => (
+                <div key={idx} className="bg-amber-50 border border-amber-300 rounded-lg p-4">
+                  <div className="flex items-center gap-2 text-amber-800 font-semibold mb-2">
+                    <AlertTriangle className="w-5 h-5 text-amber-600" />
+                    <span>⚠️ התנגשות זמנים ב{dayTranslations[conflict.day] || conflict.day}</span>
+                  </div>
+                  <p className="text-sm text-amber-700 mb-2">
+                    האירוע "{conflict.event.title}" ({conflict.event.startTime} - {conflict.event.endTime}) חופף לאירועים קיימים:
+                  </p>
+                  <ul className="text-sm text-amber-800 list-disc list-inside mb-3 space-y-1">
+                    {conflict.conflicts.map((c, i) => (
+                      <li key={i}>{c.title} ({c.startTime} - {c.endTime})</li>
+                    ))}
+                  </ul>
+                  {conflict.suggestions.length > 0 && (
+                    <div className="mt-2">
+                      <p className="text-sm font-medium text-amber-800 mb-1">🕒 שעות פנויות מומלצות באותו יום:</p>
+                      <div className="flex flex-wrap gap-2">
+                        {conflict.suggestions.map((slot, i) => (
+                          <button
+                            key={i}
+                            onClick={() => setInputText(`שנה שעה ל${slot.startTime}-${slot.endTime} ב${conflict.day}`)}
+                            className="px-3 py-1.5 text-xs rounded-lg border border-amber-300 bg-white text-amber-800 hover:bg-amber-100 transition"
+                          >
+                            {slot.startTime} - {slot.endTime}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           )}
 
@@ -418,7 +490,7 @@ export default function App() {
 
       {/* Footer with build time */}
       <footer className="max-w-6xl mx-auto mt-12 text-center text-xs text-slate-400 border-t pt-4">
-        <p>גרסה מעודכנת מתאריך: {new Date(import.meta.env.VITE_BUILD_TIME).toLocaleString('he-IL')}</p>
+        <p>גרסה מעודכנת: 23/07/2026</p>
       </footer>
     </div>
   );

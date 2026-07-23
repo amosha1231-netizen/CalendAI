@@ -229,9 +229,6 @@ function formatTime(hour, minute = '00', meridiem) {
   if (h >= 12) {
     displayHour = h === 12 ? 12 : h - 12;
     suffix = 'PM';
-  } else if (h >= 6 && h <= 11) {
-    displayHour = h;
-    suffix = 'PM';
   } else {
     displayHour = h === 0 ? 12 : h;
     suffix = 'AM';
@@ -560,7 +557,110 @@ app.post('/api/auth/logout', (req, res) => {
 });
 
 // ──────────────────────────────────────────────
-// 7. Schedule routes
+// 7. Conflict detection helper
+// ──────────────────────────────────────────────
+
+/**
+ * Parse a time string like "06:00 PM" into total minutes from midnight.
+ */
+function parseTimeToMinutes(timeStr) {
+  if (!timeStr) return null;
+  const match = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+  if (!match) return null;
+  let hours = parseInt(match[1], 10);
+  const minutes = parseInt(match[2], 10);
+  const meridiem = match[3].toUpperCase();
+  if (meridiem === 'PM' && hours !== 12) hours += 12;
+  if (meridiem === 'AM' && hours === 12) hours = 0;
+  return hours * 60 + minutes;
+}
+
+/**
+ * Check if a new event conflicts with existing events on the same day.
+ * Returns conflicts array with suggested alternative free slots.
+ */
+function detectConflicts(newEvent, existingEvents) {
+  const newStart = parseTimeToMinutes(newEvent.startTime);
+  const newEnd = parseTimeToMinutes(newEvent.endTime);
+  if (newStart === null || newEnd === null) return { hasConflict: false, conflicts: [], suggestions: [] };
+
+  const conflicts = [];
+  for (const existing of existingEvents) {
+    const exStart = parseTimeToMinutes(existing.startTime);
+    const exEnd = parseTimeToMinutes(existing.endTime);
+    if (exStart === null || exEnd === null) continue;
+
+    // Check overlap: new event starts before existing ends AND ends after existing starts
+    if (newStart < exEnd && newEnd > exStart) {
+      conflicts.push({
+        title: existing.title,
+        startTime: existing.startTime,
+        endTime: existing.endTime
+      });
+    }
+  }
+
+  // Find free slots on the same day (assuming day starts at 06:00 and ends at 23:00)
+  const suggestions = [];
+  if (conflicts.length > 0) {
+    const busySlots = existingEvents
+      .map(e => ({
+        start: parseTimeToMinutes(e.startTime),
+        end: parseTimeToMinutes(e.endTime)
+      }))
+      .filter(s => s.start !== null && s.end !== null)
+      .sort((a, b) => a.start - b.start);
+
+    const dayStart = 6 * 60; // 06:00
+    const dayEnd = 23 * 60;  // 23:00
+    const duration = newEnd - newStart;
+
+    let cursor = dayStart;
+    for (const slot of busySlots) {
+      if (cursor + duration <= slot.start) {
+        const hours = Math.floor(cursor / 60);
+        const mins = cursor % 60;
+        const endHours = Math.floor((cursor + duration) / 60);
+        const endMins = (cursor + duration) % 60;
+        const ampm = hours >= 12 ? 'PM' : 'AM';
+        const endAmpm = endHours >= 12 ? 'PM' : 'AM';
+        const displayH = hours > 12 ? hours - 12 : (hours === 0 ? 12 : hours);
+        const displayEndH = endHours > 12 ? endHours - 12 : (endHours === 0 ? 12 : endHours);
+        suggestions.push({
+          startTime: `${String(displayH).padStart(2, '0')}:${String(mins).padStart(2, '0')} ${ampm}`,
+          endTime: `${String(displayEndH).padStart(2, '0')}:${String(endMins).padStart(2, '0')} ${endAmpm}`
+        });
+        if (suggestions.length >= 2) break;
+      }
+      cursor = Math.max(cursor, slot.end);
+    }
+
+    // If no slot found before busy slots, try after the last one
+    if (suggestions.length === 0 && cursor + duration <= dayEnd) {
+      const hours = Math.floor(cursor / 60);
+      const mins = cursor % 60;
+      const endHours = Math.floor((cursor + duration) / 60);
+      const endMins = (cursor + duration) % 60;
+      const ampm = hours >= 12 ? 'PM' : 'AM';
+      const endAmpm = endHours >= 12 ? 'PM' : 'AM';
+      const displayH = hours > 12 ? hours - 12 : (hours === 0 ? 12 : hours);
+      const displayEndH = endHours > 12 ? endHours - 12 : (endHours === 0 ? 12 : endHours);
+      suggestions.push({
+        startTime: `${String(displayH).padStart(2, '0')}:${String(mins).padStart(2, '0')} ${ampm}`,
+        endTime: `${String(displayEndH).padStart(2, '0')}:${String(endMins).padStart(2, '0')} ${endAmpm}`
+      });
+    }
+  }
+
+  return {
+    hasConflict: conflicts.length > 0,
+    conflicts,
+    suggestions
+  };
+}
+
+// ──────────────────────────────────────────────
+// 8. Schedule routes
 // ──────────────────────────────────────────────
 
 // POST /api/parse-schedule – parse text and ADD to user's schedule
@@ -576,12 +676,28 @@ app.post('/api/parse-schedule', async (req, res) => {
     const schedule = getUserSchedule(userId);
 
     const addedEvents = [];
+    const conflictWarnings = [];
+
     parsedEvents.forEach(event => {
       const day = event.day || 'Today';
       const eventWithRecurrence = {
         ...event,
         recurrence: recurrence || 'weekly'
       };
+
+      // Check for conflicts with existing events on the same day
+      if (schedule[day] && schedule[day].length > 0) {
+        const conflictResult = detectConflicts(eventWithRecurrence, schedule[day]);
+        if (conflictResult.hasConflict) {
+          conflictWarnings.push({
+            day,
+            event: eventWithRecurrence,
+            conflicts: conflictResult.conflicts,
+            suggestions: conflictResult.suggestions
+          });
+        }
+      }
+
       if (schedule[day]) {
         schedule[day].push(eventWithRecurrence);
         addedEvents.push(eventWithRecurrence);
@@ -593,7 +709,8 @@ app.post('/api/parse-schedule', async (req, res) => {
 
     res.json({ 
       events: addedEvents,
-      totalEvents: Object.values(schedule).reduce((sum, arr) => sum + arr.length, 0)
+      totalEvents: Object.values(schedule).reduce((sum, arr) => sum + arr.length, 0),
+      conflicts: conflictWarnings.length > 0 ? conflictWarnings : undefined
     });
   } catch (error) {
     console.error(error);
