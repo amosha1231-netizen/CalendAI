@@ -243,15 +243,15 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 p-4 sm:p-6 font-sans relative" dir="rtl">
-      <span className="text-xs text-gray-400 absolute top-2 right-4 select-none">בס"ד</span>
+    <div className="min-h-screen bg-slate-50 p-4 sm:p-6 font-sans" dir="rtl">
       {/* Header */}
-      <header className="max-w-6xl mx-auto mb-6 sm:mb-8 flex flex-wrap items-center justify-between border-b pb-4 gap-4">
+      <header className="max-w-6xl mx-auto mb-6 sm:mb-8 flex items-center justify-between border-b pb-4">
         <div className="flex items-center gap-3">
-          <Calendar className="w-8 h-8 text-blue-600" />
+          <Calendar className="w-8 h-8 text-blue-600 shrink-0" />
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">CalendAI</h1>
-            <p className="text-sm text-slate-500">פירוש לוח זמנים חכם באמצעות AI</p>
+            <span className="text-[11px] text-gray-400 tracking-wider mb-0.5 block leading-none">בס"ד</span>
+            <h1 className="text-2xl font-bold text-slate-900 leading-tight">CalendAI</h1>
+            <p className="text-sm text-slate-500 leading-snug">העוזר האישי שלך לניהול הזמן</p>
           </div>
         </div>
         
@@ -314,14 +314,14 @@ export default function App() {
             )}
           </div>
 
-          {/* Suggestion Chips */}
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <span className="text-xs text-slate-400">נסה למשל:</span>
+          {/* Suggestion Chips - horizontal scroll */}
+          <div className="mt-3 flex items-center gap-2 overflow-x-auto whitespace-nowrap py-1" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+            <span className="text-xs text-slate-400 shrink-0">נסה למשל:</span>
             {SUGGESTION_CHIPS.map((suggestion, index) => (
               <button
                 key={index}
                 onClick={() => setInputText(suggestion)}
-                className="px-2.5 py-1 text-xs rounded-full border transition bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100 hover:border-slate-300"
+                className="px-2.5 py-1 text-xs rounded-full border transition bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100 hover:border-slate-300 shrink-0"
               >
                 {suggestion}
               </button>
@@ -425,7 +425,7 @@ export default function App() {
 
         {/* Weekly Schedule */}
         <div className="bg-white p-4 sm:p-6 rounded-xl shadow-sm border">
-          <h2 className="text-xl font-bold mb-6 text-slate-800 border-b pb-2">הלו"ז השבועי שלך (Weekly Schedule)</h2>
+          <h2 className="text-xl font-bold mb-6 text-slate-800 border-b pb-2">הלו"ז השבועי שלך</h2>
           
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {Object.keys(schedule).map((dayKey) => {
