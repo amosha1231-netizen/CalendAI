@@ -6,11 +6,53 @@ const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const { GoogleGenAI } = require('@google/genai');
 const { google } = require('googleapis');
+const fs = require('fs');
+const path = require('path');
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+
+// ──────────────────────────────────────────────
+// Persistent file-based storage
+// ──────────────────────────────────────────────
+const DATA_DIR = path.join(__dirname, 'data');
+const SCHEDULES_FILE = path.join(DATA_DIR, 'schedules.json');
+
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+
+function loadSchedules() {
+  try {
+    if (fs.existsSync(SCHEDULES_FILE)) {
+      const raw = fs.readFileSync(SCHEDULES_FILE, 'utf-8');
+      const data = JSON.parse(raw);
+      // Convert plain objects back to Map
+      const map = new Map();
+      for (const [key, value] of Object.entries(data)) {
+        map.set(key, value);
+      }
+      return map;
+    }
+  } catch (err) {
+    console.error('Failed to load schedules from file:', err.message);
+  }
+  return new Map();
+}
+
+function saveSchedules(map) {
+  try {
+    const obj = {};
+    for (const [key, value] of map.entries()) {
+      obj[key] = value;
+    }
+    fs.writeFileSync(SCHEDULES_FILE, JSON.stringify(obj, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Failed to save schedules to file:', err.message);
+  }
+}
 
 // ──────────────────────────────────────────────
 // 1. Middleware
