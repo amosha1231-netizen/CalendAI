@@ -33,8 +33,7 @@ export default function App() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   
-  const [placeholder, setPlaceholder] = useState(PLACEHOLDER_EXAMPLES[0]);
-  const [placeholderVisible, setPlaceholderVisible] = useState(true);
+  const [placeholderIndex, setPlaceholderIndex] = useState(0);
   // User state
   const [user, setUser] = useState(null);
   
@@ -63,16 +62,8 @@ export default function App() {
   // Effect for rotating placeholders
   useEffect(() => {
     const intervalId = setInterval(() => {
-      setPlaceholderVisible(false); // Start fade out
-      setTimeout(() => {
-        setPlaceholder(prev => {
-          const nextIndex = (PLACEHOLDER_EXAMPLES.indexOf(prev) + 1) % PLACEHOLDER_EXAMPLES.length;
-          return PLACEHOLDER_EXAMPLES[nextIndex];
-        });
-        setPlaceholderVisible(true); // Start fade in
-      }, 500); // Half a second for fade out transition
+      setPlaceholderIndex(prevIndex => (prevIndex + 1) % PLACEHOLDER_EXAMPLES.length);
     }, 3500);
-
     return () => clearInterval(intervalId);
   }, []);
   // Fetch full schedule on mount
@@ -221,9 +212,9 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 p-6 font-sans select-none" dir="rtl">
+    <div className="min-h-screen bg-slate-50 p-4 sm:p-6 font-sans select-none" dir="rtl">
       {/* Header */}
-      <header className="max-w-6xl mx-auto mb-8 flex items-center justify-between border-b pb-4">
+      <header className="max-w-6xl mx-auto mb-6 sm:mb-8 flex flex-wrap items-center justify-between border-b pb-4 gap-4">
         <div className="flex items-center gap-3">
           <Calendar className="w-8 h-8 text-blue-600" />
           <div>
@@ -264,18 +255,28 @@ export default function App() {
 
       <main className="max-w-6xl mx-auto grid grid-cols-1 gap-6">
         {/* Input box */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border">
+        <div className="bg-white p-4 sm:p-6 rounded-xl shadow-sm border">
           <h2 className="text-lg font-semibold mb-2 text-slate-800">הזן לוח זמנים בשפה חופשית</h2>
           
-          <div className="relative mt-4">
+          <div className="relative mt-4" style={{ minHeight: '96px' }}>
             <textarea
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
-              className={`w-full p-4 border rounded-lg text-slate-800 placeholder-slate-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none text-right transition-all duration-500 ${placeholderVisible ? 'placeholder-opacity-100' : 'placeholder-opacity-0'}`}
+              className="w-full p-4 border rounded-lg text-slate-800 placeholder-transparent focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none text-right"
               rows="3"
-              placeholder={placeholder}
+              placeholder=" "
               onKeyDown={(e) => { if (e.key === 'Enter' && e.ctrlKey) handleParse(); }}
             />
+            {/* Custom animated placeholder */}
+            {!inputText && (
+              <div className="absolute top-4 right-4 h-6 pointer-events-none overflow-hidden text-slate-400">
+                <div className="transition-transform duration-500 ease-in-out" style={{ transform: `translateY(-${placeholderIndex * 1.5}rem)` }}>
+                  {PLACEHOLDER_EXAMPLES.map((text, index) => (
+                    <div key={index} className="h-6 leading-6">{text}</div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Suggestion Chips */}
@@ -330,18 +331,18 @@ export default function App() {
             <button
               onClick={handleParse}
               disabled={loading}
-              className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg font-medium transition disabled:bg-blue-400 disabled:cursor-not-allowed w-48"
+              className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-medium transition disabled:bg-blue-400 disabled:cursor-not-allowed w-full sm:w-48"
             >
               {loading ? (
                 <><Loader2 className="w-4 h-4 animate-spin" /> <span>מפענח...</span></>
               ) : (
-                <><Send className="w-4 h-4 rotate-180" /> <span>הוסף ללוח שנה</span></>
+                <><Send className="w-5 h-5 rotate-180" /> <span>הוסף ללוח שנה</span></>
               )}
             </button>
             
             <button
               onClick={handleClearSchedule}
-              className="flex items-center gap-2 text-red-500 hover:text-red-700 px-3 py-2 rounded-lg hover:bg-red-50 transition text-sm"
+              className="flex items-center gap-2 text-red-500 hover:text-red-700 px-4 py-3 rounded-lg hover:bg-red-50 transition text-sm"
             >
               <Trash2 className="w-4 h-4" />
               נקה הכל
@@ -350,10 +351,10 @@ export default function App() {
         </div>
 
         {/* Weekly Schedule */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border">
+        <div className="bg-white p-4 sm:p-6 rounded-xl shadow-sm border">
           <h2 className="text-xl font-bold mb-6 text-slate-800 border-b pb-2">הלו"ז השבועי שלך (Weekly Schedule)</h2>
           
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {Object.keys(schedule).map((dayKey) => {
               if (dayKey === "Today" && schedule[dayKey].length === 0) return null;
 
@@ -414,6 +415,11 @@ export default function App() {
         <MonthlyCalendar schedule={schedule} />
         
       </main>
+
+      {/* Footer with build time */}
+      <footer className="max-w-6xl mx-auto mt-12 text-center text-xs text-slate-400 border-t pt-4">
+        <p>גרסה מעודכנת מתאריך: {new Date(import.meta.env.VITE_BUILD_TIME).toLocaleString('he-IL')}</p>
+      </footer>
     </div>
   );
 }
