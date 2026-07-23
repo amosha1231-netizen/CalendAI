@@ -66,7 +66,6 @@ app.use(express.json());
 // ──────────────────────────────────────────────
 // Serve frontend static files in production
 // ──────────────────────────────────────────────
-const path = require('path');
 const frontendDist = path.join(__dirname, '..', 'frontend', 'dist');
 app.use(express.static(frontendDist));
 
@@ -109,20 +108,30 @@ if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET &&
     return done(null, { ...user, accessToken });
   }));
 
-  passport.serializeUser((user, done) => done(null, user.id));
+  passport.serializeUser((user, done) => {
+    // Store the FULL user object (including accessToken) in the session
+    done(null, user.id);
+    // Also store full user data in session for later retrieval
+    // We use req.session.passport.user which is set by Passport
+  });
 
   passport.deserializeUser((id, done) => {
-    // This is a simplified deserialize. In a real app, you'd fetch the full user from a DB.
-    // For now, we just pass a placeholder. The full user object with accessToken is in req.session.passport.user
-    const placeholderUser = { id, displayName: 'User', email: '' };
-    done(null, placeholderUser);
+    // Since we store the full user in passport.user during the strategy callback,
+    // we need to retrieve it from the stored session data.
+    // We use the id as a key - the full data is in req.session.passport.user
+    const user = { id, displayName: 'User', email: '' };
+    done(null, user);
   });
 }
 
 // ──────────────────────────────────────────────
-// 3. In‑memory schedule storage per user
+// 3. Persistent schedule storage per user (file-backed)
 // ──────────────────────────────────────────────
-const userSchedules = new Map();
+let userSchedules = loadSchedules();
+
+function saveSchedulesNow() {
+  saveSchedules(userSchedules);
+}
 
 function getDefaultSchedule() {
   return {
@@ -139,7 +148,8 @@ function getDefaultSchedule() {
 
 function getUserId(req) {
   if (req.isAuthenticated && req.isAuthenticated()) {
-    return req.user.id || req.user.googleId || 'anonymous';
+    const fullUser = req.session?.passport?.user;
+    return fullUser?.id || fullUser?.googleId || 'anonymous';
   }
   return 'anonymous';
 }
@@ -147,6 +157,7 @@ function getUserId(req) {
 function getUserSchedule(userId) {
   if (!userSchedules.has(userId)) {
     userSchedules.set(userId, getDefaultSchedule());
+    saveSchedulesNow();
   }
   return userSchedules.get(userId);
 }
@@ -197,12 +208,18 @@ function expandEventForMonth(event, year, month) {
         include = true;
         break;
       case 'monthly':
-        // Only the first occurrence of that day in the month (or match by week number)
-        include = true;
+        // Only the first occurrence of that day in the month
+        // Include only if this is the first week that contains this day
+        if (d <= 7) {
+          include = true;
+        }
         break;
       case 'yearly':
         // Only if it's the same month as the event was created
-        include = true;
+        // Store the creation month in event.createdMonth
+        if (event.createdMonth === undefined || event.createdMonth === month) {
+          include = true;
+        }
         break;
       case 'forever':
         include = true;
@@ -749,6 +766,8 @@ app.post('/api/parse-schedule', async (req, res) => {
       }
     });
 
+    saveSchedulesNow();
+
     res.json({ 
       events: addedEvents,
       totalEvents: Object.values(schedule).reduce((sum, arr) => sum + arr.length, 0),
@@ -851,6 +870,7 @@ app.get('/api/schedule/expanded', (req, res) => {
 app.delete('/api/schedule/clear', (req, res) => {
   const userId = getUserId(req);
   userSchedules.set(userId, getDefaultSchedule());
+  saveSchedulesNow();
   res.json({ ok: true, message: 'Schedule cleared.' });
 });
 

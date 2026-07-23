@@ -17,25 +17,28 @@ export default function MonthlyCalendar({ schedule }) {
   const [currentMonth, setCurrentMonth] = useState(today.getMonth());
   const [viewMode, setViewMode] = useState('month'); // 'month' or 'year'
   const [expandedEvents, setExpandedEvents] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
 
   // Rolling 12-month window: always show 12 months starting from current month
   const rollingStartMonth = today.getMonth();
   const rollingStartYear = today.getFullYear();
 
   const fetchExpandedEvents = useCallback(async () => {
+    setIsLoading(true);
     try {
       if (viewMode === 'year') {
-        // For year view, fetch all 12 rolling months
-        const allEvents = [];
+        // For year view, fetch all 12 rolling months in parallel
+        const promises = [];
         for (let offset = 0; offset < 12; offset++) {
           const m = (rollingStartMonth + offset) % 12;
           const y = rollingStartYear + Math.floor((rollingStartMonth + offset) / 12);
-          const res = await fetch(`${API_BASE}/api/schedule/expanded?year=${y}&month=${m}&view=month`, { credentials: "include" });
-          if (res.ok) {
-            const data = await res.json();
-            allEvents.push(...(data.events || []));
-          }
+          promises.push(
+            fetch(`${API_BASE}/api/schedule/expanded?year=${y}&month=${m}&view=month`, { credentials: "include" })
+              .then(res => res.ok ? res.json() : { events: [] })
+          );
         }
+        const results = await Promise.all(promises);
+        const allEvents = results.flatMap(data => data.events || []);
         setExpandedEvents(allEvents);
       } else {
         const params = `year=${currentYear}&month=${currentMonth}&view=month`;
@@ -47,12 +50,29 @@ export default function MonthlyCalendar({ schedule }) {
       }
     } catch (err) {
       console.error("Failed to fetch expanded events:", err);
+    } finally {
+      setIsLoading(false);
     }
   }, [currentYear, currentMonth, viewMode, rollingStartMonth, rollingStartYear]);
 
   useEffect(() => {
     fetchExpandedEvents();
   }, [fetchExpandedEvents, schedule]);
+
+  // Shared skeleton loader component
+  const SkeletonLoader = () => (
+    <div className="animate-pulse space-y-3">
+      <div className="h-4 bg-slate-200 rounded w-1/3 mx-auto"></div>
+      <div className="grid grid-cols-7 gap-1">
+        {Array.from({ length: 7 }).map((_, i) => (
+          <div key={i} className="h-3 bg-slate-100 rounded"></div>
+        ))}
+        {Array.from({ length: 35 }).map((_, i) => (
+          <div key={i} className="h-16 bg-slate-50 rounded border border-slate-100"></div>
+        ))}
+      </div>
+    </div>
+  );
 
   const prevMonth = () => {
     if (currentMonth === 0) {
@@ -235,7 +255,7 @@ export default function MonthlyCalendar({ schedule }) {
         </button>
       </div>
 
-      {viewMode === 'month' ? renderMonthView() : renderYearView()}
+      {isLoading ? <SkeletonLoader /> : (viewMode === 'month' ? renderMonthView() : renderYearView())}
     </div>
   );
 }

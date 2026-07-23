@@ -243,7 +243,8 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 p-4 sm:p-6 font-sans select-none" dir="rtl">
+    <div className="min-h-screen bg-slate-50 p-4 sm:p-6 font-sans relative" dir="rtl">
+      <span className="text-xs text-gray-400 absolute top-2 right-4 select-none">בס"ד</span>
       {/* Header */}
       <header className="max-w-6xl mx-auto mb-6 sm:mb-8 flex flex-wrap items-center justify-between border-b pb-4 gap-4">
         <div className="flex items-center gap-3">
@@ -490,7 +491,7 @@ export default function App() {
 
       {/* Footer with build time */}
       <footer className="max-w-6xl mx-auto mt-12 text-center text-xs text-slate-400 border-t pt-4">
-        <p>גרסה מעודכנת: 23/07/2026</p>
+        <p>גרסה מעודכנת: 23/07/2026 בשעה {new Date().toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}</p>
       </footer>
     </div>
   );
