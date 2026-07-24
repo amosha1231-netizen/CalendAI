@@ -477,68 +477,75 @@ async function parseWithGemini(text) {
     return fallbackParse(text);
   }
 
+  const todayString = new Date().toLocaleDateString('he-IL', { weekday: 'long', day: 'numeric', month: 'numeric', year: 'numeric' });
+
   const prompt = `
-    You are an intelligent schedule/event parser. Parse the user's text and return JSON.
+    You are a world-class conversational schedule assistant. Your goal is to parse complex user requests in Hebrew, create a structured schedule, and provide a friendly, human-like confirmation message.
+
+    CONTEXT:
+    - Today is ${todayString}. Use this to resolve relative terms like "היום", "מחר", etc.
 
     IMPORTANT RULES:
-    1. Hebrew day names like "שני", "שלישי" etc. mean "every Monday", "every Tuesday" (recurring weekly events), NOT a specific date.
-    2. Single-letter day names like "ב" (Monday), "ג" (Tuesday) also mean recurring weekly.
-    3. Only create ONE event object per day (not per date). The events repeat every week.
-    4. "שש בערב" = 6:00 PM, "שבע בערב" = 7:00 PM, "שמונה בערב" = 8:00 PM etc.
-    5. "שש וחצי" = 6:30, "שבע וחצי" = 7:30, etc.
-    6. If the text says something like "בימים א ג ד ה" = every Sunday, Tuesday, Wednesday, Thursday.
-    7. Always use English day names: Sunday, Monday, Tuesday, Wednesday, Thursday, Friday, Saturday.
-    8. Format times as 'HH:MM AM/PM'.
-    9. Set "isRecurring" to true for weekly recurring events.
+    1.  **Chain of Events**: If the user describes multiple events in sequence (e.g., "תפילה שעה ורבע, ואז להוציא את הכלב חצי שעה"), calculate the times consecutively. The end time of one event is the start time of the next.
+    2.  **Complex Time Calculation**: Understand durations like "שעה ורבע" (1 hour 15 mins), "חצי שעה" (30 mins).
+    3.  **Day Resolution**: Use English day names: Sunday, Monday, etc. "היום" is ${todayString.split(',')[0]}.
+    4.  **Time Formatting**: Always format times as 'HH:MM AM/PM'. "שבע ורבע" = 07:15. Assume morning unless "בערב" or "בלילה" is specified.
+    5.  **Title Extraction**: Extract a SHORT, CLEAN title (max 4 words). Remove time, day, and location details from the title.
+    6.  **AI Advice**: If the user asks for help or ideas ("תמצא לי זמן", "תן רעיונות"), set `hasAdvice` to true and provide a short, practical `aiAdvice` in Hebrew. Otherwise, `hasAdvice` is false and `aiAdvice` is an empty string.
 
-    ## IMPORTANT: Title and Advice extraction
-    10. Extract a SHORT, CLEAN title (max 3-4 words) from the text. Remove time, day, and location details from the title.
-        Example: "אני צריך להכין משהו לאכול בשלישי בערב - לרביעי בבוקר" → title: "הכנת אוכל לבוקר"
-        Example: "שיעור תורה בכל יום שני אצלי בבית בשמונה וחצי" → title: "שיעור תורה"
-        Example: "פגישה עם יוסי במשרד ביום חמישי בעשר" → title: "פגישה עם יוסי"
-    11. hasAdvice (boolean): Set to true if the user is asking for a recommendation, idea, suggestion, or help managing time.
-        Examples: "תן לי רעיון", "תמצא זמן", "מה להכין", "תעזור לי", "תציע", "המלץ", "איך להתארגן"
-    12. aiAdvice (string): If hasAdvice is true, provide a short, practical recommendation in Hebrew (1-2 sentences max).
-        If hasAdvice is false, set aiAdvice to: "" (empty string).
-        Example: "אפשר להכין מרק עדשים וסלט ירקות - פשוט, מהיר ומספק."
+    OUTPUT FORMAT:
+    Return a single JSON object with two keys: "replyMessage" and "events".
 
-    Return an array like:
-    [
-      {
-        "title": "Short Title",
-        "day": "Monday",
-        "startTime": "06:00 PM",
-        "endTime": "07:00 PM",
-        "isRecurring": true,
-        "hasAdvice": false,
-        "aiAdvice": ""
-      }
-    ]
+    -   `replyMessage` (string): A friendly, conversational summary in Hebrew of the events you created. Be natural, like a real assistant.
+    -   `events` (array): An array of event objects.
+
+    Event Object Structure:
+    {
+      "title": "Short Clean Title",
+      "day": "Monday", // English day name
+      "startTime": "07:15 PM",
+      "endTime": "08:30 PM",
+      "isRecurring": true,
+      "hasAdvice": false,
+      "aiAdvice": ""
+    }
+
+    EXAMPLE:
+    User text: "היום משבע ורבע בבוקר תפילה שעה ורבע, אחרי זה להוציא את הכלב חצי שעה, ואז להכין אוכל 5 דקות"
+    Expected JSON Output:
+    {
+      "replyMessage": "בטח, קבעתי לך שלושה אירועים להיום (יום שישי): תפילה מ-07:15 עד 08:30, טיול עם הכלב מ-08:30 עד 09:00, והכנת אוכל מ-09:00 עד 09:05. שיהיה יום נהדר!",
+      "events": [
+        { "title": "תפילה", "day": "Friday", "startTime": "07:15 AM", "endTime": "08:30 AM", "isRecurring": false, "hasAdvice": false, "aiAdvice": "" },
+        { "title": "להוציא את הכלב", "day": "Friday", "startTime": "08:30 AM", "endTime": "09:00 AM", "isRecurring": false, "hasAdvice": false, "aiAdvice": "" },
+        { "title": "הכנת אוכל", "day": "Friday", "startTime": "09:00 AM", "endTime": "09:05 AM", "isRecurring": false, "hasAdvice": false, "aiAdvice": "" }
+      ]
+    }
 
     User text:
     "${text}"
   `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.0-flash',
-      contents: prompt,
-      config: {
-        temperature: 0.2,
-        responseMimeType: 'application/json'
-      }
-    });
+    const model = ai.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const raw = response.text();
 
-    const raw = response.text || '[]';
     const parsed = JSON.parse(raw);
-    const events = Array.isArray(parsed) ? parsed : [parsed];
 
-    return events.map(ev => ({
-      ...ev,
-      isRecurring: ev.isRecurring !== undefined ? ev.isRecurring : true,
-      hasAdvice: ev.hasAdvice === true,
-      aiAdvice: ev.aiAdvice || ""
-    }));
+    // Ensure the response has the correct structure
+    if (!parsed.events || !parsed.replyMessage) {
+      // Fallback if the structure is wrong but it returned an array of events
+      const events = Array.isArray(parsed) ? parsed : [parsed];
+      return {
+        replyMessage: `נוספו ${events.length} אירועים חדשים.`,
+        events: events
+      };
+    }
+
+    return parsed;
+
   } catch (error) {
     console.error('Gemini parse failed, using fallback:', error);
     return fallbackParseAdvice(text);
@@ -550,27 +557,100 @@ function fallbackParseAdvice(text) {
   const adviceKeywords = ['תן לי','תמצא','תציע','המלץ','עזור','עזרי','רעיון','איך','מה להכין','מה לעשות','תעזור לי'];
   const hasAdvice = adviceKeywords.some(kw => text.includes(kw));
 
-  let result;
+  let events;
   try {
-    result = fallbackParse(text);
+    events = fallbackParse(text);
   } catch (e) {
-    return [{
-      title: 'פגישה / אירוע',
-      day: 'Today',
-      startTime: '06:00 PM',
-      endTime: '07:00 PM',
-      isRecurring: false,
-      hasAdvice: hasAdvice,
-      aiAdvice: hasAdvice ? 'מומלץ לפצל את המשימה לשלבים קטנים ולהתחיל מוקדם.' : ''
+    events = [{
+        title: 'פגישה / אירוע',
+        day: 'Today',
+        startTime: '06:00 PM',
+        endTime: '07:00 PM',
+        isRecurring: false
     }];
   }
 
-  return result.map(ev => ({
-    ...ev,
-    hasAdvice: hasAdvice,
-    aiAdvice: hasAdvice ? 'מומלץ לפצל את המשימה לשלבים קטנים ולהתחיל מוקדם.' : ''
+  const eventsWithAdvice = events.map(ev => ({
+      ...ev,
+      hasAdvice: hasAdvice,
+      aiAdvice: hasAdvice ? 'מומלץ לפצל את המשימה לשלבים קטנים ולהתחיל מוקדם.' : ''
   }));
+
+  return {
+    replyMessage: `הצלחתי להוסיף ${events.length} אירועים מהטקסט שלך.`,
+    events: eventsWithAdvice
+  };
 }
+
+// ──────────────────────────────────────────────
+// 9. AI Reschedule Engine
+// ──────────────────────────────────────────────
+
+async function rescheduleWithGemini(currentSchedule, reason) {
+  if (!ai) {
+    throw new Error("AI model is not initialized.");
+  }
+
+  const todayString = new Date().toLocaleString('he-IL', { dateStyle: 'full', timeStyle: 'short' });
+
+  const prompt = `
+    You are a world-class AI assistant specializing in calendar management and rescheduling. Your task is to intelligently reorganize a user's schedule based on a given reason, in Hebrew.
+
+    CONTEXT:
+    - The current time is: ${todayString}.
+    - The user's reason for rescheduling is: "${reason}"
+    - The user's current schedule is provided below in JSON format.
+
+    RULES:
+    1.  **Analyze Today**: Based on the current time, determine which events for "Today" have already passed and which are yet to happen. Only reschedule events from the current time forward.
+    2.  **Identify Flexible Events**: Identify events that are likely flexible. Good candidates for rescheduling include tasks with titles like "אימון", "לימודים", "סידורים", "ריצה", "קניות". Do NOT reschedule events with titles like "פגישה", "שיעור", "תור לרופא", "אירוע" unless the user's reason explicitly asks for it.
+    3.  **Apply the Reason**:
+        - If the reason is "אני באיחור של X דקות/שעה" (I'm late by X mins/hour), shift all of today's upcoming events forward by that duration. Find new slots for any events that now conflict, prioritizing later today or tomorrow.
+        - If the reason is "דחה משימות שלא בוצעו למחר" (Postpone uncompleted tasks to tomorrow), move all of today's flexible, uncompleted tasks to available slots on the next day.
+    4.  **Find Free Slots**: When moving events, find logical free slots. Avoid scheduling things too late at night (e.g., after 11 PM) unless necessary.
+    5.  **Maintain Structure**: The output must be a valid JSON object containing the *entire* modified schedule, maintaining the exact same structure as the input (keys for every day of the week).
+    6.  **Provide Summary**: The JSON object must also include a "summary" key with a short, friendly Hebrew message explaining the changes you made.
+
+    INPUT SCHEDULE:
+    ${JSON.stringify(currentSchedule, null, 2)}
+
+    EXAMPLE OUTPUT:
+    {
+      "summary": "הבנתי, אתה מאחר בשעה. הזזתי את המשימות שלך להיום קדימה, והעברתי את האימון למחר בבוקר כי לא נשאר זמן. שיהיה המשך יום מוצלח!",
+      "newSchedule": {
+        "Sunday": [...],
+        "Monday": [...],
+        "Tuesday": [...],
+        "Wednesday": [...],
+        "Thursday": [...],
+        "Friday": [...],
+        "Saturday": [...],
+        "Today": [...]
+      }
+    }
+
+    Generate the JSON output now.
+  `;
+
+  try {
+    const model = ai.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const raw = response.text();
+    const parsed = JSON.parse(raw);
+
+    if (!parsed.newSchedule || !parsed.summary) {
+      throw new Error("AI response is missing 'newSchedule' or 'summary'.");
+    }
+
+    return parsed;
+
+  } catch (error) {
+    console.error('Gemini reschedule failed:', error);
+    throw new Error('Failed to get a valid reschedule plan from AI.');
+  }
+}
+
 
 // ──────────────────────────────────────────────
 // 6. Auth routes
@@ -730,7 +810,7 @@ app.post('/api/parse-schedule', async (req, res) => {
   }
 
   try {
-    const parsedEvents = await parseWithGemini(text);
+    const { events: parsedEvents, replyMessage } = await parseWithGemini(text);
     const userId = getUserId(req);
     const schedule = getUserSchedule(userId);
 
@@ -770,6 +850,7 @@ app.post('/api/parse-schedule', async (req, res) => {
 
     res.json({ 
       events: addedEvents,
+      replyMessage: replyMessage || `נוספו ${addedEvents.length} אירועים.`,
       totalEvents: Object.values(schedule).reduce((sum, arr) => sum + arr.length, 0),
       conflicts: conflictWarnings.length > 0 ? conflictWarnings : undefined
     });
@@ -891,14 +972,14 @@ app.delete('/api/schedule/event', (req, res) => {
 });
 
 // ──────────────────────────────────────────────
-// 8. Health
+// 10. Health & Fallback
 // ──────────────────────────────────────────────
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, message: 'CalendAI backend is running.' });
 });
 
 // ──────────────────────────────────────────────
-// 9. Serve frontend for any non-API route
+// 11. Serve frontend for any non-API route
 // ──────────────────────────────────────────────
 app.get('*', (req, res) => {
   res.sendFile(path.join(frontendDist, 'index.html'));

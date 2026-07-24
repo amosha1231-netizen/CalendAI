@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle } from "lucide-react";
+import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X } from "lucide-react";
 import MonthlyCalendar from "./components/MonthlyCalendar";
 
 // API URL - use environment variable for production, empty for local dev (uses Vite proxy)
@@ -42,6 +42,12 @@ export default function App() {
   
   const [placeholderIndex, setPlaceholderIndex] = useState(0);
   const [conflicts, setConflicts] = useState([]);
+
+  // Reschedule state
+  const [isRescheduleOpen, setIsRescheduleOpen] = useState(false);
+  const [rescheduleLoading, setRescheduleLoading] = useState(false);
+  const [reschedulePreview, setReschedulePreview] = useState(null);
+  const [rescheduleError, setRescheduleError] = useState("");
   // User state
   const [user, setUser] = useState(null);
   
@@ -154,7 +160,7 @@ export default function App() {
       
       await fetchSchedule();
       
-      setSuccess(`נוספו ${data.events?.length || 0} אירועים חדשים! סה"כ: ${data.totalEvents || 0} אירועים`);
+      setSuccess(data.replyMessage || `נוספו ${data.events?.length || 0} אירועים חדשים! סה"כ: ${data.totalEvents || 0} אירועים`);
       setInputText("");
 
     } catch (err) {
@@ -222,6 +228,43 @@ export default function App() {
     }
   };
 
+  const handleOpenReschedule = () => {
+    setIsRescheduleOpen(true);
+    setReschedulePreview(null);
+    setRescheduleError("");
+  };
+
+  const handleReschedule = async (reason) => {
+    setRescheduleLoading(true);
+    setRescheduleError("");
+    try {
+      const res = await fetch(`${API_BASE}/api/reschedule`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason }),
+        credentials: "include"
+      });
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.error || "AI reschedule failed");
+      }
+      const data = await res.json();
+      setReschedulePreview(data);
+    } catch (err) {
+      setRescheduleError(err.message);
+    } finally {
+      setRescheduleLoading(false);
+    }
+  };
+
+  const handleConfirmReschedule = () => {
+    if (reschedulePreview && reschedulePreview.newSchedule) {
+      setSchedule(reschedulePreview.newSchedule);
+      setSuccess("הלו\"ז עודכן בהצלחה!");
+      setIsRescheduleOpen(false);
+      setReschedulePreview(null);
+    }
+  };
   const recurrenceLabels = {
     once: "חד פעמי",
     weekly: "שבועי",
@@ -425,8 +468,17 @@ export default function App() {
 
         {/* Weekly Schedule */}
         <div className="bg-white p-4 sm:p-6 rounded-xl shadow-sm border">
-          <h2 className="text-xl font-bold mb-6 text-slate-800 border-b pb-2">הלו"ז השבועי שלך</h2>
-          
+          <div className="flex flex-wrap items-center justify-between gap-4 mb-6 border-b pb-2">
+            <h2 className="text-xl font-bold text-slate-800">הלו"ז השבועי שלך</h2>
+            <button
+              onClick={handleOpenReschedule}
+              className="flex items-center gap-2 bg-indigo-100 text-indigo-700 px-4 py-2 rounded-lg hover:bg-indigo-200 transition text-sm font-medium border border-indigo-200"
+            >
+              <Wand2 className="w-4 h-4" />
+              תקן לי את הלו"ז
+            </button>
+          </div>
+
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {Object.keys(schedule).map((dayKey) => {
               if (dayKey === "Today" && schedule[dayKey].length === 0) return null;
@@ -488,6 +540,74 @@ export default function App() {
         <MonthlyCalendar schedule={schedule} />
         
       </main>
+
+      {/* Reschedule Modal */}
+      {isRescheduleOpen && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" onClick={() => setIsRescheduleOpen(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                <Wand2 className="text-indigo-600" />
+                תקן לי את הלו"ז
+              </h3>
+              <button onClick={() => setIsRescheduleOpen(false)} className="p-1 rounded-full hover:bg-slate-100">
+                <X className="w-5 h-5 text-slate-500" />
+              </button>
+            </div>
+
+            {rescheduleLoading ? (
+              <div className="text-center p-8">
+                <Loader2 className="w-8 h-8 text-indigo-600 animate-spin mx-auto mb-4" />
+                <p className="text-slate-600">העוזר החכם מארגן את הלו"ז שלך מחדש...</p>
+                <p className="text-sm text-slate-400">זה עשוי לקחת מספר רגעים.</p>
+              </div>
+            ) : reschedulePreview ? (
+              <div>
+                <p className="text-sm text-slate-600 bg-indigo-50 p-3 rounded-lg border border-indigo-200 mb-4">
+                  <span className="font-bold">העוזר מציע:</span> {reschedulePreview.summary}
+                </p>
+                <p className="font-semibold text-slate-800 mb-2">תצוגה מקדימה של השינויים:</p>
+                <div className="max-h-60 overflow-y-auto border rounded-lg p-2 bg-slate-50 text-xs font-mono">
+                  <pre>{JSON.stringify(reschedulePreview.newSchedule, null, 2)}</pre>
+                </div>
+                <div className="mt-6 flex items-center justify-end gap-3">
+                  <button onClick={() => setReschedulePreview(null)} className="text-sm text-slate-600 hover:text-slate-800">בטל ונסה שוב</button>
+                  <button onClick={handleConfirmReschedule} className="px-5 py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700">
+                    אשר עדכון לו"ז
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div>
+                <p className="text-sm text-slate-600 mb-4">מה קרה? ספר לעוזר החכם כדי שיוכל לארגן מחדש את הלו"ז שלך.</p>
+                <div className="flex flex-col gap-3">
+                  {[
+                    'אני באיחור של 30 דקות',
+                    'אני באיחור של שעה',
+                    'דחה משימות שלא בוצעו למחר'
+                  ].map(reason => (
+                    <button
+                      key={reason}
+                      onClick={() => handleReschedule(reason)}
+                      className="w-full text-left p-3 bg-slate-50 rounded-lg border border-slate-200 hover:bg-indigo-50 hover:border-indigo-300 transition"
+                    >
+                      {reason}
+                    </button>
+                  ))}
+                  {/* Optional: Custom reason input */}
+                  {/* <input type="text" placeholder="או הקלד סיבה אחרת..." className="..."/> */}
+                </div>
+                {rescheduleError && (
+                  <div className="flex items-center gap-2 text-red-600 text-sm mt-4 bg-red-50 p-3 rounded-lg border border-red-200">
+                    <AlertCircle className="w-4 h-4" />
+                    <span>{rescheduleError}</span>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Footer with build time */}
       <footer className="max-w-6xl mx-auto mt-12 text-center text-xs text-slate-400 border-t pt-4">
