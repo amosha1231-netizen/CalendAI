@@ -611,7 +611,7 @@ export default function App() {
 
       {/* Footer with build time */}
       <footer className="max-w-6xl mx-auto mt-12 text-center text-xs text-slate-400 border-t pt-4">
-        <p>גרסה מעודכנת: 23/07/2026 בשעה {new Date().toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}</p>
+        <p>גרסה מעודכנת: {typeof __BUILD_TIME__ !== 'undefined' ? __BUILD_TIME__ : 'מקומית'}</p>
       </footer>
     </div>
   );

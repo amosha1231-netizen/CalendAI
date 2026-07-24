@@ -6,6 +6,15 @@ export default defineConfig({
   plugins: [react()],
   define: {
     // Pass the build time to the client
-    'import.meta.env.VITE_BUILD_TIME': JSON.stringify(new Date().toISOString()),
+    __BUILD_TIME__: JSON.stringify(
+      new Date().toLocaleString('he-IL', {
+        timeZone: 'Asia/Jerusalem',
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+    ),
   }
 })

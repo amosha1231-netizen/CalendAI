@@ -109,16 +109,11 @@ if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET &&
   }));
 
   passport.serializeUser((user, done) => {
-    // Store the FULL user object (including accessToken) in the session
+    // Store only the user ID in the session
     done(null, user.id);
-    // Also store full user data in session for later retrieval
-    // We use req.session.passport.user which is set by Passport
   });
 
   passport.deserializeUser((id, done) => {
-    // Since we store the full user in passport.user during the strategy callback,
-    // we need to retrieve it from the stored session data.
-    // We use the id as a key - the full data is in req.session.passport.user
     const user = { id, displayName: 'User', email: '' };
     done(null, user);
   });
@@ -194,7 +189,7 @@ function expandEventForMonth(event, year, month) {
         const today = new Date();
         const currentDayOfWeek = today.getDay();
         let daysUntilTarget = targetDayOfWeek - currentDayOfWeek;
-        if (daysUntilTarget <= 0) daysUntilTarget += 7; // next week
+        if (daysUntilTarget <= 0) daysUntilTarget += 7;
         const nextDate = new Date(today);
         nextDate.setDate(today.getDate() + daysUntilTarget);
         const nextDateStr = `${nextDate.getFullYear()}-${String(nextDate.getMonth()+1).padStart(2,'0')}-${String(nextDate.getDate()).padStart(2,'0')}`;
@@ -421,12 +416,7 @@ function fallbackParse(text) {
     endMinute = hebrewTime.endMinute;
   } else {
     const timeMatches = [...text.matchAll(/(\d{1,2})(?::(\d{2}))?/g)];
-    if (timeMatches.length >= 2) {
-      startHour = Number(timeMatches[0][1]);
-      startMinute = Number(timeMatches[0][2] || 0);
-      endHour = Number(timeMatches[1][1]);
-      endMinute = Number(timeMatches[1][2] || 0);
-    } else if (timeMatches.length === 1) {
+    if (timeMatches.length === 1) {
       startHour = Number(timeMatches[0][1]);
       startMinute = Number(timeMatches[0][2] || 0);
       endHour = startHour + 1;
@@ -438,26 +428,7 @@ function fallbackParse(text) {
   const endTime = formatTime(endHour, endMinute);
 
   let title = text
-    .replace(/^.*?(?:וחצי)?\s*/, '')
-    .replace(/^.*?(?:עד\s+[א-ת]+\s*(?:וחצי)?\s*)/, '')
-    .trim();
-
-  if (!title || title.length < 2) {
-    const parts = text.split(/\s+/);
-    const titleWords = [];
-    let foundTimeEnd = false;
-
-    for (let i = 0; i < parts.length; i++) {
-      const w = parts[i];
-      if (foundTimeEnd) {
-        titleWords.push(w);
-      } else if (w === 'וחצי' && i < parts.length - 1) {
-        foundTimeEnd = true;
-      }
-    }
-
-    title = titleWords.join(' ').trim();
-  }
+    .replace(/^.*?(?:וחצי)?\s*/, '').trim();
 
   if (!title || title.length < 2) {
     title = 'פגישה / אירוע';
@@ -474,7 +445,7 @@ function fallbackParse(text) {
 
 async function parseWithGemini(text) {
   if (!ai) {
-    return fallbackParse(text);
+    return fallbackParseAdvice(text);
   }
 
   const todayString = new Date().toLocaleDateString('he-IL', { weekday: 'long', day: 'numeric', month: 'numeric', year: 'numeric' });
@@ -491,7 +462,7 @@ async function parseWithGemini(text) {
     3.  **Day Resolution**: Use English day names: Sunday, Monday, etc. "היום" is ${todayString.split(',')[0]}.
     4.  **Time Formatting**: Always format times as 'HH:MM AM/PM'. "שבע ורבע" = 07:15. Assume morning unless "בערב" or "בלילה" is specified.
     5.  **Title Extraction**: Extract a SHORT, CLEAN title (max 4 words). Remove time, day, and location details from the title.
-    6.  **AI Advice**: If the user asks for help or ideas ("תמצא לי זמן", "תן רעיונות"), set `hasAdvice` to true and provide a short, practical `aiAdvice` in Hebrew. Otherwise, `hasAdvice` is false and `aiAdvice` is an empty string.
+    6.  **AI Advice**: If the user asks for help or ideas ("תמצא לי זמן", "תן רעיונות"), set 'hasAdvice' to true and provide a short, practical 'aiAdvice' in Hebrew. Otherwise, 'hasAdvice' is false and 'aiAdvice' is an empty string.
 
     OUTPUT FORMAT:
     Return a single JSON object with two keys: "replyMessage" and "events".
@@ -530,7 +501,7 @@ async function parseWithGemini(text) {
     const model = ai.getGenerativeModel({ model: 'gemini-1.5-flash' });
     const result = await model.generateContent(prompt);
     const response = await result.response;
-    const raw = response.text();
+    const raw = response.text().trim().replace(/^```json\s*/, '').replace(/\s*```$/, '');
 
     const parsed = JSON.parse(raw);
 
@@ -607,7 +578,7 @@ async function rescheduleWithGemini(currentSchedule, reason) {
     3.  **Apply the Reason**:
         - If the reason is "אני באיחור של X דקות/שעה" (I'm late by X mins/hour), shift all of today's upcoming events forward by that duration. Find new slots for any events that now conflict, prioritizing later today or tomorrow.
         - If the reason is "דחה משימות שלא בוצעו למחר" (Postpone uncompleted tasks to tomorrow), move all of today's flexible, uncompleted tasks to available slots on the next day.
-    4.  **Find Free Slots**: When moving events, find logical free slots. Avoid scheduling things too late at night (e.g., after 11 PM) unless necessary.
+    4.  **Find Free Slots**: When moving events, find logical free slots. Avoid scheduling things too late at night (e.g., after 11 PM) unless necessary. 
     5.  **Maintain Structure**: The output must be a valid JSON object containing the *entire* modified schedule, maintaining the exact same structure as the input (keys for every day of the week).
     6.  **Provide Summary**: The JSON object must also include a "summary" key with a short, friendly Hebrew message explaining the changes you made.
 
@@ -636,7 +607,7 @@ async function rescheduleWithGemini(currentSchedule, reason) {
     const model = ai.getGenerativeModel({ model: 'gemini-1.5-flash' });
     const result = await model.generateContent(prompt);
     const response = await result.response;
-    const raw = response.text();
+    const raw = response.text().trim().replace(/^```json\s*/, '').replace(/\s*```$/, '');
     const parsed = JSON.parse(raw);
 
     if (!parsed.newSchedule || !parsed.summary) {
@@ -912,6 +883,30 @@ app.post('/api/add-to-google-calendar', async (req, res) => {
   }
 });
 
+// POST /api/reschedule
+app.post('/api/reschedule', async (req, res) => {
+  const { reason } = req.body;
+  if (!reason || !reason.trim()) {
+    return res.status(400).json({ error: 'Reason is required.' });
+  }
+
+  try {
+    const userId = getUserId(req);
+    const currentSchedule = getUserSchedule(userId);
+    const result = await rescheduleWithGemini(currentSchedule, reason);
+
+    userSchedules.set(userId, result.newSchedule);
+    saveSchedulesNow();
+
+    res.json({
+      summary: result.summary,
+      newSchedule: result.newSchedule
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to reschedule.' });
+  }
+});
 // GET /api/schedule – get the current user's full schedule
 app.get('/api/schedule', (req, res) => {
   const userId = getUserId(req);
@@ -965,6 +960,7 @@ app.delete('/api/schedule/event', (req, res) => {
   const schedule = getUserSchedule(userId);
   if (schedule[day] && schedule[day][index]) {
     schedule[day].splice(index, 1);
+    saveSchedulesNow();
     res.json({ ok: true });
   } else {
     res.status(404).json({ error: 'Event not found.' });
@@ -987,5 +983,4 @@ app.get('*', (req, res) => {
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Backend running at http://localhost:${PORT}`);
-  console.log(`Serving frontend from ${frontendDist}`);
 });
