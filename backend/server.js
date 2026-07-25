@@ -895,7 +895,7 @@ app.post('/api/parse-schedule', async (req, res) => {
         schedule['Today'].push(eventWithRecurrence);
         addedEvents.push({ ...eventWithRecurrence, day: 'Today' });
       }
-    });
+    }
 
     // Sync "Today" with current day's events after all additions
     syncTodayWithCurrentDay(schedule);
