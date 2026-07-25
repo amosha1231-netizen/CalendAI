@@ -386,7 +386,8 @@ function fallbackParse(text) {
     if (hebrewDays[word]) {
       foundDays.push(hebrewDays[word]);
     } else {
-      const noPrefix = word.replace(/^[בוכפל]/, '');
+      // Strip prefixes: ב, כ, פ, ל, מ, ו, ש
+      const noPrefix = word.replace(/^[בוכפלמש]/, '');
       if (noPrefix !== word && hebrewDays[noPrefix]) {
         foundDays.push(hebrewDays[noPrefix]);
       }
@@ -394,6 +395,15 @@ function fallbackParse(text) {
   });
 
   let days = [...new Set(foundDays)];
+
+  // Handle "מחר" (tomorrow) - resolve to the next day
+  if (text.includes('מחר')) {
+    const today = new Date();
+    const tomorrow = new Date(today);
+    tomorrow.setDate(today.getDate() + 1);
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    days = [dayNames[tomorrow.getDay()]];
+  }
 
   if (days.length === 0) {
     const standaloneDayMatch = text.match(/\b(שני|ב|ב׳)\b/);
@@ -406,7 +416,7 @@ function fallbackParse(text) {
     days = ['Today'];
   }
 
-  let startHour = 18, startMinute = 0, endHour = 19, endMinute = 0;
+  let startHour = 9, startMinute = 0, endHour = 10, endMinute = 0;
 
   const hebrewTime = parseHebrewTime(text);
   if (hebrewTime) {
@@ -429,11 +439,39 @@ function fallbackParse(text) {
     }
   }
 
+  // Check if "בערב" or "בלילה" to adjust AM/PM
+  if (text.includes('בערב') || text.includes('בלילה')) {
+    if (startHour < 12) startHour += 12;
+    if (endHour < 12) endHour += 12;
+  } else if (text.includes('בבוקר') || text.includes('בבקר')) {
+    // Already morning, keep as is
+  } else {
+    // Default: if hours are typical evening hours (5-11), assume PM
+    if (startHour >= 5 && startHour <= 11 && !text.includes('בבוקר')) {
+      startHour += 12;
+      endHour += 12;
+    }
+  }
+
   const startTime = formatTime(startHour, startMinute);
   const endTime = formatTime(endHour, endMinute);
 
+  // Better title extraction: take the last meaningful words
   let title = text
-    .replace(/^.*?(?:וחצי)?\s*/, '').trim();
+    .replace(/^(מחר\s*)?/, '')
+    .replace(/משעה\s+[א-ת]+\s*(?:וחצי|ורבע)?\s*(?:ועד|עד)\s*[א-ת]+\s*(?:וחצי|ורבע)?\s*/, '')
+    .replace(/ב(שתיים|שלוש|ארבע|חמש|שש|שבע|שמונה|תשע|עשר|אחת)\s*(?:וחצי|ורבע)?\s*(?:בבוקר|בערב|בלילה)?\s*/, '')
+    .replace(/^\d{1,2}:\d{2}\s*/, '')
+    .replace(/[,!?;:]/g, '')
+    .trim();
+
+  // If title is still too long, take last 3-4 words
+  if (title.length > 30) {
+    const titleWords = title.split(/\s+/);
+    if (titleWords.length > 4) {
+      title = titleWords.slice(-4).join(' ');
+    }
+  }
 
   if (!title || title.length < 2) {
     title = 'פגישה / אירוע';
