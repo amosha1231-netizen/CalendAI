@@ -290,11 +290,9 @@ export default function App() {
     Today: `היום (${todayNameHe})`
   };
 
-  // Ordered keys: Today first, then Sunday-Saturday, excluding today's name from the rest of the list
-  const orderedDayKeys = [
-    'Today',
-    ...dayNamesEn.filter(day => day !== todayName)
-  ];
+  // Ordered keys: Today first, then all 7 weekdays (including today's actual day, 
+  // which will mirror the same events as "Today")
+  const orderedDayKeys = ['Today', ...dayNamesEn];
 
   return (
     <div className="min-h-screen bg-slate-50 p-4 sm:p-6 font-sans" dir="rtl">
@@ -494,20 +492,21 @@ export default function App() {
             {orderedDayKeys.map((dayKey) => {
               if (dayKey === "Today" && (!schedule[dayKey] || schedule[dayKey].length === 0)) return null;
 
+              const dayEvents = schedule[dayKey] || [];
               return (
-                <div key={dayKey} className="border rounded-xl bg-slate-50 p-4 flex flex-col min-h-[150px]">
+                <div key={dayKey} className={`border rounded-xl p-4 flex flex-col min-h-[150px] ${dayKey === todayName ? 'bg-indigo-50 ring-2 ring-indigo-300' : 'bg-slate-50'}`}>
                   <div className="font-bold text-slate-700 mb-3 border-b pb-1 text-center bg-white rounded shadow-sm py-1">
                     {dayTranslations[dayKey]}
-                    {schedule[dayKey].length > 0 && (
-                      <span className="text-xs text-slate-400 mr-1">({schedule[dayKey].length})</span>
+                    {dayEvents.length > 0 && (
+                      <span className="text-xs text-slate-400 mr-1">({dayEvents.length})</span>
                     )}
                   </div>
                   
                   <div className="flex-1 flex flex-col gap-2">
-                    {schedule[dayKey].length === 0 ? (
+                    {dayEvents.length === 0 ? (
                       <p className="text-xs text-slate-300 text-center my-auto font-light">אין אירועים</p>
                     ) : (
-                      schedule[dayKey].map((event, index) => (
+                      dayEvents.map((event, index) => (
                         <div 
                           key={index} 
                           className="group relative bg-white p-3 rounded-lg shadow-xs border-r-4 border-blue-500 border flex flex-col gap-1 hover:shadow-md transition"
