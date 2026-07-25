@@ -416,7 +416,12 @@ function fallbackParse(text) {
     endMinute = hebrewTime.endMinute;
   } else {
     const timeMatches = [...text.matchAll(/(\d{1,2})(?::(\d{2}))?/g)];
-    if (timeMatches.length === 1) {
+    if (timeMatches.length >= 2) {
+      startHour = Number(timeMatches[0][1]);
+      startMinute = Number(timeMatches[0][2] || 0);
+      endHour = Number(timeMatches[1][1]);
+      endMinute = Number(timeMatches[1][2] || 0);
+    } else if (timeMatches.length === 1) {
       startHour = Number(timeMatches[0][1]);
       startMinute = Number(timeMatches[0][2] || 0);
       endHour = startHour + 1;
@@ -463,12 +468,13 @@ async function parseWithGemini(text) {
     4.  **Time Formatting**: Always format times as 'HH:MM AM/PM'. "שבע ורבע" = 07:15. Assume morning unless "בערב" or "בלילה" is specified.
     5.  **Title Extraction**: Extract a SHORT, CLEAN title (max 4 words). Remove time, day, and location details from the title.
     6.  **AI Advice**: If the user asks for help or ideas ("תמצא לי זמן", "תן רעיונות"), set 'hasAdvice' to true and provide a short, practical 'aiAdvice' in Hebrew. Otherwise, 'hasAdvice' is false and 'aiAdvice' is an empty string.
+    6.  **AI Advice**: If the user asks for help or ideas ("תמצא לי זמן", "תן רעיונות"), set "hasAdvice" to true and provide a short, practical "aiAdvice" in Hebrew. Otherwise, "hasAdvice" is false and "aiAdvice" is an empty string.
 
     OUTPUT FORMAT:
     Return a single JSON object with two keys: "replyMessage" and "events".
 
-    -   `replyMessage` (string): A friendly, conversational summary in Hebrew of the events you created. Be natural, like a real assistant.
-    -   `events` (array): An array of event objects.
+    -   "replyMessage" (string): A friendly, conversational summary in Hebrew of the events you created. Be natural, like a real assistant.
+    -   "events" (array): An array of event objects.
 
     Event Object Structure:
     {
@@ -498,11 +504,16 @@ async function parseWithGemini(text) {
   `;
 
   try {
-    const model = ai.getGenerativeModel({ model: 'gemini-1.5-flash' });
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const raw = response.text().trim().replace(/^```json\s*/, '').replace(/\s*```$/, '');
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.0-flash',
+      contents: prompt,
+      config: {
+        temperature: 0.2,
+        responseMimeType: 'application/json'
+      }
+    });
 
+    const raw = response.text || '{}';
     const parsed = JSON.parse(raw);
 
     // Ensure the response has the correct structure
@@ -604,10 +615,16 @@ async function rescheduleWithGemini(currentSchedule, reason) {
   `;
 
   try {
-    const model = ai.getGenerativeModel({ model: 'gemini-1.5-flash' });
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const raw = response.text().trim().replace(/^```json\s*/, '').replace(/\s*```$/, '');
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.0-flash',
+      contents: prompt,
+      config: {
+        temperature: 0.3,
+        responseMimeType: 'application/json'
+      }
+    });
+
+    const raw = response.text || '{}';
     const parsed = JSON.parse(raw);
 
     if (!parsed.newSchedule || !parsed.summary) {
