@@ -404,6 +404,12 @@ function fallbackParse(text) {
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     days = [dayNames[tomorrow.getDay()]];
   }
+  
+  // Handle "היום" (today) - resolve to the current day
+  if (text.includes('היום')) {
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    days = [dayNames[new Date().getDay()]];
+  }
 
   if (days.length === 0) {
     const standaloneDayMatch = text.match(/\b(שני|ב|ב׳)\b/);
@@ -828,6 +834,20 @@ function detectConflicts(newEvent, existingEvents) {
 // 8. Schedule routes
 // ──────────────────────────────────────────────
 
+// Helper: get today's day name (e.g. "Saturday")
+function getTodayDayName() {
+  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  return dayNames[new Date().getDay()];
+}
+
+// Helper: sync "Today" with the current day of the week
+function syncTodayWithCurrentDay(schedule) {
+  const todayName = getTodayDayName();
+  // "Today" shows events from the current day of the week
+  schedule['Today'] = [...(schedule[todayName] || [])];
+  return schedule;
+}
+
 // POST /api/parse-schedule – parse text and ADD to user's schedule
 app.post('/api/parse-schedule', async (req, res) => {
   const { text, recurrence } = req.body;
@@ -839,38 +859,35 @@ app.post('/api/parse-schedule', async (req, res) => {
     const { events: parsedEvents, replyMessage } = await parseWithGemini(text);
     const userId = getUserId(req);
     const schedule = getUserSchedule(userId);
+    const todayName = getTodayDayName();
 
     const addedEvents = [];
     const conflictWarnings = [];
 
-    parsedEvents.forEach(event => {
-      const day = event.day || 'Today';
+    for (const event of parsedEvents) {
+      let day = event.day || todayName; // Default to today if day is missing
+      if (day === 'Today') {
+        day = todayName;
+      }
+
       const eventWithRecurrence = {
         ...event,
+        day: day, // Ensure day is the actual day name
         recurrence: recurrence || 'weekly'
       };
-
-      // Check for conflicts with existing events on the same day
-      if (schedule[day] && schedule[day].length > 0) {
-        const conflictResult = detectConflicts(eventWithRecurrence, schedule[day]);
-        if (conflictResult.hasConflict) {
-          conflictWarnings.push({
-            day,
-            event: eventWithRecurrence,
-            conflicts: conflictResult.conflicts,
-            suggestions: conflictResult.suggestions
-          });
-        }
-      }
 
       if (schedule[day]) {
         schedule[day].push(eventWithRecurrence);
         addedEvents.push(eventWithRecurrence);
       } else {
+        // Unknown day -> fallback to Today
         schedule['Today'].push(eventWithRecurrence);
         addedEvents.push({ ...eventWithRecurrence, day: 'Today' });
       }
     });
+
+    // Sync "Today" with current day's events after all additions
+    syncTodayWithCurrentDay(schedule);
 
     saveSchedulesNow();
 
@@ -966,6 +983,8 @@ app.post('/api/reschedule', async (req, res) => {
 app.get('/api/schedule', (req, res) => {
   const userId = getUserId(req);
   const schedule = getUserSchedule(userId);
+  // Sync "Today" with the current day of the week before returning
+  syncTodayWithCurrentDay(schedule);
   res.json({ schedule });
 });
 

@@ -273,7 +273,12 @@ export default function App() {
     forever: "לכל החיים"
   };
 
-  // תרגום שמות הימים לעברית
+  // תרגום שמות הימים לעברית + day order: Today first, then rest
+  const dayNamesEn = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const dayNamesHe = ['יום ראשון', 'יום שני', 'יום שלישי', 'יום רביעי', 'יום חמישי', 'יום שישי', 'יום שבת'];
+  const todayName = dayNamesEn[new Date().getDay()];
+  const todayNameHe = dayNamesHe[new Date().getDay()];
+  
   const dayTranslations = {
     Sunday: "יום ראשון",
     Monday: "יום שני",
@@ -282,8 +287,14 @@ export default function App() {
     Thursday: "יום חמישי",
     Friday: "יום שישי",
     Saturday: "יום שבת",
-    Today: "היום / כללי"
+    Today: `היום (${todayNameHe})`
   };
+
+  // Ordered keys: Today first, then Sunday-Saturday, excluding today's name from the rest of the list
+  const orderedDayKeys = [
+    'Today',
+    ...dayNamesEn.filter(day => day !== todayName)
+  ];
 
   return (
     <div className="min-h-screen bg-slate-50 p-4 sm:p-6 font-sans" dir="rtl">
@@ -480,7 +491,7 @@ export default function App() {
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {Object.keys(schedule).map((dayKey) => {
+            {orderedDayKeys.map((dayKey) => {
               if (dayKey === "Today" && schedule[dayKey].length === 0) return null;
 
               return (
