@@ -292,9 +292,9 @@ export default function App() {
         <div className="flex items-center gap-3">
           <Calendar className="w-8 h-8 text-blue-600 shrink-0" />
           <div>
-            <span className="text-[11px] text-gray-400 tracking-wider mb-0.5 block leading-none">בס"ד</span>
+            <span className="text-[10px] text-amber-500/60 tracking-[0.15em] mb-0.5 block leading-none font-serif italic">בס"ד</span>
             <h1 className="text-2xl font-bold text-slate-900 leading-tight">CalendAI</h1>
-            <p className="text-sm text-slate-500 leading-snug">העוזר האישי שלך לניהול הזמן</p>
+            <p className="text-sm text-indigo-500/80 font-medium leading-snug">✨ העוזר האישי שלך לניהול הזמן</p>
           </div>
         </div>
         
