@@ -877,6 +877,17 @@ app.post('/api/parse-schedule', async (req, res) => {
       };
 
       if (schedule[day]) {
+        // --- START: Conflict Detection ---
+        const { hasConflict, conflicts, suggestions } = detectConflicts(eventWithRecurrence, schedule[day]);
+        if (hasConflict) {
+          conflictWarnings.push({
+            day: day,
+            event: eventWithRecurrence,
+            conflicts: conflicts,
+            suggestions: suggestions
+          });
+        }
+        // --- END: Conflict Detection ---
         schedule[day].push(eventWithRecurrence);
         addedEvents.push(eventWithRecurrence);
       } else {

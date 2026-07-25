@@ -492,7 +492,7 @@ export default function App() {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {orderedDayKeys.map((dayKey) => {
-              if (dayKey === "Today" && schedule[dayKey].length === 0) return null;
+              if (dayKey === "Today" && (!schedule[dayKey] || schedule[dayKey].length === 0)) return null;
 
               return (
                 <div key={dayKey} className="border rounded-xl bg-slate-50 p-4 flex flex-col min-h-[150px]">

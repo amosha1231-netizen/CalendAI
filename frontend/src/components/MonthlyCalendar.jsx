@@ -246,13 +246,15 @@ export default function MonthlyCalendar({ schedule }) {
             {viewMode === 'month' ? 'לוח שנה חודשי' : 'לוח שנה שנתי מלא'}
           </h2>
         </div>
-        <button
-          onClick={() => setViewMode(prev => prev === 'month' ? 'year' : 'month')}
-          className="flex items-center gap-2 bg-indigo-50 text-indigo-700 px-4 py-2 rounded-lg hover:bg-indigo-100 transition text-sm font-medium border border-indigo-200"
-        >
-          <Eye className="w-4 h-4" />
-          {viewMode === 'month' ? 'הצג שנה מלאה' : 'הצג חודש'}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setViewMode(prev => prev === 'month' ? 'year' : 'month')}
+            className="flex items-center gap-2 bg-indigo-50 text-indigo-700 px-4 py-2 rounded-lg hover:bg-indigo-100 transition text-sm font-medium border border-indigo-200"
+          >
+            <Eye className="w-4 h-4" />
+            {viewMode === 'month' ? 'הצג שנה מלאה' : 'הצג חודש'}
+          </button>
+        </div>
       </div>
 
       {isLoading ? <SkeletonLoader /> : (viewMode === 'month' ? renderMonthView() : renderYearView())}
