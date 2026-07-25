@@ -8,11 +8,13 @@ const { GoogleGenAI } = require('@google/genai');
 const { google } = require('googleapis');
 const fs = require('fs');
 const path = require('path');
+const rateLimit = require('express-rate-limit');
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+
 
 // ──────────────────────────────────────────────
 // Persistent file-based storage
@@ -57,6 +59,13 @@ function saveSchedules(map) {
 // ──────────────────────────────────────────────
 // 1. Middleware
 // ──────────────────────────────────────────────
+const isProduction = process.env.NODE_ENV === 'production' || !!process.env.RENDER;
+
+// Trust the Render/production reverse proxy so secure cookies work correctly
+if (isProduction) {
+  app.set('trust proxy', 1);
+}
+
 app.use(cors({
   origin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : ['http://localhost:5173', 'https://calendai-backend-dfmi.onrender.com'],
   credentials: true
@@ -68,8 +77,6 @@ app.use(express.json());
 // ──────────────────────────────────────────────
 const frontendDist = path.join(__dirname, '..', 'frontend', 'dist');
 app.use(express.static(frontendDist));
-
-const isProduction = process.env.NODE_ENV === 'production' || !!process.env.RENDER;
 
 app.use(session({
   secret: process.env.SESSION_SECRET || 'calendai-secret-key-change-me',
@@ -83,6 +90,18 @@ app.use(session({
 
 app.use(passport.initialize());
 app.use(passport.session());
+
+// ──────────────────────────────────────────────
+// Rate limiting for AI-powered / expensive endpoints
+// ──────────────────────────────────────────────
+const aiLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 20, // max 20 requests per minute per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'יותר מדי בקשות. אנא נסה שוב בעוד דקה.' }
+});
+
 
 // ──────────────────────────────────────────────
 // 2. Google OAuth Strategy (if keys are configured)
@@ -108,16 +127,19 @@ if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET &&
     return done(null, { ...user, accessToken });
   }));
 
+  // Store the FULL user object (including accessToken) in the session.
+  // This is required because getUserId() and the Google Calendar sync route
+  // both read req.session.passport.user directly and expect the full object
+  // (id, googleId, displayName, email, photo, accessToken), not just an ID.
   passport.serializeUser((user, done) => {
-    // Store only the user ID in the session
-    done(null, user.id);
+    done(null, user);
   });
 
-  passport.deserializeUser((id, done) => {
-    const user = { id, displayName: 'User', email: '' };
+  passport.deserializeUser((user, done) => {
     done(null, user);
   });
 }
+
 
 // ──────────────────────────────────────────────
 // 3. Persistent schedule storage per user (file-backed)
@@ -849,7 +871,8 @@ function syncTodayWithCurrentDay(schedule) {
 }
 
 // POST /api/parse-schedule – parse text and ADD to user's schedule
-app.post('/api/parse-schedule', async (req, res) => {
+app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
+
   const { text, recurrence } = req.body;
   if (!text || !text.trim()) {
     return res.status(400).json({ error: 'Text input is required.' });
@@ -916,9 +939,10 @@ app.post('/api/parse-schedule', async (req, res) => {
 
 // POST /api/add-to-google-calendar - Add an event to the user's Google Calendar
 app.post('/api/add-to-google-calendar', async (req, res) => {
-  if (!req.isAuthenticated() || !req.session.passport?.user?.accessToken) {
+  if (!req.isAuthenticated || !req.isAuthenticated() || !req.session.passport?.user?.accessToken) {
     return res.status(401).json({ error: 'User not authenticated or token missing.' });
   }
+
 
   const { event } = req.body;
   if (!event || !event.title || !event.startTime || !event.day) {
@@ -967,7 +991,8 @@ app.post('/api/add-to-google-calendar', async (req, res) => {
 });
 
 // POST /api/reschedule
-app.post('/api/reschedule', async (req, res) => {
+app.post('/api/reschedule', aiLimiter, async (req, res) => {
+
   const { reason } = req.body;
   if (!reason || !reason.trim()) {
     return res.status(400).json({ error: 'Reason is required.' });
