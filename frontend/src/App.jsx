@@ -303,7 +303,7 @@ export default function App() {
         <div className="flex items-center gap-3">
           <Calendar className="w-8 h-8 text-blue-600 shrink-0" />
           <div>
-            <span className="text-[10px] text-amber-500/60 tracking-[0.15em] mb-0.5 block leading-none font-serif italic">בס"ד</span>
+            <span className="text-[10px] text-slate-400 tracking-widest mb-0.5 block" style={{ textShadow: '0px 1px 1px rgba(255,255,255,0.7)' }}>בס"ד</span>
             <h1 className="text-2xl font-bold text-slate-900 leading-tight">CalendAI</h1>
             <p className="text-sm text-indigo-500/80 font-medium leading-snug">✨ העוזר האישי שלך לניהול הזמן</p>
           </div>
