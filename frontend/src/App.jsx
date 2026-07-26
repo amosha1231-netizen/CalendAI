@@ -48,6 +48,12 @@ export default function App() {
   const [rescheduleLoading, setRescheduleLoading] = useState(false);
   const [reschedulePreview, setReschedulePreview] = useState(null);
   const [rescheduleError, setRescheduleError] = useState("");
+  // New deterministic reschedule state
+  const [rescheduleStep, setRescheduleStep] = useState("choose"); // "choose" | "gaps" | "shift" | "preview"
+  const [rescheduleDelay, setRescheduleDelay] = useState(null); // minutes
+  const [gapsResult, setGapsResult] = useState(null); // { gaps, hasGaps }
+  const [rescheduleMode, setRescheduleMode] = useState(null); // "shift" | "merge"
+  const [selectedGaps, setSelectedGaps] = useState([]);
   // User state
   const [user, setUser] = useState(null);
   
@@ -232,8 +238,81 @@ export default function App() {
     setIsRescheduleOpen(true);
     setReschedulePreview(null);
     setRescheduleError("");
+    setRescheduleStep("choose");
+    setRescheduleDelay(null);
+    setGapsResult(null);
+    setRescheduleMode(null);
+    setSelectedGaps([]);
   };
 
+  // Step 1: User selects a delay reason -> check gaps + show options
+  const handleDelaySelected = async (delayMinutes) => {
+    setRescheduleDelay(delayMinutes);
+    setRescheduleLoading(true);
+    setRescheduleError("");
+    try {
+      // Check for gaps in today's schedule
+      const gapsRes = await fetch(`${API_BASE}/api/reschedule/gaps`, {
+        credentials: "include"
+      });
+      const gapsData = await gapsRes.json();
+      setGapsResult(gapsData);
+      setRescheduleStep("choose");
+    } catch (err) {
+      setRescheduleError(err.message);
+    } finally {
+      setRescheduleLoading(false);
+    }
+  };
+
+  // Option A: Merge gaps (remove breaks between events)
+  const handleMergeGaps = async () => {
+    setRescheduleMode("merge");
+    setRescheduleLoading(true);
+    setRescheduleError("");
+    try {
+      const res = await fetch(`${API_BASE}/api/reschedule/merge-gaps`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include"
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Merge failed");
+      
+      setReschedulePreview(data);
+      setRescheduleStep("preview");
+    } catch (err) {
+      setRescheduleError(err.message);
+    } finally {
+      setRescheduleLoading(false);
+    }
+  };
+
+  // Option B: Shift all events forward by delay
+  const handleShiftEvents = async () => {
+    setRescheduleMode("shift");
+    setRescheduleLoading(true);
+    setRescheduleError("");
+    try {
+      const res = await fetch(`${API_BASE}/api/reschedule/shift`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ delayMinutes: rescheduleDelay }),
+        credentials: "include"
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Shift failed");
+      
+      setReschedulePreview(data);
+      setRescheduleStep("preview");
+    } catch (err) {
+      setRescheduleError(err.message);
+    } finally {
+      setRescheduleLoading(false);
+    }
+  };
+
+  // Option C: AI-based reschedule for complex operations (e.g., postpone to tomorrow)
   const handleReschedule = async (reason) => {
     setRescheduleLoading(true);
     setRescheduleError("");
@@ -250,6 +329,7 @@ export default function App() {
       }
       const data = await res.json();
       setReschedulePreview(data);
+      setRescheduleStep("preview");
     } catch (err) {
       setRescheduleError(err.message);
     } finally {
@@ -260,7 +340,7 @@ export default function App() {
   const handleConfirmReschedule = () => {
     if (reschedulePreview && reschedulePreview.newSchedule) {
       setSchedule(reschedulePreview.newSchedule);
-      setSuccess("הלו\"ז עודכן בהצלחה!");
+      setSuccess(reschedulePreview.summary || "הלו\"ז עודכן בהצלחה!");
       setIsRescheduleOpen(false);
       setReschedulePreview(null);
     }
@@ -571,7 +651,7 @@ export default function App() {
                 <p className="text-slate-600">העוזר החכם מארגן את הלו"ז שלך מחדש...</p>
                 <p className="text-sm text-slate-400">זה עשוי לקחת מספר רגעים.</p>
               </div>
-            ) : reschedulePreview ? (
+            ) : rescheduleStep === "preview" && reschedulePreview ? (
               <div>
                 <p className="text-sm text-slate-600 bg-indigo-50 p-3 rounded-lg border border-indigo-200 mb-4">
                   <span className="font-bold">העוזר מציע:</span> {reschedulePreview.summary}
@@ -581,31 +661,82 @@ export default function App() {
                   <pre>{JSON.stringify(reschedulePreview.newSchedule, null, 2)}</pre>
                 </div>
                 <div className="mt-6 flex items-center justify-end gap-3">
-                  <button onClick={() => setReschedulePreview(null)} className="text-sm text-slate-600 hover:text-slate-800">בטל ונסה שוב</button>
+                  <button onClick={handleOpenReschedule} className="text-sm text-slate-600 hover:text-slate-800">בטל ונסה שוב</button>
                   <button onClick={handleConfirmReschedule} className="px-5 py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700">
                     אשר עדכון לו"ז
                   </button>
                 </div>
               </div>
+            ) : rescheduleStep === "choose" && rescheduleDelay ? (
+              <div>
+                <p className="text-sm text-slate-600 mb-4">
+                  בחר איך לארגן מחדש את הלו"ז בגלל האיחור של <strong>{rescheduleDelay}</strong> דקות:
+                </p>
+                <div className="flex flex-col gap-3">
+                  {/* Option 1: Merge gaps if available */}
+                  {gapsResult && gapsResult.hasGaps ? (
+                    <button
+                      onClick={handleMergeGaps}
+                      className="w-full text-right p-4 bg-green-50 rounded-lg border border-green-300 hover:bg-green-100 transition"
+                    >
+                      <div className="font-medium text-green-800">✅ בטל הפסקות בחלונות הפנויים</div>
+                      <div className="text-sm text-green-600 mt-1">
+                        נמצאו {gapsResult.gapCount} הפסקות בין אירועים. מיזוג יפנה זמן נוסף.
+                      </div>
+                      <div className="text-xs text-green-500 mt-1">
+                        {gapsResult.gaps.map((g, i) => (
+                          <div key={i}>• הפסקה של {g.gapMinutes} דקות בין "{g.beforeEvent}" ל"{g.afterEvent}"</div>
+                        ))}
+                      </div>
+                    </button>
+                  ) : (
+                    <div className="w-full text-right p-4 bg-slate-50 rounded-lg border border-slate-200">
+                      <div className="font-medium text-slate-500">❌ לא מצאנו חלונות פנויים למיזוג</div>
+                      <div className="text-sm text-slate-400 mt-1">אין הפסקות בין האירועים להיום.</div>
+                    </div>
+                  )}
+                  
+                  {/* Option 2: Shift everything */}
+                  <button
+                    onClick={handleShiftEvents}
+                    className="w-full text-right p-4 bg-indigo-50 rounded-lg border border-indigo-300 hover:bg-indigo-100 transition"
+                  >
+                    <div className="font-medium text-indigo-800">🕐 הזז את כל האירועים קדימה ב{rescheduleDelay} דקות</div>
+                    <div className="text-sm text-indigo-600 mt-1">
+                      כל האירועים מהיום יזוזו קדימה ב{rescheduleDelay} דקות.
+                    </div>
+                  </button>
+                </div>
+                {rescheduleError && (
+                  <div className="flex items-center gap-2 text-red-600 text-sm mt-4 bg-red-50 p-3 rounded-lg border border-red-200">
+                    <AlertCircle className="w-4 h-4" />
+                    <span>{rescheduleError}</span>
+                  </div>
+                )}
+              </div>
             ) : (
               <div>
-                <p className="text-sm text-slate-600 mb-4">מה קרה? ספר לעוזר החכם כדי שיוכל לארגן מחדש את הלו"ז שלך.</p>
+                <p className="text-sm text-slate-600 mb-4">בחר בכמה זמן אתה מאחר כדי לסדר את הלו"ז מחדש:</p>
                 <div className="flex flex-col gap-3">
                   {[
-                    'אני באיחור של 30 דקות',
-                    'אני באיחור של שעה',
-                    'דחה משימות שלא בוצעו למחר'
-                  ].map(reason => (
+                    { label: 'אני באיחור של 30 דקות', delay: 30 },
+                    { label: 'אני באיחור של שעה', delay: 60 },
+                    { label: 'דחה משימות שלא בוצעו למחר', delay: null }
+                  ].map(item => (
                     <button
-                      key={reason}
-                      onClick={() => handleReschedule(reason)}
-                      className="w-full text-left p-3 bg-slate-50 rounded-lg border border-slate-200 hover:bg-indigo-50 hover:border-indigo-300 transition"
+                      key={item.label}
+                      onClick={() => {
+                        if (item.delay) {
+                          handleDelaySelected(item.delay);
+                        } else {
+                          handleReschedule(item.label);
+                        }
+                      }}
+                      className="w-full text-right p-3 bg-slate-50 rounded-lg border border-slate-200 hover:bg-indigo-50 hover:border-indigo-300 transition"
                     >
-                      {reason}
+                      {item.label}
                     </button>
                   ))}
-                  {/* Optional: Custom reason input */}
-                  {/* <input type="text" placeholder="או הקלד סיבה אחרת..." className="..."/> */}
                 </div>
                 {rescheduleError && (
                   <div className="flex items-center gap-2 text-red-600 text-sm mt-4 bg-red-50 p-3 rounded-lg border border-red-200">

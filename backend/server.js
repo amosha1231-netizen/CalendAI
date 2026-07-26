@@ -705,6 +705,222 @@ async function rescheduleWithGemini(currentSchedule, reason) {
   }
 }
 
+// ──────────────────────────────────────────────
+// 9b. Deterministic Schedule Helpers
+// ──────────────────────────────────────────────
+
+/**
+ * Parse time string "HH:MM AM/PM" to total minutes from midnight.
+ */
+function timeToMinutes(timeStr) {
+  if (!timeStr) return null;
+  const match = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+  if (!match) return null;
+  let hours = parseInt(match[1], 10);
+  const minutes = parseInt(match[2], 10);
+  const meridiem = match[3].toUpperCase();
+  if (meridiem === 'PM' && hours !== 12) hours += 12;
+  if (meridiem === 'AM' && hours === 12) hours = 0;
+  return hours * 60 + minutes;
+}
+
+/**
+ * Convert minutes from midnight back to "HH:MM AM/PM" string.
+ */
+function minutesToTime(totalMinutes) {
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const displayH = h > 12 ? h - 12 : (h === 0 ? 12 : h);
+  return `${String(displayH).padStart(2, '0')}:${String(m).padStart(2, '0')} ${ampm}`;
+}
+
+/**
+ * Get current time in minutes from midnight.
+ */
+function getCurrentMinutes() {
+  const now = new Date();
+  return now.getHours() * 60 + now.getMinutes();
+}
+
+/**
+ * Check if schedule has any gaps between events that could be merged.
+ * Returns an array of gap objects with recommendations.
+ */
+function findGapsInSchedule(schedule) {
+  const todayName = getTodayDayName();
+  const todayEvents = schedule[todayName] || [];
+  
+  if (todayEvents.length < 2) return [];
+  
+  // Sort events by start time
+  const sorted = [...todayEvents]
+    .map((e, idx) => ({ ...e, originalIndex: idx }))
+    .sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
+  
+  const gaps = [];
+  const currentMin = getCurrentMinutes();
+  
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const current = sorted[i];
+    const next = sorted[i + 1];
+    const currentEnd = timeToMinutes(current.endTime);
+    const nextStart = timeToMinutes(next.startTime);
+    
+    if (currentEnd === null || nextStart === null) continue;
+    
+    // Only consider events that haven't passed yet
+    if (currentEnd < currentMin) continue;
+    
+    const gapMinutes = nextStart - currentEnd;
+    
+    // If there's a gap (e.g., 15+ minutes) that could be eliminated
+    if (gapMinutes >= 15) {
+      gaps.push({
+        gapMinutes,
+        startTime: current.endTime,
+        endTime: next.startTime,
+        beforeEvent: current.title,
+        afterEvent: next.title
+      });
+    }
+  }
+  
+  return gaps;
+}
+
+/**
+ * Shift all upcoming events on "Today" forward by delayMinutes.
+ * Returns the modified schedule and a summary.
+ */
+function shiftScheduleForward(schedule, delayMinutes) {
+  const todayName = getTodayDayName();
+  const newSchedule = JSON.parse(JSON.stringify(schedule)); // deep clone
+  const todayEvents = newSchedule[todayName] || [];
+  
+  if (todayEvents.length === 0) {
+    return { newSchedule, summary: 'אין אירועים להיום להזיז.' };
+  }
+  
+  const currentMin = getCurrentMinutes();
+  
+  // Sort events by start time
+  const sorted = todayEvents
+    .map((e, idx) => ({ ...e, originalIndex: idx }))
+    .sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
+  
+  // Find the first event that hasn't ended yet
+  let shiftStartIndex = -1;
+  for (let i = 0; i < sorted.length; i++) {
+    const eventEnd = timeToMinutes(sorted[i].endTime);
+    if (eventEnd !== null && eventEnd > currentMin) {
+      shiftStartIndex = i;
+      break;
+    }
+  }
+  
+  if (shiftStartIndex === -1) {
+    return { newSchedule, summary: 'כל האירועים להיום כבר עברו.' };
+  }
+  
+  // Shift all events from shiftStartIndex onward by delayMinutes
+  let accumulatedDelay = delayMinutes;
+  for (let i = shiftStartIndex; i < sorted.length; i++) {
+    const event = sorted[i];
+    const oldStart = timeToMinutes(event.startTime);
+    const oldEnd = timeToMinutes(event.endTime);
+    if (oldStart === null || oldEnd === null) continue;
+    
+    const newStart = oldStart + accumulatedDelay;
+    const newEnd = oldEnd + accumulatedDelay;
+    
+    event.startTime = minutesToTime(newStart);
+    event.endTime = minutesToTime(newEnd);
+  }
+  
+  // Write back sorted events into the schedule array (preserving order)
+  newSchedule[todayName] = sorted.sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
+  
+  // Sync Today
+  syncTodayWithCurrentDay(newSchedule);
+  
+  const delayDisplay = delayMinutes >= 60 
+    ? `${Math.floor(delayMinutes / 60)} שעה ו${delayMinutes % 60} דקות` 
+    : `${delayMinutes} דקות`;
+  
+  return {
+    newSchedule,
+    summary: `הזזתי את כל האירועים להיום קדימה ב${delayDisplay}.`
+  };
+}
+
+/**
+ * Merge gaps in today's schedule by removing the free time between events.
+ * Returns the modified schedule, merged gaps info, and a summary.
+ */
+function mergeGaps(schedule) {
+  const todayName = getTodayDayName();
+  const newSchedule = JSON.parse(JSON.stringify(schedule)); // deep clone
+  const todayEvents = newSchedule[todayName] || [];
+  
+  if (todayEvents.length < 2) {
+    return { newSchedule, gaps: [], summary: 'אין מספיק אירועים למיזוג הפסקות.' };
+  }
+  
+  const currentMin = getCurrentMinutes();
+  const gaps = findGapsInSchedule(schedule);
+  
+  if (gaps.length === 0) {
+    return { newSchedule, gaps: [], summary: 'לא נמצאו הפסקות למיזוג בין האירועים.' };
+  }
+  
+  // Sort events by start time
+  const sorted = todayEvents
+    .map((e, idx) => ({ ...e, originalIndex: idx }))
+    .sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
+  
+  // Merge: for each gap, shift all subsequent events backward by the gap duration
+  let totalMerged = 0;
+  for (const gap of gaps) {
+    const gapStart = timeToMinutes(gap.startTime);
+    if (gapStart === null || gapStart < currentMin) continue;
+    
+    // Find the event that starts right after this gap and shift everything after it
+    for (let i = 0; i < sorted.length; i++) {
+      const eventStart = timeToMinutes(sorted[i].startTime);
+      if (eventStart !== null && eventStart >= gapStart + gap.gapMinutes) {
+        // Shift this and all subsequent events back by gapMinutes
+        for (let j = i; j < sorted.length; j++) {
+          const oldStart = timeToMinutes(sorted[j].startTime);
+          const oldEnd = timeToMinutes(sorted[j].endTime);
+          if (oldStart === null || oldEnd === null) continue;
+          sorted[j].startTime = minutesToTime(oldStart - gap.gapMinutes);
+          sorted[j].endTime = minutesToTime(oldEnd - gap.gapMinutes);
+        }
+        totalMerged += gap.gapMinutes;
+        break;
+      }
+    }
+  }
+  
+  if (totalMerged === 0) {
+    return { newSchedule, gaps, summary: 'לא ניתן למזג הפסקות כרגע.' };
+  }
+  
+  // Write back sorted events
+  newSchedule[todayName] = sorted.sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
+  
+  // Sync Today
+  syncTodayWithCurrentDay(newSchedule);
+  
+  return {
+    newSchedule,
+    gaps: gaps.filter(g => timeToMinutes(g.startTime) >= currentMin),
+    summary: `מיזגתי ${gaps.length} הפסקות וחיסכתי ${totalMerged} דקות! האירועים צמודים יותר עכשיו.`,
+    totalMergedMinutes: totalMerged
+  };
+}
+
 
 // ──────────────────────────────────────────────
 // 6. Auth routes
@@ -1015,6 +1231,74 @@ app.post('/api/reschedule', aiLimiter, async (req, res) => {
     res.status(500).json({ error: 'Failed to reschedule.' });
   }
 });
+
+// POST /api/reschedule/shift – deterministic: shift all today's events forward by delayMinutes
+app.post('/api/reschedule/shift', (req, res) => {
+  const { delayMinutes } = req.body;
+  if (!delayMinutes || delayMinutes < 1) {
+    return res.status(400).json({ error: 'delayMinutes is required and must be positive.' });
+  }
+
+  try {
+    const userId = getUserId(req);
+    const currentSchedule = getUserSchedule(userId);
+    const result = shiftScheduleForward(currentSchedule, delayMinutes);
+
+    userSchedules.set(userId, result.newSchedule);
+    saveSchedulesNow();
+
+    res.json({
+      summary: result.summary,
+      newSchedule: result.newSchedule
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to shift schedule.' });
+  }
+});
+
+// POST /api/reschedule/merge-gaps – deterministic: merge gaps between today's events
+app.post('/api/reschedule/merge-gaps', (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const currentSchedule = getUserSchedule(userId);
+    const result = mergeGaps(currentSchedule);
+
+    if (result.totalMergedMinutes > 0) {
+      userSchedules.set(userId, result.newSchedule);
+      saveSchedulesNow();
+    }
+
+    res.json({
+      summary: result.summary,
+      newSchedule: result.totalMergedMinutes > 0 ? result.newSchedule : currentSchedule,
+      gaps: result.gaps || [],
+      totalMergedMinutes: result.totalMergedMinutes || 0
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to merge gaps.' });
+  }
+});
+
+// GET /api/reschedule/gaps – check for gaps in today's schedule without modifying
+app.get('/api/reschedule/gaps', (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const currentSchedule = getUserSchedule(userId);
+    const gaps = findGapsInSchedule(currentSchedule);
+
+    res.json({
+      gaps,
+      gapCount: gaps.length,
+      hasGaps: gaps.length > 0
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to check gaps.' });
+  }
+});
+
 // GET /api/schedule – get the current user's full schedule
 app.get('/api/schedule', (req, res) => {
   const userId = getUserId(req);
