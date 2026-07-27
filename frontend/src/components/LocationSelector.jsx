@@ -3,7 +3,7 @@ import { MapPin, ChevronDown, Loader2, Clock, Sun, Moon, Check } from 'lucide-re
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
 
-export default function LocationSelector({ selectedLocation, onLocationChange }) {
+export default function LocationSelector({ selectedLocation, onLocationChange, onSlotClick }) {
   const [locations, setLocations] = useState([]);
   const [isOpen, setIsOpen] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -11,6 +11,7 @@ export default function LocationSelector({ selectedLocation, onLocationChange })
   const [timeSlots, setTimeSlots] = useState(null);
   const [prevLocation, setPrevLocation] = useState(selectedLocation);
   const [transitioning, setTransitioning] = useState(false);
+  const [selectedDay, setSelectedDay] = useState(null);
   const dropdownRef = useRef(null);
 
   // Fetch locations on mount
@@ -80,29 +81,46 @@ export default function LocationSelector({ selectedLocation, onLocationChange })
   // Get today's day name to highlight current day
   const todayName = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][new Date().getDay()];
 
-  // Render time slot grid for a given day
+  // Initialize selectedDay to today when location data is loaded
+  useEffect(() => {
+    if (selectedLoc && selectedLoc.availableDays) {
+      // If the currently selected day is not in the available days, default to today if available
+      if (!selectedDay || !selectedLoc.availableDays.includes(selectedDay)) {
+        if (selectedLoc.availableDays.includes(todayName)) {
+          setSelectedDay(todayName);
+        } else {
+          setSelectedDay(selectedLoc.availableDays[0]);
+        }
+      }
+    }
+  }, [selectedLoc]);
+
+  // Handle clicking a time slot - pass it up to parent
+  const handleSlotClick = (slot) => {
+    if (onSlotClick && selectedDay) {
+      onSlotClick(selectedDay, slot);
+    }
+  };
+
+  // Render time slot grid for a SINGLE selected day
   const renderTimeSlotsForDay = (day) => {
     if (!timeSlots || !timeSlots.timeSlots || !timeSlots.timeSlots[day]) return null;
     const slots = timeSlots.timeSlots[day];
     if (slots.length === 0) return null;
 
     return (
-      <div key={day} className="mb-2 last:mb-0">
-        <div className={`text-xs font-semibold mb-1 px-1 ${day === todayName ? 'text-blue-600' : 'text-slate-500'}`}>
-          {day.slice(0, 3)}
-          {day === todayName && <span className="text-[10px] text-blue-400 ml-1">· Today</span>}
-        </div>
-        <div className="flex flex-wrap gap-1">
-          {slots.map((slot) => (
-            <span
-              key={slot}
-              className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] bg-slate-50 text-slate-600 rounded-md border border-slate-200/60"
-            >
-              <Clock className="w-2.5 h-2.5 text-slate-400" />
-              {slot}
-            </span>
-          ))}
-        </div>
+      <div className="flex flex-wrap gap-1">
+        {slots.map((slot) => (
+          <button
+            key={slot}
+            onClick={() => handleSlotClick(slot)}
+            className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] bg-slate-50 text-slate-600 rounded-md border border-slate-200/60 hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 cursor-pointer transition-all duration-150 active:scale-95"
+            title={`השתמש בשעה ${slot}`}
+          >
+            <Clock className="w-2.5 h-2.5 text-slate-400" />
+            {slot}
+          </button>
+        ))}
       </div>
     );
   };
@@ -175,27 +193,31 @@ export default function LocationSelector({ selectedLocation, onLocationChange })
         <div className={`mt-3 transition-all duration-300 ease-in-out overflow-hidden ${
           transitioning || slotsLoading ? 'opacity-0 translate-y-1 max-h-0' : 'opacity-100 translate-y-0 max-h-[500px]'
         }`}>
-          {/* Available days summary */}
+          {/* Available days as clickable tabs/chips */}
           <div className="mb-2">
             <div className="flex items-center gap-1.5 text-xs text-slate-500 mb-1.5">
               <Sun className="w-3 h-3 text-amber-400" />
-              <span className="font-medium">Available days:</span>
+              <span className="font-medium">Select day:</span>
             </div>
             <div className="flex flex-wrap gap-1">
               {selectedLoc.availableDays.map((day) => {
                 const isToday = day === todayName;
+                const isSelected = day === selectedDay;
                 return (
-                  <span
+                  <button
                     key={day}
+                    onClick={() => setSelectedDay(day)}
                     className={`inline-block text-[11px] px-2 py-0.5 rounded-md border transition-all duration-150 ${
-                      isToday
-                        ? 'bg-blue-100 text-blue-700 border-blue-200 font-medium'
-                        : 'bg-slate-50 text-slate-500 border-slate-200/60'
+                      isSelected
+                        ? 'bg-blue-600 text-white border-blue-600 font-medium shadow-sm'
+                        : isToday
+                          ? 'bg-blue-50 text-blue-700 border-blue-200 font-medium'
+                          : 'bg-slate-50 text-slate-500 border-slate-200/60 hover:bg-slate-100'
                     }`}
                   >
                     {day.slice(0, 3)}
-                    {isToday && <span className="ml-0.5">·</span>}
-                  </span>
+                    {isToday && <span className="mr-0.5 text-[10px]"> (היום)</span>}
+                  </button>
                 );
               })}
             </div>
@@ -210,14 +232,18 @@ export default function LocationSelector({ selectedLocation, onLocationChange })
             </span>
           </div>
 
-          {/* Time slots per day */}
-          {timeSlots && timeSlots.timeSlots && (
+          {/* Time slots for the selected day only */}
+          {timeSlots && timeSlots.timeSlots && selectedDay && (
             <div className="bg-slate-50/50 rounded-lg border border-slate-100 p-2.5">
               <div className="text-xs font-medium text-slate-500 mb-2 flex items-center gap-1.5">
                 <Clock className="w-3 h-3" />
-                Available time slots
+                Available time slots for {selectedDay.slice(0, 3)}
+                {selectedDay === todayName && <span className="text-blue-500 text-[10px]"> (היום)</span>}
               </div>
-              {selectedLoc.availableDays.map(day => renderTimeSlotsForDay(day))}
+              {renderTimeSlotsForDay(selectedDay)}
+              {(!timeSlots.timeSlots[selectedDay] || timeSlots.timeSlots[selectedDay].length === 0) && (
+                <p className="text-xs text-slate-400 text-center py-2">No time slots available for this day</p>
+              )}
             </div>
           )}
         </div>

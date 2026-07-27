@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin } from "lucide-react";
+import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter } from "lucide-react";
 import MonthlyCalendar from "./components/MonthlyCalendar";
 import LocationSelector from "./components/LocationSelector";
+import Privacy from "./components/Privacy";
 
 // API URL - use environment variable for production, empty for local dev (uses Vite proxy)
 const API_BASE = import.meta.env.VITE_API_URL || "";
@@ -34,7 +35,16 @@ const SUGGESTION_CHIPS = [
   "לימודים פעמיים השבוע"
 ];
 
+// Location labels for display
+const LOCATION_LABELS = {
+  jerusalem: "Jerusalem",
+  newyork: "New York",
+  london: "London",
+  losangeles: "Los Angeles"
+};
+
 export default function App() {
+  const [showPrivacy, setShowPrivacy] = useState(false);
   const [inputText, setInputText] = useState("");
   const [recurrence, setRecurrence] = useState("weekly");
   const [loading, setLoading] = useState(false);
@@ -57,6 +67,8 @@ export default function App() {
   const [selectedGaps, setSelectedGaps] = useState([]);
   // Location state
   const [selectedLocation, setSelectedLocation] = useState("jerusalem");
+  // Location filter for schedule view
+  const [locationFilter, setLocationFilter] = useState("all");
   
   // User state
   const [user, setUser] = useState(null);
@@ -123,6 +135,34 @@ export default function App() {
   useEffect(() => {
     fetchSchedule();
   }, [fetchSchedule]);
+
+  // Handle clicking a time slot from LocationSelector
+  const handleSlotClick = (day, slot) => {
+    // Parse the slot time (e.g., "06:00") and create a time range
+    const [hour, minute] = slot.split(':').map(Number);
+    const hour12 = hour % 12 || 12;
+    const ampm = hour >= 12 ? 'PM' : 'AM';
+    const nextHour = (hour + 1) % 24;
+    const nextHour12 = nextHour % 12 || 12;
+    const nextAmpm = nextHour >= 12 ? 'PM' : 'AM';
+    
+    const startTime = `${String(hour12).padStart(2, '0')}:${String(minute).padStart(2, '0')} ${ampm}`;
+    const endTime = `${String(nextHour12).padStart(2, '0')}:${String(minute).padStart(2, '0')} ${nextAmpm}`;
+    
+    // Map day name to Hebrew
+    const dayMap = {
+      Sunday: 'ראשון', Monday: 'שני', Tuesday: 'שלישי', Wednesday: 'רביעי',
+      Thursday: 'חמישי', Friday: 'שישי', Saturday: 'שבת'
+    };
+    const hebrewDay = dayMap[day] || day;
+    
+    // Pre-fill the input text with the time
+    setInputText(`ביום ${hebrewDay} מ-${startTime} עד ${endTime} `);
+    
+    // Focus the textarea
+    const textarea = document.querySelector('textarea');
+    if (textarea) textarea.focus();
+  };
 
   const handleParse = async () => {
     if (!inputText.trim()) return;
@@ -378,6 +418,23 @@ export default function App() {
   // which will mirror the same events as "Today")
   const orderedDayKeys = ['Today', ...dayNamesEn];
 
+  // Get unique locations from all events for the filter
+  const allLocationsInEvents = [...new Set(
+    Object.values(schedule).flat().map(e => e.location).filter(Boolean)
+  )];
+
+  // Filter events by location if a filter is active
+  const getFilteredEvents = (dayKey) => {
+    const dayEvents = schedule[dayKey] || [];
+    if (locationFilter === "all") return dayEvents;
+    return dayEvents.filter(e => e.location === locationFilter);
+  };
+
+  // If showing Privacy page, render it instead
+  if (showPrivacy) {
+    return <Privacy onBack={() => setShowPrivacy(false)} />;
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 p-4 sm:p-6 font-sans" dir="rtl">
       {/* Header */}
@@ -469,6 +526,7 @@ export default function App() {
             <LocationSelector
               selectedLocation={selectedLocation}
               onLocationChange={setSelectedLocation}
+              onSlotClick={handleSlotClick}
             />
           </div>
 
@@ -571,20 +629,38 @@ export default function App() {
         <div className="bg-white p-4 sm:p-6 rounded-xl shadow-sm border">
           <div className="flex flex-wrap items-center justify-between gap-4 mb-6 border-b pb-2">
             <h2 className="text-xl font-bold text-slate-800">הלו"ז השבועי שלך</h2>
-            <button
-              onClick={handleOpenReschedule}
-              className="flex items-center gap-2 bg-indigo-100 text-indigo-700 px-4 py-2 rounded-lg hover:bg-indigo-200 transition text-sm font-medium border border-indigo-200"
-            >
-              <Wand2 className="w-4 h-4" />
-              תקן לי את הלו"ז
-            </button>
+            <div className="flex items-center gap-2">
+              {/* Location filter */}
+              {allLocationsInEvents.length > 0 && (
+                <div className="flex items-center gap-1.5 text-xs">
+                  <Filter className="w-3 h-3 text-slate-400" />
+                  <select
+                    value={locationFilter}
+                    onChange={(e) => setLocationFilter(e.target.value)}
+                    className="text-xs border border-slate-200 rounded-md px-2 py-1 bg-white text-slate-600 focus:ring-1 focus:ring-blue-500"
+                  >
+                    <option value="all">כל המיקומים</option>
+                    {allLocationsInEvents.map(loc => (
+                      <option key={loc} value={loc}>{LOCATION_LABELS[loc] || loc}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              <button
+                onClick={handleOpenReschedule}
+                className="flex items-center gap-2 bg-indigo-100 text-indigo-700 px-4 py-2 rounded-lg hover:bg-indigo-200 transition text-sm font-medium border border-indigo-200"
+              >
+                <Wand2 className="w-4 h-4" />
+                תקן לי את הלו"ז
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {orderedDayKeys.map((dayKey) => {
               if (dayKey === "Today" && (!schedule[dayKey] || schedule[dayKey].length === 0)) return null;
 
-              const dayEvents = schedule[dayKey] || [];
+              const dayEvents = getFilteredEvents(dayKey);
               return (
                 <div key={dayKey} className={`border rounded-xl p-4 flex flex-col min-h-[150px] ${dayKey === todayName ? 'bg-indigo-50 ring-2 ring-indigo-300' : 'bg-slate-50'}`}>
                   <div className="font-bold text-slate-700 mb-3 border-b pb-1 text-center bg-white rounded shadow-sm py-1">
@@ -615,6 +691,13 @@ export default function App() {
                             <Clock className="w-3 h-3 text-slate-400" />
                             <span dir="ltr">{event.startTime} - {event.endTime}</span>
                           </div>
+                          {/* Location badge */}
+                          {event.location && (
+                            <div className="flex items-center gap-1 text-[10px] text-slate-400 mt-0.5">
+                              <MapPin className="w-2.5 h-2.5" />
+                              <span>{LOCATION_LABELS[event.location] || event.location}</span>
+                            </div>
+                          )}
                           {event.recurrence && (
                             <span className="text-[10px] text-blue-500 font-medium">
                               {recurrenceLabels[event.recurrence] || event.recurrence}
@@ -765,6 +848,13 @@ export default function App() {
       {/* Footer with build time */}
       <footer className="max-w-6xl mx-auto mt-12 text-center text-xs text-slate-400 border-t pt-4">
         <p>גרסה מעודכנת: {typeof __BUILD_TIME__ !== 'undefined' ? __BUILD_TIME__ : 'מקומית'}</p>
+        <button
+          onClick={() => setShowPrivacy(true)}
+          className="mt-2 inline-flex items-center gap-1 text-slate-400 hover:text-slate-600 transition"
+        >
+          <Shield className="w-3 h-3" />
+          Privacy Policy
+        </button>
       </footer>
     </div>
   );

@@ -114,7 +114,7 @@ if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET &&
   passport.use(new GoogleStrategy({
     clientID: GOOGLE_CLIENT_ID,
     clientSecret: GOOGLE_CLIENT_SECRET,
-    callbackURL: process.env.GOOGLE_CALLBACK_URL || "http://localhost:5000/api/auth/google/callback"
+    callbackURL: process.env.GOOGLE_CALLBACK_URL || 'http://localhost:5000/api/auth/google/callback'
   }, (accessToken, refreshToken, profile, done) => {
     const user = {
       id: profile.id,
@@ -204,6 +204,9 @@ function expandEventForMonth(event, year, month) {
   const targetDayOfWeek = dayMap[event.day];
   if (targetDayOfWeek === undefined) return results;
 
+  // If the event has a stored targetDate, use it for "once" events
+  const storedTargetDate = event.targetDate && new Date(event.targetDate);
+
   for (let d = 1; d <= daysInMonth; d++) {
     const date = new Date(year, month, d);
     const dow = date.getDay();
@@ -214,17 +217,29 @@ function expandEventForMonth(event, year, month) {
 
     switch (event.recurrence || 'weekly') {
       case 'once': {
-        // For "once" events: calculate the next occurrence of this day
-        const today = new Date();
-        const currentDayOfWeek = today.getDay();
-        let daysUntilTarget = targetDayOfWeek - currentDayOfWeek;
-        if (daysUntilTarget <= 0) daysUntilTarget += 7;
-        const nextDate = new Date(today);
-        nextDate.setDate(today.getDate() + daysUntilTarget);
-        const nextDateStr = `${nextDate.getFullYear()}-${String(nextDate.getMonth()+1).padStart(2,'0')}-${String(nextDate.getDate()).padStart(2,'0')}`;
-        const thisDateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-        if (thisDateStr === nextDateStr) {
-          include = true;
+        // For "once" events: use the stored targetDate if available,
+        // otherwise calculate the next occurrence of this day from today
+        if (storedTargetDate) {
+          // Use the stored exact date
+          const thisDateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+          const targetDateStr = `${storedTargetDate.getFullYear()}-${String(storedTargetDate.getMonth()+1).padStart(2,'0')}-${String(storedTargetDate.getDate()).padStart(2,'0')}`;
+          if (thisDateStr === targetDateStr) {
+            include = true;
+          }
+        } else {
+          // Fallback: calculate the next occurrence of this day from today
+          const today = new Date();
+          const currentDayOfWeek = today.getDay();
+          let daysUntilTarget = targetDayOfWeek - currentDayOfWeek;
+          // If today is the target day, event is for today (not next week)
+          if (daysUntilTarget < 0) daysUntilTarget += 7;
+          const nextDate = new Date(today);
+          nextDate.setDate(today.getDate() + daysUntilTarget);
+          const nextDateStr = `${nextDate.getFullYear()}-${String(nextDate.getMonth()+1).padStart(2,'0')}-${String(nextDate.getDate()).padStart(2,'0')}`;
+          const thisDateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+          if (thisDateStr === nextDateStr) {
+            include = true;
+          }
         }
         break;
       }
@@ -272,6 +287,8 @@ function expandEventsForYear(schedule, year) {
   const allEvents = [];
   for (let month = 0; month < 12; month++) {
     for (const dayKey of Object.keys(schedule)) {
+      // Skip "Today" key to avoid duplicate expansion — "Today" mirrors the actual day's events
+      if (dayKey === 'Today') continue;
       const dayEvents = schedule[dayKey] || [];
       for (const event of dayEvents) {
         const expanded = expandEventForMonth(event, year, month);
@@ -933,6 +950,15 @@ function mergeGaps(schedule) {
 // 6. Auth routes
 // ──────────────────────────────────────────────
 
+// Google OAuth scopes — use minimal required scopes.
+// 'openid' + 'email' + 'profile' are the standard OpenID Connect scopes for identity.
+// 'https://www.googleapis.com/auth/calendar.events' is required only for Google Calendar sync.
+// To reduce scope during OAuth verification, set OAUTH_SCOPES in .env (comma-separated).
+// Default: openid,email,profile,https://www.googleapis.com/auth/calendar.events
+const OAUTH_SCOPES = process.env.OAUTH_SCOPES
+  ? process.env.OAUTH_SCOPES.split(',').map(s => s.trim())
+  : ['openid', 'profile', 'email', 'https://www.googleapis.com/auth/calendar.events'];
+
 app.get('/api/auth/google',
   (req, res, next) => {
     if (!GOOGLE_CLIENT_ID || GOOGLE_CLIENT_ID === 'your_google_client_id_here') {
@@ -940,7 +966,11 @@ app.get('/api/auth/google',
     }
     next();
   },
-  passport.authenticate('google', { scope: ['profile', 'email', 'https://www.googleapis.com/auth/calendar.events'] })
+  passport.authenticate('google', {
+    scope: OAUTH_SCOPES,
+    accessType: 'offline',
+    prompt: 'consent'
+  })
 );
 
 app.get('/api/auth/google/callback',
@@ -1146,7 +1176,8 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
       const eventWithRecurrence = {
         ...event,
         day: day, // Ensure day is the actual day name
-        recurrence: recurrence || 'weekly'
+        recurrence: recurrence || 'weekly',
+        location: locationId // Store the location with the event
       };
 
       if (schedule[day]) {
@@ -1365,6 +1396,8 @@ app.get('/api/schedule/expanded', (req, res) => {
   const monthEvents = [];
   
   for (const dayKey of Object.keys(schedule)) {
+    // Skip "Today" key to avoid duplicate expansion — "Today" mirrors the actual day's events
+    if (dayKey === 'Today') continue;
     const dayEvents = schedule[dayKey] || [];
     for (const event of dayEvents) {
       const expanded = expandEventForMonth(event, year, month);
