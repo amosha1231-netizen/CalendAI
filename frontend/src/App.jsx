@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X } from "lucide-react";
+import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin } from "lucide-react";
 import MonthlyCalendar from "./components/MonthlyCalendar";
+import LocationSelector from "./components/LocationSelector";
 
 // API URL - use environment variable for production, empty for local dev (uses Vite proxy)
 const API_BASE = import.meta.env.VITE_API_URL || "";
@@ -54,6 +55,9 @@ export default function App() {
   const [gapsResult, setGapsResult] = useState(null); // { gaps, hasGaps }
   const [rescheduleMode, setRescheduleMode] = useState(null); // "shift" | "merge"
   const [selectedGaps, setSelectedGaps] = useState([]);
+  // Location state
+  const [selectedLocation, setSelectedLocation] = useState("jerusalem");
+  
   // User state
   const [user, setUser] = useState(null);
   
@@ -130,7 +134,7 @@ export default function App() {
       const response = await fetch(`${API_BASE}/api/parse-schedule`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: inputText, recurrence }),
+        body: JSON.stringify({ text: inputText, recurrence, location: selectedLocation }),
         credentials: "include"
       });
 
@@ -458,6 +462,14 @@ export default function App() {
                 {suggestion}
               </button>
             ))}
+          </div>
+
+          {/* Location Selector */}
+          <div className="mt-4">
+            <LocationSelector
+              selectedLocation={selectedLocation}
+              onLocationChange={setSelectedLocation}
+            />
           </div>
 
           {/* Recurrence Selector */}

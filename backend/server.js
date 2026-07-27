@@ -142,7 +142,14 @@ if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET &&
 
 
 // ──────────────────────────────────────────────
-// 3. Persistent schedule storage per user (file-backed)
+// 3. Locations data
+// ──────────────────────────────────────────────
+const LOCATIONS_DATA = JSON.parse(fs.readFileSync(path.join(__dirname, 'data', 'locations.json'), 'utf-8'));
+const LOCATIONS = LOCATIONS_DATA.locations;
+const DEFAULT_LOCATION_ID = 'jerusalem';
+
+// ──────────────────────────────────────────────
+// 4. Persistent schedule storage per user (file-backed)
 // ──────────────────────────────────────────────
 let userSchedules = loadSchedules();
 
@@ -985,12 +992,33 @@ function parseTimeToMinutes(timeStr) {
 }
 
 /**
+ * Convert "HH:MM" (24h) string to total minutes from midnight.
+ */
+function parseTimeToMinutes24(timeStr) {
+  if (!timeStr) return null;
+  const parts = timeStr.split(':');
+  if (parts.length < 2) return null;
+  const hours = parseInt(parts[0], 10);
+  const minutes = parseInt(parts[1], 10);
+  if (isNaN(hours) || isNaN(minutes)) return null;
+  return hours * 60 + minutes;
+}
+
+/**
  * Check if a new event conflicts with existing events on the same day.
  * Returns conflicts array with suggested alternative free slots.
+ * @param {Object} newEvent - The event to check
+ * @param {Array} existingEvents - Existing events on the same day
+ * @param {Object} [options] - Optional location settings
+ * @param {string} [options.dayStart="06:00"] - Day start time in 24h format
+ * @param {string} [options.dayEnd="23:00"] - Day end time in 24h format
  */
-function detectConflicts(newEvent, existingEvents) {
+function detectConflicts(newEvent, existingEvents, options = {}) {
   const newStart = parseTimeToMinutes(newEvent.startTime);
   const newEnd = parseTimeToMinutes(newEvent.endTime);
+  
+  const dayStart = options.dayStart ? parseTimeToMinutes24(options.dayStart) : 6 * 60; // 06:00
+  const dayEnd = options.dayEnd ? parseTimeToMinutes24(options.dayEnd) : 23 * 60; // 23:00
   if (newStart === null || newEnd === null) return { hasConflict: false, conflicts: [], suggestions: [] };
 
   const conflicts = [];
@@ -1009,7 +1037,7 @@ function detectConflicts(newEvent, existingEvents) {
     }
   }
 
-  // Find free slots on the same day (assuming day starts at 06:00 and ends at 23:00)
+  // Find free slots on the same day (using location-aware day bounds)
   const suggestions = [];
   if (conflicts.length > 0) {
     const busySlots = existingEvents
@@ -1020,8 +1048,6 @@ function detectConflicts(newEvent, existingEvents) {
       .filter(s => s.start !== null && s.end !== null)
       .sort((a, b) => a.start - b.start);
 
-    const dayStart = 6 * 60; // 06:00
-    const dayEnd = 23 * 60;  // 23:00
     const duration = newEnd - newStart;
 
     let cursor = dayStart;
@@ -1089,7 +1115,7 @@ function syncTodayWithCurrentDay(schedule) {
 // POST /api/parse-schedule – parse text and ADD to user's schedule
 app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
 
-  const { text, recurrence } = req.body;
+  const { text, recurrence, location } = req.body;
   if (!text || !text.trim()) {
     return res.status(400).json({ error: 'Text input is required.' });
   }
@@ -1099,6 +1125,14 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
     const userId = getUserId(req);
     const schedule = getUserSchedule(userId);
     const todayName = getTodayDayName();
+
+    // Resolve location-based day bounds for conflict detection
+    const locationId = location || DEFAULT_LOCATION_ID;
+    const locData = LOCATIONS.find(loc => loc.id === locationId);
+    const locationOptions = locData ? {
+      dayStart: locData.defaultDayStart,
+      dayEnd: locData.defaultDayEnd
+    } : {};
 
     const addedEvents = [];
     const conflictWarnings = [];
@@ -1116,8 +1150,8 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
       };
 
       if (schedule[day]) {
-        // --- START: Conflict Detection ---
-        const { hasConflict, conflicts, suggestions } = detectConflicts(eventWithRecurrence, schedule[day]);
+        // --- START: Conflict Detection (location-aware) ---
+        const { hasConflict, conflicts, suggestions } = detectConflicts(eventWithRecurrence, schedule[day], locationOptions);
         if (hasConflict) {
           conflictWarnings.push({
             day: day,
@@ -1160,10 +1194,15 @@ app.post('/api/add-to-google-calendar', async (req, res) => {
   }
 
 
-  const { event } = req.body;
+  const { event, location } = req.body;
   if (!event || !event.title || !event.startTime || !event.day) {
     return res.status(400).json({ error: 'Invalid event data provided.' });
   }
+
+  // Resolve timezone from location
+  const locationId = location || DEFAULT_LOCATION_ID;
+  const locData = LOCATIONS.find(loc => loc.id === locationId);
+  const timeZone = locData ? locData.timezone : 'Asia/Jerusalem';
 
   const accessToken = req.session.passport.user.accessToken;
   const oauth2Client = new google.auth.OAuth2();
@@ -1195,8 +1234,8 @@ app.post('/api/add-to-google-calendar', async (req, res) => {
       calendarId: 'primary',
       requestBody: {
         summary: event.title,
-        start: { dateTime: startDateTime.toISOString(), timeZone: 'Asia/Jerusalem' },
-        end: { dateTime: endDateTime.toISOString(), timeZone: 'Asia/Jerusalem' },
+        start: { dateTime: startDateTime.toISOString(), timeZone },
+        end: { dateTime: endDateTime.toISOString(), timeZone },
       },
     });
     res.json({ ok: true, message: 'Event added to Google Calendar!', link: gcalEvent.data.htmlLink });
@@ -1362,14 +1401,52 @@ app.delete('/api/schedule/event', (req, res) => {
 });
 
 // ──────────────────────────────────────────────
-// 10. Health & Fallback
+// 10. Locations API
+// ──────────────────────────────────────────────
+
+// GET /api/locations – get all available locations
+app.get('/api/locations', (_req, res) => {
+  const locationsList = LOCATIONS.map(loc => ({
+    id: loc.id,
+    name: loc.name,
+    label: loc.label,
+    timezone: loc.timezone,
+    availableDays: loc.availableDays,
+    defaultDayStart: loc.defaultDayStart,
+    defaultDayEnd: loc.defaultDayEnd
+  }));
+  res.json({ locations: locationsList });
+});
+
+// GET /api/locations/:id/slots – get available time slots for a location
+app.get('/api/locations/:id/slots', (req, res) => {
+  const location = LOCATIONS.find(loc => loc.id === req.params.id);
+  if (!location) {
+    return res.status(404).json({ error: 'Location not found.' });
+  }
+  res.json({
+    location: {
+      id: location.id,
+      name: location.name,
+      label: location.label,
+      timezone: location.timezone,
+      availableDays: location.availableDays,
+      defaultDayStart: location.defaultDayStart,
+      defaultDayEnd: location.defaultDayEnd
+    },
+    timeSlots: location.timeSlots
+  });
+});
+
+// ──────────────────────────────────────────────
+// 11. Health & Fallback
 // ──────────────────────────────────────────────
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, message: 'CalendAI backend is running.' });
 });
 
 // ──────────────────────────────────────────────
-// 11. Serve frontend for any non-API route
+// 12. Serve frontend for any non-API route
 // ──────────────────────────────────────────────
 app.get('*', (req, res) => {
   res.sendFile(path.join(frontendDist, 'index.html'));
