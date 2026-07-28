@@ -1095,14 +1095,11 @@ function mergeGaps(schedule) {
 // 6. Auth routes
 // ──────────────────────────────────────────────
 
-// Google OAuth scopes — use minimal required scopes.
-// 'openid' + 'email' + 'profile' are the standard OpenID Connect scopes for identity.
-// 'https://www.googleapis.com/auth/calendar.events' is required only for Google Calendar sync.
-// To reduce scope during OAuth verification, set OAUTH_SCOPES in .env (comma-separated).
-// Default: openid,email,profile,https://www.googleapis.com/auth/calendar.events
+// Google OAuth scopes — minimal: only 'profile' and 'email'.
+// No calendar, offline, or openid scopes to keep OAuth consent simple.
 const OAUTH_SCOPES = process.env.OAUTH_SCOPES
   ? process.env.OAUTH_SCOPES.split(',').map(s => s.trim())
-  : ['openid', 'profile', 'email', 'https://www.googleapis.com/auth/calendar.events'];
+  : ['profile', 'email'];
 
 app.get('/api/auth/google',
   (req, res, next) => {
@@ -1112,9 +1109,7 @@ app.get('/api/auth/google',
     next();
   },
   passport.authenticate('google', {
-    scope: OAUTH_SCOPES,
-    accessType: 'offline',
-    prompt: 'consent'
+    scope: OAUTH_SCOPES
   })
 );
 
