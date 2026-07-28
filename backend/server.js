@@ -61,13 +61,17 @@ function saveSchedules(map) {
 // ──────────────────────────────────────────────
 const isProduction = process.env.NODE_ENV === 'production' || !!process.env.RENDER;
 
+// Dynamic base URLs for production vs local development
+const CLIENT_URL = process.env.CLIENT_URL || (isProduction ? 'https://calendai.onrender.com' : 'http://localhost:5173');
+const BACKEND_URL = process.env.BACKEND_URL || (isProduction ? 'https://calendai.onrender.com' : 'http://localhost:5000');
+
 // Trust the Render/production reverse proxy so secure cookies work correctly
 if (isProduction) {
   app.set('trust proxy', 1);
 }
 
 app.use(cors({
-  origin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : ['http://localhost:5173', 'https://calendai-backend-dfmi.onrender.com'],
+  origin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : ['http://localhost:5173', 'https://calendai.onrender.com', 'https://calendai-backend-dfmi.onrender.com'],
   credentials: true
 }));
 app.use(express.json());
@@ -114,7 +118,7 @@ if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET &&
   passport.use(new GoogleStrategy({
     clientID: GOOGLE_CLIENT_ID,
     clientSecret: GOOGLE_CLIENT_SECRET,
-    callbackURL: process.env.GOOGLE_CALLBACK_URL || 'http://localhost:5000/api/auth/google/callback'
+    callbackURL: process.env.GOOGLE_CALLBACK_URL || `${BACKEND_URL}/api/auth/google/callback`
   }, (accessToken, refreshToken, profile, done) => {
     const user = {
       id: profile.id,
@@ -192,7 +196,7 @@ function getUserSchedule(userId) {
 
 /**
  * Expand a recurring event into actual dates within a given month/year.
- * recurrence can be: "once", "weekly", "monthly", "yearly", "forever"
+ * recurrence can be: "once", "daily", "weekly", "monthly", "yearly", "forever"
  */
 function expandEventForMonth(event, year, month) {
   const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -243,6 +247,12 @@ function expandEventForMonth(event, year, month) {
         }
         break;
       }
+      case 'daily':
+        // Daily events appear every day regardless of day of week
+        // Since we iterate by day-of-week match above, we need to handle daily differently
+        // For daily events, we include ALL days, not just matching day-of-week
+        // We'll handle this by returning early with all days
+        break;
       case 'weekly':
         include = true;
         break;
@@ -281,6 +291,26 @@ function expandEventForMonth(event, year, month) {
 }
 
 /**
+ * Expand a daily recurring event into ALL dates within a given month/year.
+ * This is separate because daily events should appear every day, not just on a specific day-of-week.
+ */
+function expandDailyEventForMonth(event, year, month) {
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const results = [];
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    results.push({
+      ...event,
+      date: `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`,
+      dayOfMonth: d,
+      dayOfWeek: new Date(year, month, d).getDay()
+    });
+  }
+
+  return results;
+}
+
+/**
  * Expand events for a full year, returning all occurrences.
  */
 function expandEventsForYear(schedule, year) {
@@ -291,7 +321,12 @@ function expandEventsForYear(schedule, year) {
       if (dayKey === 'Today') continue;
       const dayEvents = schedule[dayKey] || [];
       for (const event of dayEvents) {
-        const expanded = expandEventForMonth(event, year, month);
+        let expanded;
+        if (event.recurrence === 'daily') {
+          expanded = expandDailyEventForMonth(event, year, month);
+        } else {
+          expanded = expandEventForMonth(event, year, month);
+        }
         allEvents.push(...expanded);
       }
     }
@@ -572,9 +607,13 @@ async function parseWithGemini(text) {
     ─────────────────────────────────────────────
     - Current date and time: ${todayString}, ${currentTimeString}
     - Today's English day name: ${todayEnglish}
+    - Today's date (ISO): ${now.toISOString().split('T')[0]}
     - Use this information to resolve relative terms like "היום" / "today", "מחר" / "tomorrow", "מחרתיים" / "day after tomorrow", "השבוע" / "this week", "בשבוע הבא" / "next week", "בראשון" / "on Sunday", "בשני" / "on Monday", etc.
     - Assume the user is in Israel (Asia/Jerusalem timezone) unless otherwise specified.
     - Understand both Hebrew terms (e.g., "שני", "שלישי") and English terms (e.g., "Monday", "Tuesday") for days.
+    - **CRITICAL DAY RESOLUTION FOR ENGLISH**: When the user specifies a day name in English (e.g., "Monday", "Tuesday"), you MUST calculate the exact date of that day in the CURRENT or NEXT week (whichever comes first, starting from today). For example, if today is Tuesday and the user says "Monday", that means NEXT Monday (today + 6 days). If today is Monday and the user says "Monday", that means TODAY. Use the current date information above to compute the exact date. Do NOT guess or shift days incorrectly.
+    - **CRITICAL DAY RESOLUTION FOR HEBREW**: When the user specifies a day in Hebrew (e.g., "שני", "שלישי"), resolve it the same way: find the next occurrence of that day from today.
+    - **IMPORTANT**: "Monday evening" means Monday, NOT Tuesday. "Tuesday morning" means Tuesday, NOT Wednesday. The day name IS the day the event should be scheduled on. Do not shift the event to the next day.
 
     ─────────────────────────────────────────────
     STEP 1: REASONING (Chain of Thought)
@@ -619,6 +658,13 @@ async function parseWithGemini(text) {
     - **Rest Breaks**: If scheduling multiple events in sequence, leave 5-15 minute gaps between them.
     - **Conflicts**: If the user's request would create overlapping events, note this in "reasoning" and suggest alternatives in the replyMessage.
     - **Sleep Handling**: Sleep hours CROSS MIDNIGHT. For example, "קבע לי 8 שעות שינה בלילה" / "set me 8 hours of sleep tonight" means 11:00 PM to 07:00 AM (next day). Mark the event with "isSleep": true.
+    - **SLEEP / BEDTIME HANDLING (CRITICAL)**: When the user requests sleep/bedtime (e.g., "8 שעות שינה בלילה" / "8 hours of sleep at night"):
+      1. Set startTime to 11:00 PM (23:00) and endTime to exactly X hours later (e.g., 07:00 AM next day for 8 hours).
+      2. Set "isSleep": true on the event.
+      3. Set "recurrence": "daily" so the sleep schedule repeats every night.
+      4. Create the event for EVERY day of the week (Sunday through Saturday), not just one day.
+      5. The event crosses midnight, so the endTime is on the next day.
+      6. The title should be "שינה" / "Sleep" in the appropriate language.
     - **Free Slot Detection**: When a user says "תפנה לי X דקות/שעות" / "find me X minutes/hours free", set "needsFreeSlot": true with "freeSlotDuration" (in minutes).
     - **Editing Events**: If a user says "תעדכן/תשנה" / "update/change" an event, include "isEdit": true.
 
@@ -636,7 +682,9 @@ async function parseWithGemini(text) {
           "day": "string – English day name (Sunday, Monday, etc.)",
           "startTime": "string – HH:MM AM/PM format",
           "endTime": "string – HH:MM AM/PM format",
-          "isRecurring": "boolean – true if this repeats weekly",
+          "recurrence": "string – 'once', 'daily', 'weekly', 'monthly', 'yearly', or 'forever'. For sleep/bedtime events, use 'daily'.",
+          "isRecurring": "boolean – true if this repeats weekly or daily",
+          "isSleep": "boolean – true if this is a sleep/bedtime event",
           "hasAdvice": "boolean – true if user asked for help/ideas",
           "aiAdvice": "string – practical advice in the SAME LANGUAGE as the user's request, or empty string"
         }
@@ -656,8 +704,8 @@ async function parseWithGemini(text) {
       "reasoning": "המשתמש מתאר שרשרת אירועים להיום. היום הוא יום שישי. תפילה מתחילה ב-07:15 בבוקר ונמשכת שעה ורבע (75 דקות) = עד 08:30. אחרי זה מיד מוציאים את הכלב לחצי שעה = 08:30-09:00.",
       "replyMessage": "בטח, קבעתי לך שני אירועים להיום (יום שישי): תפילה מ-07:15 עד 08:30, ואז להוציא את הכלב מ-08:30 עד 09:00. שיהיה יום נהדר!",
       "events": [
-        { "title": "תפילה", "day": "Friday", "startTime": "07:15 AM", "endTime": "08:30 AM", "isRecurring": false, "hasAdvice": false, "aiAdvice": "" },
-        { "title": "להוציא את הכלב", "day": "Friday", "startTime": "08:30 AM", "endTime": "09:00 AM", "isRecurring": false, "hasAdvice": false, "aiAdvice": "" }
+        { "title": "תפילה", "day": "Friday", "startTime": "07:15 AM", "endTime": "08:30 AM", "recurrence": "once", "isRecurring": false, "isSleep": false, "hasAdvice": false, "aiAdvice": "" },
+        { "title": "להוציא את הכלב", "day": "Friday", "startTime": "08:30 AM", "endTime": "09:00 AM", "recurrence": "once", "isRecurring": false, "isSleep": false, "hasAdvice": false, "aiAdvice": "" }
       ]
     }
 
@@ -668,9 +716,9 @@ async function parseWithGemini(text) {
       "reasoning": "The user wants 3 workouts this week in the morning. Today is Monday, so remaining days are: Monday, Tuesday, Wednesday, Thursday, Friday. I will distribute workouts on Monday, Wednesday, Friday at 06:00 AM, a common workout time. Each workout will be 1 hour (default).",
       "replyMessage": "I've scheduled 3 workouts for this week: Monday, Wednesday, and Friday at 06:00 AM. Each workout is 1 hour. Good luck!",
       "events": [
-        { "title": "Workout", "day": "Monday", "startTime": "06:00 AM", "endTime": "07:00 AM", "isRecurring": false, "hasAdvice": false, "aiAdvice": "" },
-        { "title": "Workout", "day": "Wednesday", "startTime": "06:00 AM", "endTime": "07:00 AM", "isRecurring": false, "hasAdvice": false, "aiAdvice": "" },
-        { "title": "Workout", "day": "Friday", "startTime": "06:00 AM", "endTime": "07:00 AM", "isRecurring": false, "hasAdvice": false, "aiAdvice": "" }
+        { "title": "Workout", "day": "Monday", "startTime": "06:00 AM", "endTime": "07:00 AM", "recurrence": "weekly", "isRecurring": true, "isSleep": false, "hasAdvice": false, "aiAdvice": "" },
+        { "title": "Workout", "day": "Wednesday", "startTime": "06:00 AM", "endTime": "07:00 AM", "recurrence": "weekly", "isRecurring": true, "isSleep": false, "hasAdvice": false, "aiAdvice": "" },
+        { "title": "Workout", "day": "Friday", "startTime": "06:00 AM", "endTime": "07:00 AM", "recurrence": "weekly", "isRecurring": true, "isSleep": false, "hasAdvice": false, "aiAdvice": "" }
       ]
     }
 
@@ -681,7 +729,24 @@ async function parseWithGemini(text) {
       "reasoning": "The user wants a reminder to buy milk tomorrow. Today is Monday, so tomorrow is Tuesday. The reminder should fire at 09:00 AM on Tuesday.",
       "replyMessage": "I've set a reminder for you to buy milk tomorrow (Tuesday) at 09:00 AM.",
       "events": [
-        { "title": "Buy milk", "day": "Tuesday", "startTime": "09:00 AM", "endTime": "09:15 AM", "isRecurring": false, "hasAdvice": false, "aiAdvice": "", "isReminder": true, "reminderTime": "2026-07-29T06:00:00.000Z" }
+        { "title": "Buy milk", "day": "Tuesday", "startTime": "09:00 AM", "endTime": "09:15 AM", "recurrence": "once", "isRecurring": false, "isSleep": false, "hasAdvice": false, "aiAdvice": "", "isReminder": true, "reminderTime": "2026-07-29T06:00:00.000Z" }
+      ]
+    }
+
+    Example 4 (Hebrew): Sleep request
+    User text: "קבע לי 8 שעות שינה בלילה"
+    Expected JSON:
+    {
+      "reasoning": "המשתמש מבקש 8 שעות שינה בלילה. ברירת המחדל לשינה היא 23:00-07:00 (8 שעות). השינה חוצה חצות. אני אקבע אירוע שינה יומי (daily) לכל ימות השבוע עם isSleep: true.",
+      "replyMessage": "קבעתי לך 8 שעות שינה בכל לילה, מ-23:00 עד 07:00 למחרת. לילה טוב!",
+      "events": [
+        { "title": "שינה", "day": "Sunday", "startTime": "11:00 PM", "endTime": "07:00 AM", "recurrence": "daily", "isRecurring": true, "isSleep": true, "hasAdvice": false, "aiAdvice": "" },
+        { "title": "שינה", "day": "Monday", "startTime": "11:00 PM", "endTime": "07:00 AM", "recurrence": "daily", "isRecurring": true, "isSleep": true, "hasAdvice": false, "aiAdvice": "" },
+        { "title": "שינה", "day": "Tuesday", "startTime": "11:00 PM", "endTime": "07:00 AM", "recurrence": "daily", "isRecurring": true, "isSleep": true, "hasAdvice": false, "aiAdvice": "" },
+        { "title": "שינה", "day": "Wednesday", "startTime": "11:00 PM", "endTime": "07:00 AM", "recurrence": "daily", "isRecurring": true, "isSleep": true, "hasAdvice": false, "aiAdvice": "" },
+        { "title": "שינה", "day": "Thursday", "startTime": "11:00 PM", "endTime": "07:00 AM", "recurrence": "daily", "isRecurring": true, "isSleep": true, "hasAdvice": false, "aiAdvice": "" },
+        { "title": "שינה", "day": "Friday", "startTime": "11:00 PM", "endTime": "07:00 AM", "recurrence": "daily", "isRecurring": true, "isSleep": true, "hasAdvice": false, "aiAdvice": "" },
+        { "title": "שינה", "day": "Saturday", "startTime": "11:00 PM", "endTime": "07:00 AM", "recurrence": "daily", "isRecurring": true, "isSleep": true, "hasAdvice": false, "aiAdvice": "" }
       ]
     }
 
@@ -740,8 +805,8 @@ async function parseWithGemini(text) {
     // Last resort fallback: if the model returned a flat array of events
     if (Array.isArray(parsed)) {
       return {
-        reasoning: 'המודל החזיר מערך אירועים ללא הסבר. התקבל על ידי המערכת.',
-        replyMessage: `נוספו ${parsed.length} אירועים חדשים.`,
+        reasoning: isEnglish ? 'The model returned an array of events without explanation. Accepted by the system.' : 'המודל החזיר מערך אירועים ללא הסבר. התקבל על ידי המערכת.',
+        replyMessage: isEnglish ? `Added ${parsed.length} new events.` : `נוספו ${parsed.length} אירועים חדשים.`,
         events: parsed
       };
     }
@@ -749,8 +814,8 @@ async function parseWithGemini(text) {
     // If the response is a single event object
     if (parsed.title && parsed.day) {
       return {
-        reasoning: parsed.reasoning || 'המודל החזיר אירוע בודד.',
-        replyMessage: parsed.replyMessage || 'נוסף אירוע אחד חדש.',
+        reasoning: parsed.reasoning || (isEnglish ? 'The model returned a single event.' : 'המודל החזיר אירוע בודד.'),
+        replyMessage: parsed.replyMessage || (isEnglish ? 'Added one new event.' : 'נוסף אירוע אחד חדש.'),
         events: [parsed]
       };
     }
@@ -766,16 +831,20 @@ async function parseWithGemini(text) {
 }
 
 function fallbackParseAdvice(text) {
-  // Check if the text contains advice-related keywords
-  const adviceKeywords = ['תן לי','תמצא','תציע','המלץ','עזור','עזרי','רעיון','איך','מה להכין','מה לעשות','תעזור לי'];
-  const hasAdvice = adviceKeywords.some(kw => text.includes(kw));
+  // Detect if the text is in English
+  const isEnglish = /^[a-zA-Z0-9\s.,!?;:'"()-]+$/.test(text.trim()) && /[a-zA-Z]/.test(text.trim());
+  
+  // Check if the text contains advice-related keywords (both Hebrew and English)
+  const adviceKeywordsHe = ['תן לי','תמצא','תציע','המלץ','עזור','עזרי','רעיון','איך','מה להכין','מה לעשות','תעזור לי'];
+  const adviceKeywordsEn = ['suggest', 'recommend', 'help', 'idea', 'how', 'what', 'find me', 'advice'];
+  const hasAdvice = adviceKeywordsHe.some(kw => text.includes(kw)) || adviceKeywordsEn.some(kw => text.toLowerCase().includes(kw));
 
   let events;
   try {
     events = fallbackParse(text);
   } catch (e) {
     events = [{
-        title: 'פגישה / אירוע',
+        title: isEnglish ? 'Meeting / Event' : 'פגישה / אירוע',
         day: 'Today',
         startTime: '06:00 PM',
         endTime: '07:00 PM',
@@ -786,11 +855,15 @@ function fallbackParseAdvice(text) {
   const eventsWithAdvice = events.map(ev => ({
       ...ev,
       hasAdvice: hasAdvice,
-      aiAdvice: hasAdvice ? 'מומלץ לפצל את המשימה לשלבים קטנים ולהתחיל מוקדם.' : ''
+      aiAdvice: hasAdvice 
+        ? (isEnglish ? 'It is recommended to break the task into small steps and start early.' : 'מומלץ לפצל את המשימה לשלבים קטנים ולהתחיל מוקדם.')
+        : ''
   }));
 
   return {
-    replyMessage: `הצלחתי להוסיף ${events.length} אירועים מהטקסט שלך.`,
+    replyMessage: isEnglish 
+      ? `Successfully added ${events.length} event(s) from your text.`
+      : `הצלחתי להוסיף ${events.length} אירועים מהטקסט שלך.`,
     events: eventsWithAdvice
   };
 }
@@ -1112,7 +1185,7 @@ app.get('/api/auth/google',
 app.get('/api/auth/google/callback',
   passport.authenticate('google', { failureRedirect: '/' }),
   (req, res) => {
-    res.redirect(process.env.FRONTEND_URL || 'http://localhost:5173');
+    res.redirect(process.env.FRONTEND_URL || CLIENT_URL);
   }
 );
 
@@ -1467,10 +1540,17 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
         day = todayName;
       }
 
+      // Determine recurrence: if event has isSleep=true, force recurrence to "daily"
+      // Otherwise use the event's recurrence if provided, else fall back to the request's recurrence or 'weekly'
+      let eventRecurrence = event.recurrence || recurrence || 'weekly';
+      if (event.isSleep) {
+        eventRecurrence = 'daily';
+      }
+
       const eventWithRecurrence = {
         ...event,
         day: day, // Ensure day is the actual day name
-        recurrence: recurrence || 'weekly',
+        recurrence: eventRecurrence,
         location: locationId // Store the location with the event
       };
 
@@ -1694,7 +1774,12 @@ app.get('/api/schedule/expanded', (req, res) => {
     if (dayKey === 'Today') continue;
     const dayEvents = schedule[dayKey] || [];
     for (const event of dayEvents) {
-      const expanded = expandEventForMonth(event, year, month);
+      let expanded;
+      if (event.recurrence === 'daily') {
+        expanded = expandDailyEventForMonth(event, year, month);
+      } else {
+        expanded = expandEventForMonth(event, year, month);
+      }
       monthEvents.push(...expanded);
     }
   }

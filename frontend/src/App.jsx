@@ -9,6 +9,7 @@ const API_BASE = import.meta.env.VITE_API_URL || "";
 
 const RECURRENCE_OPTIONS = (lang) => [
   { value: "once", label: translations[lang].recurrenceOnce },
+  { value: "daily", label: translations[lang].recurrenceDaily },
   { value: "weekly", label: translations[lang].recurrenceWeekly },
   { value: "monthly", label: translations[lang].recurrenceMonthly },
   { value: "yearly", label: translations[lang].recurrenceYearly },
@@ -479,17 +480,16 @@ export default function App() {
 
   const recurrenceLabels = {
     once: t.recurrenceOnce,
+    daily: t.recurrenceDaily,
     weekly: t.recurrenceWeekly,
     monthly: t.recurrenceMonthly,
     yearly: t.recurrenceYearly,
     forever: t.recurrenceForever
   };
   const dayNamesEn = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  const dayNamesHe = ['יום ראשון', 'יום שני', 'יום שלישי', 'יום רביעי', 'יום חמישי', 'יום שישי', 'יום שבת'];
   const dayNamesLocalized = [t.daySunday, t.dayMonday, t.dayTuesday, t.dayWednesday, t.dayThursday, t.dayFriday, t.daySaturday];
   const todayName = dayNamesEn[new Date().getDay()];
   const todayNameLocalized = dayNamesLocalized[new Date().getDay()];
-  const todayNameHe = dayNamesHe[new Date().getDay()];
 
   const dayTranslations = {
     Sunday: t.daySunday, Monday: t.dayMonday, Tuesday: t.dayTuesday, Wednesday: t.dayWednesday,
@@ -741,7 +741,7 @@ export default function App() {
           </div>
         </div>
 
-        <MonthlyCalendar schedule={schedule} />
+        <MonthlyCalendar schedule={schedule} lang={lang} />
       </main>
 
       {/* Reschedule Modal */}

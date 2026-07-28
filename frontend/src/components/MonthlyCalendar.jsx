@@ -1,17 +1,15 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { CalendarDays, ChevronLeft, ChevronRight, Eye } from 'lucide-react';
+import translations from "../i18n";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
 
-const monthNames = [
-  "ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני",
-  "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר"
-];
-
-const dayNames = ["א'", "ב'", "ג'", "ד'", "ה'", "ו'", "ש'"];
 const enDays = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-export default function MonthlyCalendar({ schedule }) {
+export default function MonthlyCalendar({ schedule, lang }) {
+  const t = translations[lang] || translations.en;
+  const monthNames = t.monthNames;
+  const dayNames = t.dayNamesShort;
   const today = new Date();
   const [currentYear, setCurrentYear] = useState(today.getFullYear());
   const [currentMonth, setCurrentMonth] = useState(today.getMonth());
@@ -190,7 +188,7 @@ export default function MonthlyCalendar({ schedule }) {
 
     return (
       <div>
-        <p className="text-center text-sm text-slate-400 mb-2">תצוגה מתגלגלת - 12 חודשים קדימה מהחודש הנוכחי</p>
+        <p className="text-center text-sm text-slate-400 mb-2">{t.calendarYearViewDesc}</p>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {months.map(({ index: m, year: y, cells }) => {
@@ -243,7 +241,7 @@ export default function MonthlyCalendar({ schedule }) {
         <div className="flex items-center gap-3">
           <CalendarDays className="w-6 h-6 text-indigo-600" />
           <h2 className="text-xl font-bold text-slate-800">
-            {viewMode === 'month' ? 'לוח שנה חודשי' : 'לוח שנה שנתי מלא'}
+            {viewMode === 'month' ? t.calendarMonthlyView : t.calendarYearlyView}
           </h2>
         </div>
         <div className="flex items-center gap-2">
@@ -252,7 +250,7 @@ export default function MonthlyCalendar({ schedule }) {
             className="flex items-center gap-2 bg-indigo-50 text-indigo-700 px-4 py-2 rounded-lg hover:bg-indigo-100 transition text-sm font-medium border border-indigo-200"
           >
             <Eye className="w-4 h-4" />
-            {viewMode === 'month' ? 'הצג שנה מלאה' : 'הצג חודש'}
+            {viewMode === 'month' ? t.calendarToggleYear : t.calendarToggleMonth}
           </button>
         </div>
       </div>

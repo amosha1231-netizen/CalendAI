@@ -24,3 +24,7 @@ services:
         sync: false
       - key: FRONTEND_URL
         sync: false
+      - key: CLIENT_URL
+        sync: false
+      - key: BACKEND_URL
+        sync: false

@@ -28,6 +28,7 @@ const translations = {
 
     // Recurrence
     recurrenceOnce: "חד פעמי",
+    recurrenceDaily: "יומי",
     recurrenceWeekly: "שבועי",
     recurrenceMonthly: "חודשי",
     recurrenceYearly: "שנתי",
@@ -183,6 +184,7 @@ const translations = {
 
     // Recurrence
     recurrenceOnce: "Once",
+    recurrenceDaily: "Daily",
     recurrenceWeekly: "Weekly",
     recurrenceMonthly: "Monthly",
     recurrenceYearly: "Yearly",
@@ -307,6 +309,18 @@ const translations = {
     slotClickPrefix: 'On',
     slotClickFrom: 'from',
     slotClickUntil: 'until',
+
+    // Calendar / Monthly View
+    monthNames: ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'],
+    dayNamesShort: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+    calendarMonthlyView: 'Monthly Calendar',
+    calendarYearlyView: 'Full Year Calendar',
+    calendarYearViewDesc: 'Rolling view - 12 months ahead from current month',
+    calendarToggleMonth: 'Show Month',
+    calendarToggleYear: 'Show Full Year',
+
+    // AI Success message (used as fallback when backend doesn't provide replyMessage)
+    successAIMessage: 'Successfully added {count} event(s) from your text.',
 
     // Rate limit
     rateLimit: 'Too many requests. Please try again in a minute.',
