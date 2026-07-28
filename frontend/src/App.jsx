@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing } from "lucide-react";
+import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck } from "lucide-react";
 import MonthlyCalendar from "./components/MonthlyCalendar";
 import LocationSelector from "./components/LocationSelector";
 import Privacy from "./components/Privacy";
@@ -104,6 +104,10 @@ export default function App() {
     Sunday: [], Monday: [], Tuesday: [], Wednesday: [],
     Thursday: [], Friday: [], Saturday: [], Today: []
   });
+
+  // Splash Screen State
+  const [splashDone, setSplashDone] = useState(false);
+  const [splashFading, setSplashFading] = useState(false);
 
   // Notification / Reminder State
   const [notificationPerm, setNotificationPerm] = useState(Notification.permission);
@@ -224,6 +228,27 @@ export default function App() {
   }, []);
 
   useEffect(() => { fetchSchedule(); }, [fetchSchedule]);
+
+  // Splash screen: fade out when schedule loads or after 2 seconds max
+  useEffect(() => {
+    const hasData = Object.values(schedule).some(arr => arr.length > 0);
+    if (hasData || user !== null) {
+      setSplashFading(true);
+      const timer = setTimeout(() => setSplashDone(true), 600);
+      return () => clearTimeout(timer);
+    }
+  }, [schedule, user]);
+
+  useEffect(() => {
+    // Force splash to end after 2 seconds max
+    const timer = setTimeout(() => {
+      if (!splashDone) {
+        setSplashFading(true);
+        setTimeout(() => setSplashDone(true), 600);
+      }
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [splashDone]);
 
   const handleSlotClick = (day, slot) => {
     const [hour, minute] = slot.split(':').map(Number);
@@ -477,7 +502,26 @@ export default function App() {
   if (showPrivacy) return <Privacy onBack={() => setShowPrivacy(false)} />;
 
   return (
-    <div className="min-h-screen bg-slate-50 p-4 sm:p-6 font-sans" dir="rtl">
+    <>
+      {/* Splash Screen */}
+      {!splashDone && (
+        <div className={`splash-screen${splashFading ? ' fade-out' : ''}`}>
+          <div className="splash-logo-container">
+            <div className="splash-logo-ring" />
+            <div className="splash-logo-ring" />
+            <CalendarCheck className="splash-logo-icon" />
+          </div>
+          <h1 className="splash-title">CalendAI</h1>
+          <p className="splash-subtitle">מכין את הלו"ז החכם שלך...</p>
+          <div className="splash-dots">
+            <div className="splash-dot" />
+            <div className="splash-dot" />
+            <div className="splash-dot" />
+          </div>
+          <span className="splash-version">v1.0</span>
+        </div>
+      )}
+      <div className="min-h-screen bg-slate-50 p-4 sm:p-6 font-sans" dir="rtl">
       {/* Toast Notifications */}
       {toasts.length > 0 && (
         <div className="fixed top-4 left-4 z-[100] flex flex-col gap-2 max-w-sm">
@@ -836,5 +880,6 @@ export default function App() {
         <button onClick={() => setShowPrivacy(true)} className="mt-2 inline-flex items-center gap-1 text-slate-400 hover:text-slate-600 transition"><Shield className="w-3 h-3" /> Privacy Policy</button>
       </footer>
     </div>
+    </>
   );
 }
