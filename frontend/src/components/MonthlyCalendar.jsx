@@ -144,12 +144,15 @@ export default function MonthlyCalendar({ schedule, lang }) {
             return (
               <div 
                 key={`day-${dayNum}`} 
-                className={`border rounded-lg p-2 min-h-[120px] transition-colors ${
-                  isToday ? 'border-indigo-500 bg-indigo-50/30 ring-1 ring-indigo-500' : 'bg-white border-slate-200 hover:border-indigo-300'
+                className={`border rounded-lg p-2 min-h-[120px] transition-colors relative ${
+                  isToday ? 'today-cell border-blue-400 bg-blue-50/60 ring-2 ring-blue-400 shadow-md shadow-blue-100/50' : 'bg-white border-slate-200 hover:border-indigo-300'
                 }`}
               >
+                {isToday && (
+                  <div className="today-cell-badge">Today</div>
+                )}
                 <div className={`font-bold text-sm inline-flex items-center justify-center w-7 h-7 rounded-full mb-2 ${
-                  isToday ? 'bg-indigo-600 text-white' : 'text-slate-700'
+                  isToday ? 'bg-blue-600 text-white shadow-sm shadow-blue-300' : 'text-slate-700'
                 }`}>
                   {dayNum}
                 </div>

@@ -311,10 +311,22 @@ function expandDailyEventForMonth(event, year, month) {
 }
 
 /**
+ * Generate a unique deduplication key for a daily event.
+ * Daily events stored on multiple days would create duplicates; 
+ * this key ensures we only expand each unique daily event once.
+ */
+function getDailyEventKey(event) {
+  return `${event.title}|${event.startTime}|${event.endTime}|${event.recurrence}`;
+}
+
+/**
  * Expand events for a full year, returning all occurrences.
+ * Deduplicates daily events to avoid duplicates from identical events stored on multiple days.
  */
 function expandEventsForYear(schedule, year) {
   const allEvents = [];
+  const expandedDailyKeys = new Set(); // Track already-expanded daily events by unique key
+
   for (let month = 0; month < 12; month++) {
     for (const dayKey of Object.keys(schedule)) {
       // Skip "Today" key to avoid duplicate expansion — "Today" mirrors the actual day's events
@@ -323,6 +335,10 @@ function expandEventsForYear(schedule, year) {
       for (const event of dayEvents) {
         let expanded;
         if (event.recurrence === 'daily') {
+          // Deduplicate: if we've already expanded this daily event (same title/time), skip it
+          const dailyKey = getDailyEventKey(event);
+          if (expandedDailyKeys.has(dailyKey)) continue;
+          expandedDailyKeys.add(dailyKey);
           expanded = expandDailyEventForMonth(event, year, month);
         } else {
           expanded = expandEventForMonth(event, year, month);
@@ -658,13 +674,15 @@ async function parseWithGemini(text) {
     - **Rest Breaks**: If scheduling multiple events in sequence, leave 5-15 minute gaps between them.
     - **Conflicts**: If the user's request would create overlapping events, note this in "reasoning" and suggest alternatives in the replyMessage.
     - **Sleep Handling**: Sleep hours CROSS MIDNIGHT. For example, "קבע לי 8 שעות שינה בלילה" / "set me 8 hours of sleep tonight" means 11:00 PM to 07:00 AM (next day). Mark the event with "isSleep": true.
-    - **SLEEP / BEDTIME HANDLING (CRITICAL)**: When the user requests sleep/bedtime (e.g., "8 שעות שינה בלילה" / "8 hours of sleep at night"):
-      1. Set startTime to 11:00 PM (23:00) and endTime to exactly X hours later (e.g., 07:00 AM next day for 8 hours).
+    - **SLEEP / BEDTIME HANDLING (CRITICAL — MUST FOLLOW EXACTLY)**: When the user requests sleep/bedtime (e.g., "8 שעות שינה בלילה" / "8 hours of sleep at night"):
+      1. **STRICTLY set startTime to "11:00 PM" and endTime to "07:00 AM"** (next day) — this is exactly 8 hours, no exceptions. Do NOT use any other times.
       2. Set "isSleep": true on the event.
-      3. Set "recurrence": "daily" so the sleep schedule repeats every night.
-      4. Create the event for EVERY day of the week (Sunday through Saturday), not just one day.
+      3. **STRICTLY set "recurrence": "daily"** — so the sleep schedule repeats every single night. Do NOT use "once", "weekly", or any other value.
+      4. Create the event for EVERY day of the week (Sunday through Saturday), not just one day. All 7 days must have a sleep event.
       5. The event crosses midnight, so the endTime is on the next day.
       6. The title should be "שינה" / "Sleep" in the appropriate language.
+      7. **CRITICAL**: If the user selects "forever" or "daily" recurrence from the UI, the result MUST still have "recurrence": "daily" and "isSleep": true. The "forever" or "daily" selection from the UI only reinforces that this should be daily.
+      8. **CRITICAL**: The startTime "11:00 PM" and endTime "07:00 AM" MUST be identical for ALL 7 days of the week. Every night is exactly 11:00 PM → 07:00 AM.
     - **Free Slot Detection**: When a user says "תפנה לי X דקות/שעות" / "find me X minutes/hours free", set "needsFreeSlot": true with "freeSlotDuration" (in minutes).
     - **Editing Events**: If a user says "תעדכן/תשנה" / "update/change" an event, include "isEdit": true.
 
@@ -1768,6 +1786,7 @@ app.get('/api/schedule/expanded', (req, res) => {
   // Default: month view
   const month = parseInt(req.query.month) !== undefined ? parseInt(req.query.month) : new Date().getMonth();
   const monthEvents = [];
+  const expandedDailyKeys = new Set(); // Track already-expanded daily events by unique key
   
   for (const dayKey of Object.keys(schedule)) {
     // Skip "Today" key to avoid duplicate expansion — "Today" mirrors the actual day's events
@@ -1776,6 +1795,10 @@ app.get('/api/schedule/expanded', (req, res) => {
     for (const event of dayEvents) {
       let expanded;
       if (event.recurrence === 'daily') {
+        // Deduplicate: if we've already expanded this daily event (same title/time), skip it
+        const dailyKey = getDailyEventKey(event);
+        if (expandedDailyKeys.has(dailyKey)) continue;
+        expandedDailyKeys.add(dailyKey);
         expanded = expandDailyEventForMonth(event, year, month);
       } else {
         expanded = expandEventForMonth(event, year, month);

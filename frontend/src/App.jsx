@@ -684,9 +684,14 @@ export default function App() {
             {orderedDayKeys.map(dayKey => {
               if (dayKey === "Today" && (!schedule[dayKey] || schedule[dayKey].length === 0)) return null;
               const dayEvents = getFilteredEvents(dayKey);
+              const isTodayColumn = dayKey === todayName;
               return (
-                <div key={dayKey} className={`border rounded-xl p-4 flex flex-col min-h-[150px] ${dayKey === todayName ? 'bg-indigo-50 ring-2 ring-indigo-300' : 'bg-slate-50'}`}>
-                  <div className="font-bold text-slate-700 mb-3 border-b pb-1 text-center bg-white rounded shadow-sm py-1">
+                <div key={dayKey} className={`border rounded-xl p-4 flex flex-col min-h-[150px] relative ${isTodayColumn ? 'today-column bg-blue-50 border-blue-400 ring-2 ring-blue-400 shadow-lg shadow-blue-100/50' : 'bg-slate-50 border-slate-200'}`}>
+                  {/* Today badge */}
+                  {isTodayColumn && (
+                    <div className="today-badge">היום / Today</div>
+                  )}
+                  <div className={`font-bold text-slate-700 mb-3 border-b pb-1 text-center bg-white rounded shadow-sm py-1 ${isTodayColumn ? 'border-blue-300' : ''}`}>
                     {dayTranslations[dayKey]}
                     {dayEvents.length > 0 && <span className="text-xs text-slate-400 mr-1">({dayEvents.length})</span>}
                   </div>
