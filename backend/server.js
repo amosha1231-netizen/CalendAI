@@ -543,54 +543,156 @@ async function parseWithGemini(text) {
     return fallbackParseAdvice(text);
   }
 
-  const todayString = new Date().toLocaleDateString('he-IL', { weekday: 'long', day: 'numeric', month: 'numeric', year: 'numeric' });
+  const now = new Date();
+  const todayString = now.toLocaleDateString('he-IL', { weekday: 'long', day: 'numeric', month: 'numeric', year: 'numeric' });
+  const currentTimeString = now.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
+  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const todayEnglish = dayNames[now.getDay()];
 
   const prompt = `
-    You are a world-class conversational schedule assistant. Your goal is to parse complex user requests in Hebrew, create a structured schedule, and provide a friendly, human-like confirmation message.
+    You are a world-class AI scheduling agent. Your role is to **reason step-by-step** about the user's request in Hebrew, then produce a structured schedule. You think like a human personal assistant, not a text parser.
 
-    CONTEXT:
-    - Today is ${todayString}. Use this to resolve relative terms like "היום", "מחר", etc.
+    ─────────────────────────────────────────────
+    CONTEXT
+    ─────────────────────────────────────────────
+    - Current date and time: ${todayString}, ${currentTimeString}
+    - Today's English day name: ${todayEnglish}
+    - Use this information to resolve relative terms like "היום", "מחר", "מחרתיים", "השבוע", "בשבוע הבא", "בראשון", "בשני", etc.
+    - Assume the user is in Israel (Asia/Jerusalem timezone) unless otherwise specified.
 
-    IMPORTANT RULES:
-    1.  **Chain of Events**: If the user describes multiple events in sequence (e.g., "תפילה שעה ורבע, ואז להוציא את הכלב חצי שעה"), calculate the times consecutively. The end time of one event is the start time of the next.
-    2.  **Complex Time Calculation**: Understand durations like "שעה ורבע" (1 hour 15 mins), "חצי שעה" (30 mins).
-    3.  **Day Resolution**: Use English day names: Sunday, Monday, etc. "היום" is ${todayString.split(',')[0]}.
-    4.  **Time Formatting**: Always format times as 'HH:MM AM/PM'. "שבע ורבע" = 07:15. Assume morning unless "בערב" or "בלילה" is specified.
-    5.  **Title Extraction**: Extract a SHORT, CLEAN title (max 4 words). Remove time, day, and location details from the title.
-    6.  **AI Advice**: If the user asks for help or ideas ("תמצא לי זמן", "תן רעיונות"), set 'hasAdvice' to true and provide a short, practical 'aiAdvice' in Hebrew. Otherwise, 'hasAdvice' is false and 'aiAdvice' is an empty string.
-    6.  **AI Advice**: If the user asks for help or ideas ("תמצא לי זמן", "תן רעיונות"), set "hasAdvice" to true and provide a short, practical "aiAdvice" in Hebrew. Otherwise, "hasAdvice" is false and "aiAdvice" is an empty string.
+    ─────────────────────────────────────────────
+    STEP 1: REASONING (Chain of Thought)
+    ─────────────────────────────────────────────
+    Before producing the events, you MUST include a "reasoning" field in your JSON output. This is your internal thought process. Write it in Hebrew. In this field, analyze:
 
-    OUTPUT FORMAT:
-    Return a single JSON object with two keys: "replyMessage" and "events".
+    1. **Intent Analysis**: What is the user trying to accomplish? (e.g., "המשתמש רוצה לקבוע 3 אימונים השבוע")
+    2. **Temporal Calculation**: How do you resolve the day, time, and duration? Show your math. (e.g., "היום הוא יום שני, אז 'מחר' = יום שלישי. 'שעה ורבע' = 75 דקות.")
+    3. **Distribution Logic**: If the user mentions multiple items or a quantity (e.g., "3 אימונים", "ללמוד 6 שעות"), explain how you will distribute them across the week. (e.g., "אחלק 3 אימונים בימים שני, רביעי, שישי בבוקר עם מרווח של יום מנוחה בין כל אימון.")
+    4. **Common Sense Decisions**: Explain any gaps, rest periods, or reasonable defaults you applied. (e.g., "הוספתי 15 דקות מרווח בין אירועים. קבעתי את האירוע האחרון לא יאוחר מ-22:00.")
 
-    -   "replyMessage" (string): A friendly, conversational summary in Hebrew of the events you created. Be natural, like a real assistant.
-    -   "events" (array): An array of event objects.
+    ─────────────────────────────────────────────
+    STEP 2: MULTI-EVENT PERCEPTION
+    ─────────────────────────────────────────────
+    You MUST detect and handle the following patterns intelligently:
 
-    Event Object Structure:
+    A. **Quantities**: If the user says "3 אימונים", "פעמיים", "4 פגישות" → produce an array of that many events, distributed sensibly across available days.
+    B. **Total Hours**: If the user says "ללמוד 6 שעות השבוע" → break it into multiple sessions (e.g., 3 sessions of 2 hours each, or 2 sessions of 3 hours each) spread across the week.
+    C. **Multiple People/Items**: "פגישות עם דני ויוסי" → create separate events, one per person, at different times or different days.
+    D. **Chain of Events**: "תפילה ואז להוציא את הכלב ואז להכין אוכל" → calculate consecutively: end time of event N = start time of event N+1.
+
+    For distribution, use COMMON SENSE:
+    - Spread activities evenly across the week (not all on the same day).
+    - Morning activities (בבוקר) = 06:00-12:00. Afternoon (אחה"צ) = 12:00-17:00. Evening (בערב) = 17:00-22:00.
+    - Leave at least 15-30 minute breaks between activities.
+    - Don't schedule anything after 23:00 or before 06:00 unless explicitly requested.
+    - If the user says "השבוע" and doesn't specify days, distribute across the remaining days of the week starting from today.
+
+    ─────────────────────────────────────────────
+    STEP 3: COMMON SENSE RESOLUTION
+    ─────────────────────────────────────────────
+    Fill in missing details using HUMAN JUDGMENT:
+
+    - **Missing Day**: If no day is specified, default to "Today" (today's actual day name).
+    - **Missing Time**: If no time is specified, use reasonable defaults based on the activity type:
+      * עבודה/לימודים → 09:00 AM
+      * אימון/ספורט → 06:00 AM or 17:00 PM (common workout times)
+      * סידורים/קניות → 10:00 AM
+      * מפגש חברתי/משפחה → 17:00 PM (after work/school)
+      * ארוחה → 08:00 AM (בוקר), 13:00 PM (צהריים), 19:00 PM (ערב)
+      * שינה → 11:00 PM to 07:00 AM (default 8 hours, crosses midnight!)
+    - **Missing Duration**: If no duration is given, assume 1 hour (60 minutes) for general activities, 30 minutes for quick tasks.
+    - **Rest Breaks**: If scheduling multiple events in sequence, leave 5-15 minute gaps between them (human buffer).
+    - **Conflicts**: If the user's request would create overlapping events, note this in "reasoning" and suggest alternatives in the replyMessage.
+    - **Sleep (שינה) Handling**: Sleep hours CROSS MIDNIGHT. For example, "קבע לי 8 שעות שינה בלילה" means 11:00 PM to 07:00 AM (next day). The event should be stored on the day it starts (evening). Use startTime "11:00 PM" and endTime "07:00 AM". The "day" field should be the day the sleep starts (e.g., Sunday for Sunday night). Mark the event with a special property "isSleep": true so the system knows it crosses midnight.
+    - **Free Slot Detection**: When a user says "תפנה לי X דקות/שעות" or "תמצא לי חלון פנוי", you should:
+      1. Set "needsFreeSlot": true in the response
+      2. Include "freeSlotDuration" (in minutes) requested
+      3. Include the target day if specified
+      4. The replyMessage should say something like "מחפש חלונות פנויים להכניס את האירוע..."
+    - **Editing Events**: If a user says "תעדכן/תשנה/תערוך" an event, include "isEdit": true with "editDay", "editIndex" fields.
+
+    ─────────────────────────────────────────────
+    OUTPUT FORMAT
+    ─────────────────────────────────────────────
+    Return a single JSON object with these keys:
+
     {
-      "title": "Short Clean Title",
-      "day": "Monday", // English day name
-      "startTime": "07:15 PM",
-      "endTime": "08:30 PM",
-      "isRecurring": true,
-      "hasAdvice": false,
-      "aiAdvice": ""
-    }
-
-    EXAMPLE:
-    User text: "היום משבע ורבע בבוקר תפילה שעה ורבע, אחרי זה להוציא את הכלב חצי שעה, ואז להכין אוכל 5 דקות"
-    Expected JSON Output:
-    {
-      "replyMessage": "בטח, קבעתי לך שלושה אירועים להיום (יום שישי): תפילה מ-07:15 עד 08:30, טיול עם הכלב מ-08:30 עד 09:00, והכנת אוכל מ-09:00 עד 09:05. שיהיה יום נהדר!",
+      "reasoning": "string – Hebrew analysis of your thought process",
+      "replyMessage": "string – friendly, conversational Hebrew summary of the events you created",
       "events": [
-        { "title": "תפילה", "day": "Friday", "startTime": "07:15 AM", "endTime": "08:30 AM", "isRecurring": false, "hasAdvice": false, "aiAdvice": "" },
-        { "title": "להוציא את הכלב", "day": "Friday", "startTime": "08:30 AM", "endTime": "09:00 AM", "isRecurring": false, "hasAdvice": false, "aiAdvice": "" },
-        { "title": "הכנת אוכל", "day": "Friday", "startTime": "09:00 AM", "endTime": "09:05 AM", "isRecurring": false, "hasAdvice": false, "aiAdvice": "" }
+        {
+          "title": "string – Short Clean Title (max 4 words, in Hebrew)",
+          "day": "string – English day name (Sunday, Monday, etc.)",
+          "startTime": "string – HH:MM AM/PM format",
+          "endTime": "string – HH:MM AM/PM format",
+          "isRecurring": "boolean – true if this repeats weekly",
+          "hasAdvice": "boolean – true if user asked for help/ideas",
+          "aiAdvice": "string – practical Hebrew advice, or empty string"
+        }
       ]
     }
 
-    User text:
+    CRITICAL: You MUST return an ARRAY of events, even if there's only one event. Always wrap in [ ].
+
+    ─────────────────────────────────────────────
+    EXAMPLES
+    ─────────────────────────────────────────────
+
+    Example 1: Multi-event with chain
+    User text: "היום משבע ורבע בבוקר תפילה שעה ורבע, אחרי זה להוציא את הכלב חצי שעה"
+    Expected JSON:
+    {
+      "reasoning": "המשתמש מתאר שרשרת אירועים להיום. היום הוא יום שישי. תפילה מתחילה ב-07:15 בבוקר ונמשכת שעה ורבע (75 דקות) = עד 08:30. אחרי זה מיד (ללא הפסקה) מוציאים את הכלב לחצי שעה = 08:30-09:00.",
+      "replyMessage": "בטח, קבעתי לך שני אירועים להיום (יום שישי): תפילה מ-07:15 עד 08:30, ואז להוציא את הכלב מ-08:30 עד 09:00. שיהיה יום נהדר!",
+      "events": [
+        { "title": "תפילה", "day": "Friday", "startTime": "07:15 AM", "endTime": "08:30 AM", "isRecurring": false, "hasAdvice": false, "aiAdvice": "" },
+        { "title": "להוציא את הכלב", "day": "Friday", "startTime": "08:30 AM", "endTime": "09:00 AM", "isRecurring": false, "hasAdvice": false, "aiAdvice": "" }
+      ]
+    }
+
+    Example 2: Quantity-based distribution
+    User text: "תזמן לי 3 אימונים השבוע בבוקר"
+    Expected JSON:
+    {
+      "reasoning": "המשתמש רוצה 3 אימונים השבוע בבוקר. היום הוא יום שני, אז נשארו ימים: שני, שלישי, רביעי, חמישי, שישי. אפזר את האימונים בימים שני, רביעי, שישי בבוקר בשעה 06:00, שזה זמן אימון מקובל. כל אימון יימשך שעה (ברירת מחדל).",
+      "replyMessage": "קבעתי לך 3 אימונים לשבוע זה: ביום שני, רביעי ושישי ב-06:00 בבוקר. כל אימון יימשך שעה. בהצלחה!",
+      "events": [
+        { "title": "אימון", "day": "Monday", "startTime": "06:00 AM", "endTime": "07:00 AM", "isRecurring": false, "hasAdvice": false, "aiAdvice": "" },
+        { "title": "אימון", "day": "Wednesday", "startTime": "06:00 AM", "endTime": "07:00 AM", "isRecurring": false, "hasAdvice": false, "aiAdvice": "" },
+        { "title": "אימון", "day": "Friday", "startTime": "06:00 AM", "endTime": "07:00 AM", "isRecurring": false, "hasAdvice": false, "aiAdvice": "" }
+      ]
+    }
+
+    Example 3: Total hours breakdown
+    User text: "אני רוצה ללמוד 6 שעות השבוע"
+    Expected JSON:
+    {
+      "reasoning": "המשתמש רוצה ללמוד 6 שעות בסך הכל השבוע. אחלק את זה ל-3 מפגשים של שעתיים כל אחד בימים שני, רביעי, חמישי בבוקר (שעה 09:00 - זמן לימודים מקובל).",
+      "replyMessage": "פיצלתי את 6 שעות הלימוד שלך ל-3 מפגשים של שעתיים: שני, רביעי וחמישי ב-09:00-11:00. שיהיה בהצלחה!",
+      "events": [
+        { "title": "לימודים", "day": "Monday", "startTime": "09:00 AM", "endTime": "11:00 AM", "isRecurring": false, "hasAdvice": false, "aiAdvice": "" },
+        { "title": "לימודים", "day": "Wednesday", "startTime": "09:00 AM", "endTime": "11:00 AM", "isRecurring": false, "hasAdvice": false, "aiAdvice": "" },
+        { "title": "לימודים", "day": "Thursday", "startTime": "09:00 AM", "endTime": "11:00 AM", "isRecurring": false, "hasAdvice": false, "aiAdvice": "" }
+      ]
+    }
+
+    Example 4: Advice request
+    User text: "תמצא לי זמן איכות עם המשפחה בסופ\"ש"
+    Expected JSON:
+    {
+      "reasoning": "המשתמש מבקש עצה ולא מציין זמנים ספציפיים. לכן אציין hasAdvice=true ואתן עצה מעשית. סוף השבוע הוא יום שישי ושבת. היום הוא יום שני, אז סוף השבוע הקרוב הוא ביום שישי.",
+      "replyMessage": "הנה רעיון: ביום שישי בין 16:00-19:00 אפשר לקבוע זמן איכות משפחתי - ארוחת ערב משותפת, משחקים או טיול. כדאי גם לשבת בבוקר לצאת לטבע ביחד!",
+      "events": [
+        { "title": "זמן איכות משפחתי", "day": "Friday", "startTime": "04:00 PM", "endTime": "07:00 PM", "isRecurring": true, "hasAdvice": true, "aiAdvice": "מומלץ לתכנן פעילות שכולם אוהבים: משחק קופסה, ארוחה משותפת או סרט. העיקר להיות ביחד בלי מסכים!" }
+      ]
+    }
+
+    ─────────────────────────────────────────────
+    USER REQUEST
+    ─────────────────────────────────────────────
     "${text}"
+
+    Now produce your JSON output with reasoning, replyMessage, and events.
   `;
 
   try {
@@ -598,7 +700,7 @@ async function parseWithGemini(text) {
       model: 'gemini-2.0-flash',
       contents: prompt,
       config: {
-        temperature: 0.2,
+        temperature: 0.3,
         responseMimeType: 'application/json'
       }
     });
@@ -606,17 +708,41 @@ async function parseWithGemini(text) {
     const raw = response.text || '{}';
     const parsed = JSON.parse(raw);
 
-    // Ensure the response has the correct structure
-    if (!parsed.events || !parsed.replyMessage) {
-      // Fallback if the structure is wrong but it returned an array of events
-      const events = Array.isArray(parsed) ? parsed : [parsed];
+    // Handle the new structure with reasoning field
+    if (parsed.reasoning && parsed.events && parsed.replyMessage) {
+      return parsed;
+    }
+
+    // Graceful fallback: if the model returned events in an unexpected format
+    if (parsed.events && parsed.replyMessage) {
       return {
-        replyMessage: `נוספו ${events.length} אירועים חדשים.`,
-        events: events
+        reasoning: parsed.reasoning || '',
+        replyMessage: parsed.replyMessage,
+        events: parsed.events
       };
     }
 
-    return parsed;
+    // Last resort fallback: if the model returned a flat array of events
+    if (Array.isArray(parsed)) {
+      return {
+        reasoning: 'המודל החזיר מערך אירועים ללא הסבר. התקבל על ידי המערכת.',
+        replyMessage: `נוספו ${parsed.length} אירועים חדשים.`,
+        events: parsed
+      };
+    }
+
+    // If the response is a single event object
+    if (parsed.title && parsed.day) {
+      return {
+        reasoning: parsed.reasoning || 'המודל החזיר אירוע בודד.',
+        replyMessage: parsed.replyMessage || 'נוסף אירוע אחד חדש.',
+        events: [parsed]
+      };
+    }
+
+    // If nothing matched, use fallback
+    console.warn('Gemini returned unexpected structure, using fallback. Raw:', raw.slice(0, 200));
+    return fallbackParseAdvice(text);
 
   } catch (error) {
     console.error('Gemini parse failed, using fallback:', error);
@@ -1141,6 +1267,164 @@ function syncTodayWithCurrentDay(schedule) {
   schedule['Today'] = [...(schedule[todayName] || [])];
   return schedule;
 }
+
+// ──────────────────────────────────────────────
+// 8b. Find Free Slots
+// ──────────────────────────────────────────────
+
+/**
+ * Find all free time slots for a given day within location bounds.
+ * Returns an array of time ranges that are free.
+ */
+function findFreeSlotsForDay(schedule, dayName, locationId) {
+  const dayEvents = schedule[dayName] || [];
+  const locData = LOCATIONS.find(loc => loc.id === (locationId || DEFAULT_LOCATION_ID));
+  const dayStart = locData ? parseTimeToMinutes24(locData.defaultDayStart) : 6 * 60; // 06:00
+  const dayEnd = locData ? parseTimeToMinutes24(locData.defaultDayEnd) : 23 * 60; // 23:00
+  
+  if (dayStart === null || dayEnd === null) return [];
+  
+  // Get all busy slots sorted by start time
+  const busySlots = dayEvents
+    .map(e => ({
+      start: timeToMinutes(e.startTime),
+      end: timeToMinutes(e.endTime)
+    }))
+    .filter(s => s.start !== null && s.end !== null)
+    .sort((a, b) => a.start - b.start);
+  
+  const freeSlots = [];
+  let cursor = dayStart;
+  
+  for (const slot of busySlots) {
+    if (cursor < slot.start) {
+      const gapMinutes = slot.start - cursor;
+      if (gapMinutes >= 15) { // Only show slots of 15+ minutes
+        freeSlots.push({
+          startTime: minutesToTime(cursor),
+          endTime: minutesToTime(slot.start),
+          durationMinutes: gapMinutes
+        });
+      }
+    }
+    cursor = Math.max(cursor, slot.end);
+  }
+  
+  // Check after the last event
+  if (cursor < dayEnd) {
+    const gapMinutes = dayEnd - cursor;
+    if (gapMinutes >= 15) {
+      freeSlots.push({
+        startTime: minutesToTime(cursor),
+        endTime: minutesToTime(dayEnd),
+        durationMinutes: gapMinutes
+      });
+    }
+  }
+  
+  return freeSlots;
+}
+
+// GET /api/schedule/free-slots?day=Monday&duration=30&location=jerusalem
+app.get('/api/schedule/free-slots', (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const schedule = getUserSchedule(userId);
+    
+    const day = req.query.day || getTodayDayName();
+    const durationMinutes = parseInt(req.query.duration) || 30;
+    const locationId = req.query.location || DEFAULT_LOCATION_ID;
+    
+    // If "Today" was requested, resolve to actual day
+    const actualDay = day === 'Today' ? getTodayDayName() : day;
+    
+    const allFreeSlots = findFreeSlotsForDay(schedule, actualDay, locationId);
+    
+    // Filter slots that can accommodate the requested duration
+    const suitableSlots = allFreeSlots.filter(slot => slot.durationMinutes >= durationMinutes);
+    
+    res.json({
+      day: actualDay,
+      requestedDurationMinutes: durationMinutes,
+      freeSlots: suitableSlots,
+      totalFreeSlots: suitableSlots.length
+    });
+  } catch (error) {
+    console.error('Failed to find free slots:', error);
+    res.status(500).json({ error: 'Failed to find free slots.' });
+  }
+});
+
+// POST /api/schedule/add-to-free-slot – add an event to a specific free slot
+app.post('/api/schedule/add-to-free-slot', (req, res) => {
+  try {
+    const { day, startTime, endTime, title, recurrence, location } = req.body;
+    if (!day || !startTime || !endTime || !title) {
+      return res.status(400).json({ error: 'day, startTime, endTime, and title are required.' });
+    }
+    
+    const userId = getUserId(req);
+    const schedule = getUserSchedule(userId);
+    const todayName = getTodayDayName();
+    const locationId = location || DEFAULT_LOCATION_ID;
+    
+    const actualDay = day === 'Today' ? todayName : day;
+    
+    const newEvent = {
+      title,
+      day: actualDay,
+      startTime,
+      endTime,
+      recurrence: recurrence || 'once',
+      location: locationId
+    };
+    
+    if (schedule[actualDay]) {
+      schedule[actualDay].push(newEvent);
+    } else {
+      schedule['Today'].push(newEvent);
+    }
+    
+    // Sync Today
+    syncTodayWithCurrentDay(schedule);
+    saveSchedulesNow();
+    
+    res.json({ ok: true, event: newEvent });
+  } catch (error) {
+    console.error('Failed to add event to free slot:', error);
+    res.status(500).json({ error: 'Failed to add event.' });
+  }
+});
+
+// PUT /api/schedule/event – update a specific event
+app.put('/api/schedule/event', (req, res) => {
+  const { day, index, updates } = req.body;
+  if (!day || index === undefined || !updates) {
+    return res.status(400).json({ error: 'day, index, and updates are required.' });
+  }
+  
+  try {
+    const userId = getUserId(req);
+    const schedule = getUserSchedule(userId);
+    const actualDay = day === 'Today' ? getTodayDayName() : day;
+    
+    if (schedule[actualDay] && schedule[actualDay][index]) {
+      schedule[actualDay][index] = { ...schedule[actualDay][index], ...updates };
+      syncTodayWithCurrentDay(schedule);
+      saveSchedulesNow();
+      res.json({ ok: true, event: schedule[actualDay][index] });
+    } else {
+      res.status(404).json({ error: 'Event not found.' });
+    }
+  } catch (error) {
+    console.error('Failed to update event:', error);
+    res.status(500).json({ error: 'Failed to update event.' });
+  }
+});
+
+// ──────────────────────────────────────────────
+// 8c. Original parse-schedule route (unchanged)
+// ──────────────────────────────────────────────
 
 // POST /api/parse-schedule – parse text and ADD to user's schedule
 app.post('/api/parse-schedule', aiLimiter, async (req, res) => {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter } from "lucide-react";
+import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun } from "lucide-react";
 import MonthlyCalendar from "./components/MonthlyCalendar";
 import LocationSelector from "./components/LocationSelector";
 import Privacy from "./components/Privacy";
@@ -32,7 +32,8 @@ const SUGGESTION_CHIPS = [
   "הכנת אוכל ברביעי בערב",
   "פגישת עבודה ביום שני",
   "תשלום חשבונות",
-  "לימודים פעמיים השבוע"
+  "לימודים פעמיים השבוע",
+  "8 שעות שינה בלילה"
 ];
 
 // Location labels for display
@@ -59,12 +60,22 @@ export default function App() {
   const [rescheduleLoading, setRescheduleLoading] = useState(false);
   const [reschedulePreview, setReschedulePreview] = useState(null);
   const [rescheduleError, setRescheduleError] = useState("");
-  // New deterministic reschedule state
-  const [rescheduleStep, setRescheduleStep] = useState("choose"); // "choose" | "gaps" | "shift" | "preview"
-  const [rescheduleDelay, setRescheduleDelay] = useState(null); // minutes
-  const [gapsResult, setGapsResult] = useState(null); // { gaps, hasGaps }
-  const [rescheduleMode, setRescheduleMode] = useState(null); // "shift" | "merge"
+  const [rescheduleStep, setRescheduleStep] = useState("choose");
+  const [rescheduleDelay, setRescheduleDelay] = useState(null);
+  const [gapsResult, setGapsResult] = useState(null);
+  const [rescheduleMode, setRescheduleMode] = useState(null);
   const [selectedGaps, setSelectedGaps] = useState([]);
+  
+  // Free Slots state
+  const [isFreeSlotsOpen, setIsFreeSlotsOpen] = useState(false);
+  const [freeSlotsData, setFreeSlotsData] = useState(null);
+  const [freeSlotsLoading, setFreeSlotsLoading] = useState(false);
+  const [freeSlotsError, setFreeSlotsError] = useState("");
+
+  // Event Edit Modal state
+  const [editModalData, setEditModalData] = useState(null); // { day, index, event }
+  const [editLoading, setEditLoading] = useState(false);
+
   // Location state
   const [selectedLocation, setSelectedLocation] = useState("jerusalem");
   // Location filter for schedule view
@@ -117,6 +128,7 @@ export default function App() {
       return () => clearTimeout(timeoutId);
     }
   }, [placeholderIndex]);
+  
   // Fetch full schedule on mount
   const fetchSchedule = useCallback(async () => {
     try {
@@ -138,7 +150,6 @@ export default function App() {
 
   // Handle clicking a time slot from LocationSelector
   const handleSlotClick = (day, slot) => {
-    // Parse the slot time (e.g., "06:00") and create a time range
     const [hour, minute] = slot.split(':').map(Number);
     const hour12 = hour % 12 || 12;
     const ampm = hour >= 12 ? 'PM' : 'AM';
@@ -149,17 +160,14 @@ export default function App() {
     const startTime = `${String(hour12).padStart(2, '0')}:${String(minute).padStart(2, '0')} ${ampm}`;
     const endTime = `${String(nextHour12).padStart(2, '0')}:${String(minute).padStart(2, '0')} ${nextAmpm}`;
     
-    // Map day name to Hebrew
     const dayMap = {
       Sunday: 'ראשון', Monday: 'שני', Tuesday: 'שלישי', Wednesday: 'רביעי',
       Thursday: 'חמישי', Friday: 'שישי', Saturday: 'שבת'
     };
     const hebrewDay = dayMap[day] || day;
     
-    // Pre-fill the input text with the time
     setInputText(`ביום ${hebrewDay} מ-${startTime} עד ${endTime} `);
     
-    // Focus the textarea
     const textarea = document.querySelector('textarea');
     if (textarea) textarea.focus();
   };
@@ -295,7 +303,6 @@ export default function App() {
     setRescheduleLoading(true);
     setRescheduleError("");
     try {
-      // Check for gaps in today's schedule
       const gapsRes = await fetch(`${API_BASE}/api/reschedule/gaps`, {
         credentials: "include"
       });
@@ -309,7 +316,7 @@ export default function App() {
     }
   };
 
-  // Option A: Merge gaps (remove breaks between events)
+  // Option A: Merge gaps
   const handleMergeGaps = async () => {
     setRescheduleMode("merge");
     setRescheduleLoading(true);
@@ -332,7 +339,7 @@ export default function App() {
     }
   };
 
-  // Option B: Shift all events forward by delay
+  // Option B: Shift all events forward
   const handleShiftEvents = async () => {
     setRescheduleMode("shift");
     setRescheduleLoading(true);
@@ -356,7 +363,7 @@ export default function App() {
     }
   };
 
-  // Option C: AI-based reschedule for complex operations (e.g., postpone to tomorrow)
+  // Option C: AI-based reschedule
   const handleReschedule = async (reason) => {
     setRescheduleLoading(true);
     setRescheduleError("");
@@ -389,6 +396,117 @@ export default function App() {
       setReschedulePreview(null);
     }
   };
+
+  // ── Free Slots Feature ──
+  // Handle "find free slots" request
+  const handleFindFreeSlots = async (day, durationMinutes) => {
+    setFreeSlotsLoading(true);
+    setFreeSlotsError("");
+    setFreeSlotsData(null);
+    setIsFreeSlotsOpen(true);
+    
+    try {
+      const dayNamesEn = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      const dayMap = {
+        'ראשון': 'Sunday', 'שני': 'Monday', 'שלישי': 'Tuesday', 'רביעי': 'Wednesday',
+        'חמישי': 'Thursday', 'שישי': 'Friday', 'שבת': 'Saturday', 'היום': 'Today'
+      };
+      const actualDay = dayMap[day] || day || 'Today';
+      
+      const res = await fetch(`${API_BASE}/api/schedule/free-slots?day=${actualDay}&duration=${durationMinutes}&location=${selectedLocation}`, {
+        credentials: "include"
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to find free slots");
+      
+      setFreeSlotsData(data);
+    } catch (err) {
+      setFreeSlotsError(err.message);
+    } finally {
+      setFreeSlotsLoading(false);
+    }
+  };
+
+  const handleSelectFreeSlot = async (slot, title) => {
+    if (!title) {
+      setFreeSlotsError("אנא הכנס כותרת לאירוע");
+      return;
+    }
+    
+    setFreeSlotsLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/schedule/add-to-free-slot`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          day: freeSlotsData.day,
+          startTime: slot.startTime,
+          endTime: slot.endTime,
+          title,
+          recurrence,
+          location: selectedLocation
+        }),
+        credentials: "include"
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to add event");
+      
+      await fetchSchedule();
+      setIsFreeSlotsOpen(false);
+      setFreeSlotsData(null);
+      setSuccess(`נוסף אירוע "${title}" ב${slot.startTime}-${slot.endTime}`);
+    } catch (err) {
+      setFreeSlotsError(err.message);
+    } finally {
+      setFreeSlotsLoading(false);
+    }
+  };
+
+  // ── Event Edit Modal ──
+  const handleOpenEditModal = (day, index) => {
+    const event = schedule[day]?.[index];
+    if (!event) return;
+    setEditModalData({
+      day,
+      index,
+      event: { ...event }
+    });
+  };
+
+  const handleEditEvent = async () => {
+    if (!editModalData) return;
+    setEditLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/schedule/event`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          day: editModalData.day,
+          index: editModalData.index,
+          updates: editModalData.event
+        }),
+        credentials: "include"
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to update event");
+      
+      await fetchSchedule();
+      setEditModalData(null);
+      setSuccess("האירוע עודכן בהצלחה!");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setEditLoading(false);
+    }
+  };
+
+  const handleEditInputChange = (field, value) => {
+    setEditModalData(prev => ({
+      ...prev,
+      event: { ...prev.event, [field]: value }
+    }));
+  };
+
   const recurrenceLabels = {
     once: "חד פעמי",
     weekly: "שבועי",
@@ -414,8 +532,6 @@ export default function App() {
     Today: `היום (${todayNameHe})`
   };
 
-  // Ordered keys: Today first, then all 7 weekdays (including today's actual day, 
-  // which will mirror the same events as "Today")
   const orderedDayKeys = ['Today', ...dayNamesEn];
 
   // Get unique locations from all events for the filter
@@ -507,7 +623,7 @@ export default function App() {
             )}
           </div>
 
-          {/* Suggestion Chips - horizontal scroll */}
+          {/* Suggestion Chips - horizontal scroll with sleep example */}
           <div className="mt-3 flex items-center gap-2 overflow-x-auto whitespace-nowrap py-1" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
             <span className="text-xs text-slate-400 shrink-0">נסה למשל:</span>
             {SUGGESTION_CHIPS.map((suggestion, index) => (
@@ -519,6 +635,14 @@ export default function App() {
                 {suggestion}
               </button>
             ))}
+            {/* Sleep Example Button */}
+            <button
+              onClick={() => setInputText("קבע לי 8 שעות שינה בלילה")}
+              className="px-2.5 py-1 text-xs rounded-full border transition bg-indigo-50 text-indigo-600 border-indigo-200 hover:bg-indigo-100 hover:border-indigo-300 shrink-0 flex items-center gap-1"
+            >
+              <Moon className="w-3 h-3" />
+              🛌 8 שעות שינה
+            </button>
           </div>
 
           {/* Location Selector */}
@@ -677,19 +801,27 @@ export default function App() {
                       dayEvents.map((event, index) => (
                         <div 
                           key={index} 
-                          className="group relative bg-white p-3 rounded-lg shadow-xs border-r-4 border-blue-500 border flex flex-col gap-1 hover:shadow-md transition"
+                          className={`group relative bg-white p-3 rounded-lg shadow-xs border-r-4 flex flex-col gap-1 hover:shadow-md transition cursor-pointer ${
+                            event.isSleep ? 'border-indigo-500 bg-indigo-50/30' : 'border-blue-500'
+                          }`}
+                          onClick={() => handleOpenEditModal(dayKey, index)}
                         >
                           <button
-                            onClick={() => handleRemoveEvent(dayKey, index)}
+                            onClick={(e) => { e.stopPropagation(); handleRemoveEvent(dayKey, index); }}
                             className="absolute -top-2 -left-2 opacity-0 group-hover:opacity-100 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center transition"
                             title="הסר אירוע"
                           >
                             <Trash2 className="w-3 h-3" />
                           </button>
-                          <div className="font-semibold text-sm text-slate-800">{event.title}</div>
+                          <div className="font-semibold text-sm text-slate-800 flex items-center gap-1.5">
+                            {event.isSleep && <Moon className="w-3.5 h-3.5 text-indigo-500" />}
+                            {event.title}
+                            <Edit3 className="w-3 h-3 text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity mr-auto" />
+                          </div>
                           <div className="flex items-center gap-1 text-xs text-slate-500 mt-1">
                             <Clock className="w-3 h-3 text-slate-400" />
                             <span dir="ltr">{event.startTime} - {event.endTime}</span>
+                            {event.isSleep && <span className="text-[10px] text-indigo-500 mr-1">🌙 לילה</span>}
                           </div>
                           {/* Location badge */}
                           {event.location && (
@@ -768,7 +900,6 @@ export default function App() {
                   בחר איך לארגן מחדש את הלו"ז בגלל האיחור של <strong>{rescheduleDelay}</strong> דקות:
                 </p>
                 <div className="flex flex-col gap-3">
-                  {/* Option 1: Merge gaps if available */}
                   {gapsResult && gapsResult.hasGaps ? (
                     <button
                       onClick={handleMergeGaps}
@@ -791,7 +922,6 @@ export default function App() {
                     </div>
                   )}
                   
-                  {/* Option 2: Shift everything */}
                   <button
                     onClick={handleShiftEvents}
                     className="w-full text-right p-4 bg-indigo-50 rounded-lg border border-indigo-300 hover:bg-indigo-100 transition"
@@ -841,6 +971,171 @@ export default function App() {
                 )}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Free Slots Modal */}
+      {isFreeSlotsOpen && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" onClick={() => setIsFreeSlotsOpen(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                <Sun className="text-green-600" />
+                חלונות פנויים
+              </h3>
+              <button onClick={() => setIsFreeSlotsOpen(false)} className="p-1 rounded-full hover:bg-slate-100">
+                <X className="w-5 h-5 text-slate-500" />
+              </button>
+            </div>
+
+            {freeSlotsLoading ? (
+              <div className="text-center p-8">
+                <Loader2 className="w-8 h-8 text-green-600 animate-spin mx-auto mb-4" />
+                <p className="text-slate-600">מחפש חלונות פנויים...</p>
+              </div>
+            ) : freeSlotsError ? (
+              <div className="flex items-center gap-2 text-red-600 text-sm bg-red-50 p-3 rounded-lg border border-red-200">
+                <AlertCircle className="w-4 h-4" />
+                <span>{freeSlotsError}</span>
+              </div>
+            ) : freeSlotsData && (
+              <div>
+                <p className="text-sm text-slate-600 mb-3">
+                  נמצאו <strong>{freeSlotsData.totalFreeSlots}</strong> חלונות פנויים ב{dayTranslations[freeSlotsData.day] || freeSlotsData.day}
+                  {' '}(דרושות {freeSlotsData.requestedDurationMinutes} דקות):
+                </p>
+                
+                {freeSlotsData.freeSlots.length === 0 ? (
+                  <p className="text-sm text-slate-500 bg-slate-50 p-3 rounded-lg">לא נמצאו חלונות פנויים מתאימים ביום זה.</p>
+                ) : (
+                  <div className="space-y-2 max-h-60 overflow-y-auto">
+                    {freeSlotsData.freeSlots.map((slot, i) => (
+                      <button
+                        key={i}
+                        onClick={() => {
+                          const title = prompt("הכנס כותרת לאירוע בחלון הפנוי:");
+                          if (title) handleSelectFreeSlot(slot, title);
+                        }}
+                        className="w-full text-right p-3 bg-green-50 rounded-lg border border-green-200 hover:bg-green-100 transition"
+                      >
+                        <div className="font-medium text-green-800">
+                          🕐 {slot.startTime} - {slot.endTime}
+                        </div>
+                        <div className="text-xs text-green-600 mt-0.5">
+                          משך: {slot.durationMinutes} דקות
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Event Edit Modal */}
+      {editModalData && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" onClick={() => setEditModalData(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                <Edit3 className="text-blue-600" />
+                עריכת אירוע
+              </h3>
+              <button onClick={() => setEditModalData(null)} className="p-1 rounded-full hover:bg-slate-100">
+                <X className="w-5 h-5 text-slate-500" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              {/* Title */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">כותרת</label>
+                <input
+                  type="text"
+                  value={editModalData.event.title}
+                  onChange={(e) => handleEditInputChange('title', e.target.value)}
+                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+
+              {/* Start Time */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">שעת התחלה</label>
+                <input
+                  type="text"
+                  value={editModalData.event.startTime}
+                  onChange={(e) => handleEditInputChange('startTime', e.target.value)}
+                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-800 font-mono focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="HH:MM AM/PM"
+                  dir="ltr"
+                />
+              </div>
+
+              {/* End Time */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">שעת סיום</label>
+                <input
+                  type="text"
+                  value={editModalData.event.endTime}
+                  onChange={(e) => handleEditInputChange('endTime', e.target.value)}
+                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-800 font-mono focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="HH:MM AM/PM"
+                  dir="ltr"
+                />
+              </div>
+
+              {/* Recurrence */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">תדירות</label>
+                <select
+                  value={editModalData.event.recurrence || 'weekly'}
+                  onChange={(e) => handleEditInputChange('recurrence', e.target.value)}
+                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                >
+                  {RECURRENCE_OPTIONS.map(opt => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Sleep toggle */}
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="isSleep"
+                  checked={editModalData.event.isSleep || false}
+                  onChange={(e) => handleEditInputChange('isSleep', e.target.checked)}
+                  className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                />
+                <label htmlFor="isSleep" className="text-sm text-slate-700 flex items-center gap-1">
+                  <Moon className="w-3.5 h-3.5 text-indigo-500" />
+                  שעות שינה (חוצה חצות)
+                </label>
+              </div>
+            </div>
+
+            <div className="mt-6 flex items-center justify-end gap-3">
+              <button
+                onClick={() => setEditModalData(null)}
+                className="text-sm text-slate-600 hover:text-slate-800"
+              >
+                בטל
+              </button>
+              <button
+                onClick={handleEditEvent}
+                disabled={editLoading}
+                className="flex items-center gap-2 px-5 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:bg-blue-400 transition"
+              >
+                {editLoading ? (
+                  <><Loader2 className="w-4 h-4 animate-spin" /> מעדכן...</>
+                ) : (
+                  <><Check className="w-4 h-4" /> שמור שינויים</>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}
