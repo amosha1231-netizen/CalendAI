@@ -688,6 +688,25 @@ async function parseWithGemini(text) {
     }
 
     ─────────────────────────────────────────────
+    REMINDER HANDLING
+    ─────────────────────────────────────────────
+    The user may ask for reminders. Examples:
+    - "תזכיר לי להתקשר למורן בעוד חצי שעה"
+    - "תזכיר לי לשלם חשבון ב-16:00"
+    - "remind me to buy milk tomorrow at 9 AM"
+    - "תזכיר לי בעוד שעה להתקשר לרופא"
+
+    When the user requests a REMINDER (any phrase containing "תזכיר" / "remind" / "תזכורת"):
+    1. Set isReminder: true on the event.
+    2. Set reminderTime to the ISO date/time string of when the alert should fire (not the event time, but the REMINDER time).
+       - For relative reminders ("בעוד חצי שעה"): calculate reminderTime = current time + the delay.
+       - For absolute reminders ("ב-16:00"): calculate reminderTime = today/next occurrence at that time.
+    3. The event title should describe what the reminder is about (e.g., "להתקשר למורן").
+    4. Set startTime and endTime to bracket the reminder time (e.g., reminder at 16:00 -> startTime "04:00 PM", endTime "04:15 PM").
+    5. Set recurrence: "once" for one-time reminders.
+    6. IMPORTANT DO NOT confuse reminder events with regular schedule events. Reminder events are different - they exist to alert the user, not to occupy a time slot.
+
+    ─────────────────────────────────────────────
     USER REQUEST
     ─────────────────────────────────────────────
     "${text}"

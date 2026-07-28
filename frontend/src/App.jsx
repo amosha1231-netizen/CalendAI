@@ -1,10 +1,9 @@
-import React, { useState, useEffect, useCallback } from "react";
-import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun } from "lucide-react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
+import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing } from "lucide-react";
 import MonthlyCalendar from "./components/MonthlyCalendar";
 import LocationSelector from "./components/LocationSelector";
 import Privacy from "./components/Privacy";
 
-// API URL - use environment variable for production, empty for local dev (uses Vite proxy)
 const API_BASE = import.meta.env.VITE_API_URL || "";
 
 const RECURRENCE_OPTIONS = [
@@ -13,6 +12,14 @@ const RECURRENCE_OPTIONS = [
   { value: "monthly", label: "חודשי" },
   { value: "yearly", label: "שנתי" },
   { value: "forever", label: "לכל החיים" }
+];
+
+const REMINDER_MINUTES_OPTIONS = [
+  { value: 0, label: "ללא תזכורת" },
+  { value: 5, label: "5 דקות לפני" },
+  { value: 15, label: "15 דקות לפני" },
+  { value: 30, label: "30 דקות לפני" },
+  { value: 60, label: "שעה לפני" }
 ];
 
 const PLACEHOLDER_EXAMPLES = [
@@ -36,13 +43,30 @@ const SUGGESTION_CHIPS = [
   "8 שעות שינה בלילה"
 ];
 
-// Location labels for display
 const LOCATION_LABELS = {
   jerusalem: "Jerusalem",
   newyork: "New York",
   london: "London",
   losangeles: "Los Angeles"
 };
+
+function playNotificationSound() {
+  try {
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const oscillator = audioCtx.createOscillator();
+    const gainNode = audioCtx.createGain();
+    oscillator.connect(gainNode);
+    gainNode.connect(audioCtx.destination);
+    oscillator.frequency.value = 880;
+    oscillator.type = "sine";
+    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
+    oscillator.start(audioCtx.currentTime);
+    oscillator.stop(audioCtx.currentTime + 0.5);
+  } catch (e) {
+    // Audio not supported
+  }
+}
 
 export default function App() {
   const [showPrivacy, setShowPrivacy] = useState(false);
@@ -51,11 +75,9 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
-  
   const [placeholderIndex, setPlaceholderIndex] = useState(0);
   const [conflicts, setConflicts] = useState([]);
 
-  // Reschedule state
   const [isRescheduleOpen, setIsRescheduleOpen] = useState(false);
   const [rescheduleLoading, setRescheduleLoading] = useState(false);
   const [reschedulePreview, setReschedulePreview] = useState(null);
@@ -65,90 +87,144 @@ export default function App() {
   const [gapsResult, setGapsResult] = useState(null);
   const [rescheduleMode, setRescheduleMode] = useState(null);
   const [selectedGaps, setSelectedGaps] = useState([]);
-  
-  // Free Slots state
+
   const [isFreeSlotsOpen, setIsFreeSlotsOpen] = useState(false);
   const [freeSlotsData, setFreeSlotsData] = useState(null);
   const [freeSlotsLoading, setFreeSlotsLoading] = useState(false);
   const [freeSlotsError, setFreeSlotsError] = useState("");
 
-  // Event Edit Modal state
-  const [editModalData, setEditModalData] = useState(null); // { day, index, event }
+  const [editModalData, setEditModalData] = useState(null);
   const [editLoading, setEditLoading] = useState(false);
 
-  // Location state
   const [selectedLocation, setSelectedLocation] = useState("jerusalem");
-  // Location filter for schedule view
   const [locationFilter, setLocationFilter] = useState("all");
-  
-  // User state
   const [user, setUser] = useState(null);
-  
-  // Schedule state
+
   const [schedule, setSchedule] = useState({
-    Sunday: [],
-    Monday: [],
-    Tuesday: [],
-    Wednesday: [],
-    Thursday: [],
-    Friday: [],
-    Saturday: [],
-    Today: []
+    Sunday: [], Monday: [], Tuesday: [], Wednesday: [],
+    Thursday: [], Friday: [], Saturday: [], Today: []
   });
 
-  // Fetch current user on mount
+  // Notification / Reminder State
+  const [notificationPerm, setNotificationPerm] = useState(Notification.permission);
+  const [toasts, setToasts] = useState([]);
+  const notifiedRemindersRef = useRef(new Set());
+
+  const requestNotificationPermission = useCallback(async () => {
+    if (Notification.permission === "default") {
+      const perm = await Notification.requestPermission();
+      setNotificationPerm(perm);
+    }
+  }, []);
+
+  useEffect(() => {
+    const timer = setTimeout(() => requestNotificationPermission(), 3000);
+    return () => clearTimeout(timer);
+  }, [requestNotificationPermission]);
+
+  // Reminder Checker Interval
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const now = new Date();
+      const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      const todayName = dayNames[now.getDay()];
+
+      const todayEvents = [
+        ...(schedule['Today'] || []),
+        ...(schedule[todayName] || [])
+      ];
+
+      for (const event of todayEvents) {
+        const reminderMin = event.reminderMinutesBefore;
+        if (!reminderMin || reminderMin <= 0) continue;
+
+        const timeMatch = event.startTime?.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+        if (!timeMatch) continue;
+        let eventHour = parseInt(timeMatch[1], 10);
+        const eventMin = parseInt(timeMatch[2], 10);
+        const isPM = timeMatch[3].toUpperCase() === 'PM';
+        if (isPM && eventHour !== 12) eventHour += 12;
+        if (!isPM && eventHour === 12) eventHour = 0;
+
+        const eventDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), eventHour, eventMin, 0);
+        const alertTime = new Date(eventDate.getTime() - reminderMin * 60000);
+        const timeDiff = now.getTime() - alertTime.getTime();
+
+        if (timeDiff >= 0 && timeDiff < 31000) {
+          const reminderKey = `${event.title}_${todayName}_${reminderMin}_${event.startTime}`;
+          if (!notifiedRemindersRef.current.has(reminderKey)) {
+            notifiedRemindersRef.current.add(reminderKey);
+
+            if (notificationPerm === "granted") {
+              try {
+                new Notification("CalendAI - תזכורת", {
+                  body: `📅 ${event.title} מתחיל בעוד ${reminderMin} דקות`,
+                  icon: "/icon.svg"
+                });
+              } catch (e) {}
+            }
+
+            playNotificationSound();
+
+            const toastId = Date.now();
+            setToasts(prev => [...prev, {
+              id: toastId,
+              title: event.title,
+              message: `מתחיל בעוד ${reminderMin} דקות (${event.startTime})`
+            }]);
+
+            setTimeout(() => {
+              setToasts(prev => prev.filter(t => t.id !== toastId));
+            }, 8000);
+          }
+        }
+      }
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [schedule, notificationPerm]);
+
   useEffect(() => {
     fetch(`${API_BASE}/api/auth/me`, { credentials: "include" })
       .then(res => res.json())
-      .then(data => {
-        if (data.user) setUser(data.user);
-      })
+      .then(data => { if (data.user) setUser(data.user); })
       .catch(() => {});
   }, []);
 
-  // Effect for rotating placeholders - infinite vertical roll
   const [isTransitioning, setIsTransitioning] = useState(false);
   const displayedPlaceholders = [...PLACEHOLDER_EXAMPLES, PLACEHOLDER_EXAMPLES[0], PLACEHOLDER_EXAMPLES[1]];
-  
+
   useEffect(() => {
-    const intervalId = setInterval(() => {
+    const id = setInterval(() => {
       setIsTransitioning(true);
-      setPlaceholderIndex(prevIndex => prevIndex + 1);
+      setPlaceholderIndex(prev => prev + 1);
     }, 3500);
-    return () => clearInterval(intervalId);
+    return () => clearInterval(id);
   }, []);
 
-  // When we reach the duplicate items, reset without transition
   useEffect(() => {
     if (placeholderIndex >= PLACEHOLDER_EXAMPLES.length) {
-      const timeoutId = setTimeout(() => {
+      const id = setTimeout(() => {
         setIsTransitioning(false);
         setPlaceholderIndex(0);
       }, 500);
-      return () => clearTimeout(timeoutId);
+      return () => clearTimeout(id);
     }
   }, [placeholderIndex]);
-  
-  // Fetch full schedule on mount
+
   const fetchSchedule = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/api/schedule`, { credentials: "include" });
       if (res.ok) {
         const data = await res.json();
-        if (data.schedule) {
-          setSchedule(data.schedule);
-        }
+        if (data.schedule) setSchedule(data.schedule);
       }
     } catch (err) {
       console.error("Failed to fetch schedule:", err);
     }
   }, []);
 
-  useEffect(() => {
-    fetchSchedule();
-  }, [fetchSchedule]);
+  useEffect(() => { fetchSchedule(); }, [fetchSchedule]);
 
-  // Handle clicking a time slot from LocationSelector
   const handleSlotClick = (day, slot) => {
     const [hour, minute] = slot.split(':').map(Number);
     const hour12 = hour % 12 || 12;
@@ -156,20 +232,9 @@ export default function App() {
     const nextHour = (hour + 1) % 24;
     const nextHour12 = nextHour % 12 || 12;
     const nextAmpm = nextHour >= 12 ? 'PM' : 'AM';
-    
-    const startTime = `${String(hour12).padStart(2, '0')}:${String(minute).padStart(2, '0')} ${ampm}`;
-    const endTime = `${String(nextHour12).padStart(2, '0')}:${String(minute).padStart(2, '0')} ${nextAmpm}`;
-    
-    const dayMap = {
-      Sunday: 'ראשון', Monday: 'שני', Tuesday: 'שלישי', Wednesday: 'רביעי',
-      Thursday: 'חמישי', Friday: 'שישי', Saturday: 'שבת'
-    };
-    const hebrewDay = dayMap[day] || day;
-    
-    setInputText(`ביום ${hebrewDay} מ-${startTime} עד ${endTime} `);
-    
-    const textarea = document.querySelector('textarea');
-    if (textarea) textarea.focus();
+    setInputText(`ביום ${day} מ-${String(hour12).padStart(2,'0')}:${String(minute).padStart(2,'0')} ${ampm} עד ${String(nextHour12).padStart(2,'0')}:${String(minute).padStart(2,'0')} ${nextAmpm} `);
+    const ta = document.querySelector('textarea');
+    if (ta) ta.focus();
   };
 
   const handleParse = async () => {
@@ -177,93 +242,54 @@ export default function App() {
     setLoading(true);
     setError("");
     setSuccess("");
-
     try {
-      const response = await fetch(`${API_BASE}/api/parse-schedule`, {
+      const res = await fetch(`${API_BASE}/api/parse-schedule`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: inputText, recurrence, location: selectedLocation }),
         credentials: "include"
       });
-
-      if (!response.ok) throw new Error("נכשלה פנייה לשרת ה-Backend: " + response.status);
-
-      const data = await response.json();
-      
-      // If user is logged in, try to add events to their Google Calendar in parallel
-      if (user && data.events && data.events.length > 0) {
-        const results = await Promise.allSettled(
-          data.events.map(event =>
-            fetch(`${API_BASE}/api/add-to-google-calendar`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ event }),
-              credentials: "include"
-            })
-          )
-        );
-        const succeeded = results.filter(r => r.status === 'fulfilled' && r.value.ok).length;
-        const failed = results.filter(r => r.status === 'rejected' || !r.value?.ok).length;
-        if (failed > 0) {
-          console.error(`${failed} event(s) failed to sync to Google Calendar`);
-        }
+      if (!res.ok) throw new Error("נכשלה פנייה: " + res.status);
+      const data = await res.json();
+      if (user && data.events?.length > 0) {
+        await Promise.allSettled(data.events.map(ev =>
+          fetch(`${API_BASE}/api/add-to-google-calendar`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ event: ev }),
+            credentials: "include"
+          })
+        ));
       }
-      
-      // Check for conflicts
-      if (data.conflicts && data.conflicts.length > 0) {
-        setConflicts(data.conflicts);
-      } else {
-        setConflicts([]);
-      }
-      
+      if (data.conflicts?.length > 0) setConflicts(data.conflicts);
+      else setConflicts([]);
       await fetchSchedule();
-      
-      setSuccess(data.replyMessage || `נוספו ${data.events?.length || 0} אירועים חדשים! סה"כ: ${data.totalEvents || 0} אירועים`);
+      setSuccess(data.replyMessage || `נוספו ${data.events?.length || 0} אירועים!`);
       setInputText("");
-
     } catch (err) {
-      console.error("Error parsing schedule:", err);
-      setError(err.message || "שגיאה בחיבור לשרת. אנא נסה שוב מאוחר יותר.");
+      setError(err.message);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleLogin = () => {
-    window.location.href = `${API_BASE}/api/auth/google`;
-  };
+  const handleLogin = () => { window.location.href = `${API_BASE}/api/auth/google`; };
 
   const handleLogout = async () => {
     try {
-      await fetch(`${API_BASE}/api/auth/logout`, {
-        method: "POST",
-        credentials: "include"
-      });
+      await fetch(`${API_BASE}/api/auth/logout`, { method: "POST", credentials: "include" });
       setUser(null);
-      setSchedule({
-        Sunday: [], Monday: [], Tuesday: [], Wednesday: [],
-        Thursday: [], Friday: [], Saturday: [], Today: []
-      });
-    } catch (err) {
-      console.error("Logout failed:", err);
-    }
+      setSchedule({ Sunday: [], Monday: [], Tuesday: [], Wednesday: [], Thursday: [], Friday: [], Saturday: [], Today: [] });
+    } catch (err) { console.error(err); }
   };
 
   const handleClearSchedule = async () => {
     if (!confirm("לנקות את כל האירועים?")) return;
     try {
-      await fetch(`${API_BASE}/api/schedule/clear`, {
-        method: "DELETE",
-        credentials: "include"
-      });
-      setSchedule({
-        Sunday: [], Monday: [], Tuesday: [], Wednesday: [],
-        Thursday: [], Friday: [], Saturday: [], Today: []
-      });
+      await fetch(`${API_BASE}/api/schedule/clear`, { method: "DELETE", credentials: "include" });
+      setSchedule({ Sunday: [], Monday: [], Tuesday: [], Wednesday: [], Thursday: [], Friday: [], Saturday: [], Today: [] });
       setSuccess("כל האירועים נמחקו");
-    } catch (err) {
-      console.error("Clear failed:", err);
-    }
+    } catch (err) { console.error(err); }
   };
 
   const handleRemoveEvent = async (day, index) => {
@@ -275,15 +301,11 @@ export default function App() {
         credentials: "include"
       });
       setSchedule(prev => {
-        const updated = { ...prev };
-        if (updated[day]) {
-          updated[day] = updated[day].filter((_, i) => i !== index);
-        }
-        return updated;
+        const u = { ...prev };
+        if (u[day]) u[day] = u[day].filter((_, i) => i !== index);
+        return u;
       });
-    } catch (err) {
-      console.error("Remove event failed:", err);
-    }
+    } catch (err) { console.error(err); }
   };
 
   const handleOpenReschedule = () => {
@@ -297,180 +319,116 @@ export default function App() {
     setSelectedGaps([]);
   };
 
-  // Step 1: User selects a delay reason -> check gaps + show options
   const handleDelaySelected = async (delayMinutes) => {
     setRescheduleDelay(delayMinutes);
     setRescheduleLoading(true);
     setRescheduleError("");
     try {
-      const gapsRes = await fetch(`${API_BASE}/api/reschedule/gaps`, {
-        credentials: "include"
-      });
+      const gapsRes = await fetch(`${API_BASE}/api/reschedule/gaps`, { credentials: "include" });
       const gapsData = await gapsRes.json();
       setGapsResult(gapsData);
       setRescheduleStep("choose");
-    } catch (err) {
-      setRescheduleError(err.message);
-    } finally {
-      setRescheduleLoading(false);
-    }
+    } catch (err) { setRescheduleError(err.message); }
+    finally { setRescheduleLoading(false); }
   };
 
-  // Option A: Merge gaps
   const handleMergeGaps = async () => {
     setRescheduleMode("merge");
     setRescheduleLoading(true);
     setRescheduleError("");
     try {
       const res = await fetch(`${API_BASE}/api/reschedule/merge-gaps`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include"
+        method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include"
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Merge failed");
-      
       setReschedulePreview(data);
       setRescheduleStep("preview");
-    } catch (err) {
-      setRescheduleError(err.message);
-    } finally {
-      setRescheduleLoading(false);
-    }
+    } catch (err) { setRescheduleError(err.message); }
+    finally { setRescheduleLoading(false); }
   };
 
-  // Option B: Shift all events forward
   const handleShiftEvents = async () => {
     setRescheduleMode("shift");
     setRescheduleLoading(true);
     setRescheduleError("");
     try {
       const res = await fetch(`${API_BASE}/api/reschedule/shift`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ delayMinutes: rescheduleDelay }),
-        credentials: "include"
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ delayMinutes: rescheduleDelay }), credentials: "include"
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Shift failed");
-      
       setReschedulePreview(data);
       setRescheduleStep("preview");
-    } catch (err) {
-      setRescheduleError(err.message);
-    } finally {
-      setRescheduleLoading(false);
-    }
+    } catch (err) { setRescheduleError(err.message); }
+    finally { setRescheduleLoading(false); }
   };
 
-  // Option C: AI-based reschedule
   const handleReschedule = async (reason) => {
     setRescheduleLoading(true);
     setRescheduleError("");
     try {
       const res = await fetch(`${API_BASE}/api/reschedule`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reason }),
-        credentials: "include"
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason }), credentials: "include"
       });
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error || "AI reschedule failed");
-      }
+      if (!res.ok) { const e = await res.json(); throw new Error(e.error || "AI failed"); }
       const data = await res.json();
       setReschedulePreview(data);
       setRescheduleStep("preview");
-    } catch (err) {
-      setRescheduleError(err.message);
-    } finally {
-      setRescheduleLoading(false);
-    }
+    } catch (err) { setRescheduleError(err.message); }
+    finally { setRescheduleLoading(false); }
   };
 
   const handleConfirmReschedule = () => {
-    if (reschedulePreview && reschedulePreview.newSchedule) {
+    if (reschedulePreview?.newSchedule) {
       setSchedule(reschedulePreview.newSchedule);
-      setSuccess(reschedulePreview.summary || "הלו\"ז עודכן בהצלחה!");
+      setSuccess(reschedulePreview.summary || "הלו\"ז עודכן!");
       setIsRescheduleOpen(false);
       setReschedulePreview(null);
     }
   };
 
-  // ── Free Slots Feature ──
-  // Handle "find free slots" request
   const handleFindFreeSlots = async (day, durationMinutes) => {
     setFreeSlotsLoading(true);
     setFreeSlotsError("");
     setFreeSlotsData(null);
     setIsFreeSlotsOpen(true);
-    
     try {
-      const dayNamesEn = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-      const dayMap = {
-        'ראשון': 'Sunday', 'שני': 'Monday', 'שלישי': 'Tuesday', 'רביעי': 'Wednesday',
-        'חמישי': 'Thursday', 'שישי': 'Friday', 'שבת': 'Saturday', 'היום': 'Today'
-      };
+      const dayMap = { 'ראשון': 'Sunday', 'שני': 'Monday', 'שלישי': 'Tuesday', 'רביעי': 'Wednesday', 'חמישי': 'Thursday', 'שישי': 'Friday', 'שבת': 'Saturday', 'היום': 'Today' };
       const actualDay = dayMap[day] || day || 'Today';
-      
-      const res = await fetch(`${API_BASE}/api/schedule/free-slots?day=${actualDay}&duration=${durationMinutes}&location=${selectedLocation}`, {
-        credentials: "include"
-      });
+      const res = await fetch(`${API_BASE}/api/schedule/free-slots?day=${actualDay}&duration=${durationMinutes}&location=${selectedLocation}`, { credentials: "include" });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to find free slots");
-      
+      if (!res.ok) throw new Error(data.error || "Failed");
       setFreeSlotsData(data);
-    } catch (err) {
-      setFreeSlotsError(err.message);
-    } finally {
-      setFreeSlotsLoading(false);
-    }
+    } catch (err) { setFreeSlotsError(err.message); }
+    finally { setFreeSlotsLoading(false); }
   };
 
   const handleSelectFreeSlot = async (slot, title) => {
-    if (!title) {
-      setFreeSlotsError("אנא הכנס כותרת לאירוע");
-      return;
-    }
-    
+    if (!title) { setFreeSlotsError("אנא הכנס כותרת"); return; }
     setFreeSlotsLoading(true);
     try {
       const res = await fetch(`${API_BASE}/api/schedule/add-to-free-slot`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          day: freeSlotsData.day,
-          startTime: slot.startTime,
-          endTime: slot.endTime,
-          title,
-          recurrence,
-          location: selectedLocation
-        }),
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ day: freeSlotsData.day, startTime: slot.startTime, endTime: slot.endTime, title, recurrence, location: selectedLocation }),
         credentials: "include"
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to add event");
-      
+      if (!res.ok) throw new Error(data.error || "Failed");
       await fetchSchedule();
       setIsFreeSlotsOpen(false);
       setFreeSlotsData(null);
-      setSuccess(`נוסף אירוע "${title}" ב${slot.startTime}-${slot.endTime}`);
-    } catch (err) {
-      setFreeSlotsError(err.message);
-    } finally {
-      setFreeSlotsLoading(false);
-    }
+      setSuccess(`נוסף "${title}" ב${slot.startTime}-${slot.endTime}`);
+    } catch (err) { setFreeSlotsError(err.message); }
+    finally { setFreeSlotsLoading(false); }
   };
 
-  // ── Event Edit Modal ──
   const handleOpenEditModal = (day, index) => {
     const event = schedule[day]?.[index];
     if (!event) return;
-    setEditModalData({
-      day,
-      index,
-      event: { ...event }
-    });
+    setEditModalData({ day, index, event: { ...event, reminderMinutesBefore: event.reminderMinutesBefore || 0 } });
   };
 
   const handleEditEvent = async () => {
@@ -478,117 +436,86 @@ export default function App() {
     setEditLoading(true);
     try {
       const res = await fetch(`${API_BASE}/api/schedule/event`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          day: editModalData.day,
-          index: editModalData.index,
-          updates: editModalData.event
-        }),
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ day: editModalData.day, index: editModalData.index, updates: editModalData.event }),
         credentials: "include"
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to update event");
-      
+      if (!res.ok) throw new Error(data.error || "Failed");
       await fetchSchedule();
       setEditModalData(null);
-      setSuccess("האירוע עודכן בהצלחה!");
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setEditLoading(false);
-    }
+      setSuccess("האירוע עודכן!");
+    } catch (err) { setError(err.message); }
+    finally { setEditLoading(false); }
   };
 
   const handleEditInputChange = (field, value) => {
-    setEditModalData(prev => ({
-      ...prev,
-      event: { ...prev.event, [field]: value }
-    }));
+    setEditModalData(prev => ({ ...prev, event: { ...prev.event, [field]: value } }));
   };
 
-  const recurrenceLabels = {
-    once: "חד פעמי",
-    weekly: "שבועי",
-    monthly: "חודשי",
-    yearly: "שנתי",
-    forever: "לכל החיים"
-  };
-
-  // תרגום שמות הימים לעברית + day order: Today first, then rest
+  const recurrenceLabels = { once: "חד פעמי", weekly: "שבועי", monthly: "חודשי", yearly: "שנתי", forever: "לכל החיים" };
   const dayNamesEn = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   const dayNamesHe = ['יום ראשון', 'יום שני', 'יום שלישי', 'יום רביעי', 'יום חמישי', 'יום שישי', 'יום שבת'];
   const todayName = dayNamesEn[new Date().getDay()];
   const todayNameHe = dayNamesHe[new Date().getDay()];
-  
+
   const dayTranslations = {
-    Sunday: "יום ראשון",
-    Monday: "יום שני",
-    Tuesday: "יום שלישי",
-    Wednesday: "יום רביעי",
-    Thursday: "יום חמישי",
-    Friday: "יום שישי",
-    Saturday: "יום שבת",
-    Today: `היום (${todayNameHe})`
+    Sunday: "יום ראשון", Monday: "יום שני", Tuesday: "יום שלישי", Wednesday: "יום רביעי",
+    Thursday: "יום חמישי", Friday: "יום שישי", Saturday: "יום שבת", Today: `היום (${todayNameHe})`
   };
 
   const orderedDayKeys = ['Today', ...dayNamesEn];
 
-  // Get unique locations from all events for the filter
-  const allLocationsInEvents = [...new Set(
-    Object.values(schedule).flat().map(e => e.location).filter(Boolean)
-  )];
+  const allLocationsInEvents = [...new Set(Object.values(schedule).flat().map(e => e.location).filter(Boolean))];
 
-  // Filter events by location if a filter is active
   const getFilteredEvents = (dayKey) => {
     const dayEvents = schedule[dayKey] || [];
     if (locationFilter === "all") return dayEvents;
     return dayEvents.filter(e => e.location === locationFilter);
   };
 
-  // If showing Privacy page, render it instead
-  if (showPrivacy) {
-    return <Privacy onBack={() => setShowPrivacy(false)} />;
-  }
+  if (showPrivacy) return <Privacy onBack={() => setShowPrivacy(false)} />;
 
   return (
     <div className="min-h-screen bg-slate-50 p-4 sm:p-6 font-sans" dir="rtl">
+      {/* Toast Notifications */}
+      {toasts.length > 0 && (
+        <div className="fixed top-4 left-4 z-[100] flex flex-col gap-2 max-w-sm">
+          {toasts.map(t => (
+            <div key={t.id} className="bg-white border-r-4 border-amber-500 rounded-lg shadow-lg p-4 animate-slide-in flex items-start gap-3">
+              <BellRing className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <div className="font-bold text-sm text-slate-800">תזכורת: {t.title}</div>
+                <div className="text-xs text-slate-500 mt-0.5">{t.message}</div>
+              </div>
+              <button onClick={() => setToasts(prev => prev.filter(x => x.id !== t.id))} className="text-slate-300 hover:text-slate-500">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Header */}
       <header className="max-w-6xl mx-auto mb-6 sm:mb-8 flex items-center justify-between border-b pb-4">
         <div className="flex items-center gap-3">
           <Calendar className="w-8 h-8 text-blue-600 shrink-0" />
           <div>
-            <span className="text-[10px] text-slate-400 tracking-widest mb-0.5 block" style={{ textShadow: '0px 1px 1px rgba(255,255,255,0.7)' }}>בס"ד</span>
+            <span className="text-[10px] text-slate-400 tracking-widest mb-0.5 block">בס"ד</span>
             <h1 className="text-2xl font-bold text-slate-900 leading-tight">CalendAI</h1>
             <p className="text-sm text-indigo-500/80 font-medium leading-snug">✨ העוזר האישי שלך לניהול הזמן</p>
           </div>
         </div>
-        
-        {/* User section */}
         <div className="flex items-center gap-3">
           {user ? (
             <div className="flex items-center gap-3">
-              {user.photo ? (
-                <img src={user.photo} alt="" className="w-8 h-8 rounded-full" />
-              ) : (
-                <User className="w-6 h-6 text-slate-500" />
-              )}
+              {user.photo ? <img src={user.photo} alt="" className="w-8 h-8 rounded-full" /> : <User className="w-6 h-6 text-slate-500" />}
               <span className="text-sm text-slate-700">{user.displayName || user.email}</span>
-              <button
-                onClick={handleLogout}
-                className="flex items-center gap-1 text-sm text-red-500 hover:text-red-700 transition"
-              >
-                <LogOut className="w-4 h-4" />
-                התנתק
-              </button>
+              <button onClick={handleLogout} className="flex items-center gap-1 text-sm text-red-500 hover:text-red-700 transition"><LogOut className="w-4 h-4" /> התנתק</button>
             </div>
           ) : (
-            <button
-              onClick={handleLogin}
-              className="flex items-center gap-2 bg-white border border-slate-300 text-slate-700 px-4 py-2 rounded-lg hover:bg-slate-50 transition text-sm"
-            >
-              <LogIn className="w-4 h-4" />
-              התחבר עם Google
+            <button onClick={handleLogin} className="flex items-center gap-2 bg-white border border-slate-300 text-slate-700 px-4 py-2 rounded-lg hover:bg-slate-50 transition text-sm">
+              <LogIn className="w-4 h-4" /> התחבר עם Google
             </button>
           )}
         </div>
@@ -598,127 +525,65 @@ export default function App() {
         {/* Input box */}
         <div className="bg-white p-4 sm:p-6 rounded-xl shadow-sm border">
           <h2 className="text-lg font-semibold mb-2 text-slate-800">הזן לוח זמנים בשפה חופשית</h2>
-          
           <div className="relative mt-4" style={{ minHeight: '120px' }}>
-            <textarea
-              value={inputText}
-              onChange={(e) => setInputText(e.target.value)}
+            <textarea value={inputText} onChange={e => setInputText(e.target.value)}
               className="w-full p-4 border rounded-lg text-slate-800 placeholder-transparent focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none text-right"
-              rows="4"
-              placeholder=" "
-              onKeyDown={(e) => { if (e.key === 'Enter' && e.ctrlKey) handleParse(); }}
+              rows="4" placeholder=" "
+              onKeyDown={e => { if (e.key === 'Enter' && e.ctrlKey) handleParse(); }}
             />
-            {/* Custom animated placeholder - infinite vertical roll */}
             {!inputText && (
               <div className="absolute top-4 right-4 pointer-events-none overflow-hidden text-slate-400" style={{ height: '1.75rem' }}>
-                <div
-                  className={`${isTransitioning ? 'transition-transform duration-500 ease-in-out' : ''}`}
-                  style={{ transform: `translateY(-${placeholderIndex * 1.75}rem)` }}
-                >
-                  {displayedPlaceholders.map((text, index) => (
-                    <div key={index} className="h-7 leading-7 whitespace-nowrap text-right" style={{ direction: 'rtl' }}>{text}</div>
+                <div className={isTransitioning ? 'transition-transform duration-500 ease-in-out' : ''} style={{ transform: `translateY(-${placeholderIndex * 1.75}rem)` }}>
+                  {displayedPlaceholders.map((text, i) => (
+                    <div key={i} className="h-7 leading-7 whitespace-nowrap text-right" style={{ direction: 'rtl' }}>{text}</div>
                   ))}
                 </div>
               </div>
             )}
           </div>
 
-          {/* Suggestion Chips - horizontal scroll with sleep example */}
-          <div className="mt-3 flex items-center gap-2 overflow-x-auto whitespace-nowrap py-1" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+          <div className="mt-3 flex items-center gap-2 overflow-x-auto whitespace-nowrap py-1" style={{ scrollbarWidth: 'none' }}>
             <span className="text-xs text-slate-400 shrink-0">נסה למשל:</span>
-            {SUGGESTION_CHIPS.map((suggestion, index) => (
-              <button
-                key={index}
-                onClick={() => setInputText(suggestion)}
-                className="px-2.5 py-1 text-xs rounded-full border transition bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100 hover:border-slate-300 shrink-0"
-              >
-                {suggestion}
-              </button>
+            {SUGGESTION_CHIPS.map((s, i) => (
+              <button key={i} onClick={() => setInputText(s)}
+                className="px-2.5 py-1 text-xs rounded-full border transition bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100 hover:border-slate-300 shrink-0">{s}</button>
             ))}
-            {/* Sleep Example Button */}
-            <button
-              onClick={() => setInputText("קבע לי 8 שעות שינה בלילה")}
-              className="px-2.5 py-1 text-xs rounded-full border transition bg-indigo-50 text-indigo-600 border-indigo-200 hover:bg-indigo-100 hover:border-indigo-300 shrink-0 flex items-center gap-1"
-            >
-              <Moon className="w-3 h-3" />
-              🛌 8 שעות שינה
+            <button onClick={() => setInputText("קבע לי 8 שעות שינה בלילה")}
+              className="px-2.5 py-1 text-xs rounded-full border transition bg-indigo-50 text-indigo-600 border-indigo-200 hover:bg-indigo-100 shrink-0 flex items-center gap-1">
+              <Moon className="w-3 h-3" /> 🛌 8 שעות שינה
             </button>
           </div>
 
-          {/* Location Selector */}
           <div className="mt-4">
-            <LocationSelector
-              selectedLocation={selectedLocation}
-              onLocationChange={setSelectedLocation}
-              onSlotClick={handleSlotClick}
-            />
+            <LocationSelector selectedLocation={selectedLocation} onLocationChange={setSelectedLocation} onSlotClick={handleSlotClick} />
           </div>
 
-          {/* Recurrence Selector */}
           <div className="mt-4 flex flex-wrap items-center gap-3">
             <span className="text-sm font-medium text-slate-600">תדירות:</span>
-            <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="תדירות">
+            <div className="flex flex-wrap gap-2" role="radiogroup">
               {RECURRENCE_OPTIONS.map(opt => (
-                <button
-                  key={opt.value}
-                  onClick={() => setRecurrence(opt.value)}
-                  className={`px-3 py-1.5 text-sm rounded-lg border transition ${
-                    recurrence === opt.value
-                      ? "bg-blue-600 text-white border-blue-600 shadow-sm"
-                      : "bg-white text-slate-600 border-slate-300 hover:bg-slate-50"
-                  }`}
-                >
-                  {opt.label}
-                </button>
+                <button key={opt.value} onClick={() => setRecurrence(opt.value)}
+                  className={`px-3 py-1.5 text-sm rounded-lg border transition ${recurrence === opt.value ? "bg-blue-600 text-white border-blue-600 shadow-sm" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-50"}`}>{opt.label}</button>
               ))}
             </div>
           </div>
 
-          {error && (
-            <div className="flex items-center gap-2 text-red-600 text-sm mt-4 bg-red-50 p-3 rounded-lg border border-red-200">
-              <AlertCircle className="w-4 h-4" />
-              <span>{error}</span>
-            </div>
-          )}
+          {error && <div className="flex items-center gap-2 text-red-600 text-sm mt-4 bg-red-50 p-3 rounded-lg border border-red-200"><AlertCircle className="w-4 h-4" /><span>{error}</span></div>}
+          {success && <div className="flex items-center gap-2 text-green-700 text-sm mt-4 bg-green-50 p-3 rounded-lg border border-green-200"><Sparkles className="w-4 h-4 text-green-600" /><span>{success}</span></div>}
 
-          {success && (
-            <div className="flex items-center gap-2 text-green-700 text-sm mt-4 bg-green-50 p-3 rounded-lg border border-green-200">
-              <Sparkles className="w-4 h-4 text-green-600" />
-              <span>{success}</span>
-            </div>
-          )}
-
-          {/* Conflict warnings */}
           {conflicts.length > 0 && (
             <div className="mt-4 space-y-3">
-              {conflicts.map((conflict, idx) => (
+              {conflicts.map((c, idx) => (
                 <div key={idx} className="bg-amber-50 border border-amber-300 rounded-lg p-4">
-                  <div className="flex items-center gap-2 text-amber-800 font-semibold mb-2">
-                    <AlertTriangle className="w-5 h-5 text-amber-600" />
-                    <span>⚠️ התנגשות זמנים ב{dayTranslations[conflict.day] || conflict.day}</span>
-                  </div>
-                  <p className="text-sm text-amber-700 mb-2">
-                    האירוע "{conflict.event.title}" ({conflict.event.startTime} - {conflict.event.endTime}) חופף לאירועים קיימים:
-                  </p>
-                  <ul className="text-sm text-amber-800 list-disc list-inside mb-3 space-y-1">
-                    {conflict.conflicts.map((c, i) => (
-                      <li key={i}>{c.title} ({c.startTime} - {c.endTime})</li>
-                    ))}
-                  </ul>
-                  {conflict.suggestions.length > 0 && (
-                    <div className="mt-2">
-                      <p className="text-sm font-medium text-amber-800 mb-1">🕒 שעות פנויות מומלצות באותו יום:</p>
-                      <div className="flex flex-wrap gap-2">
-                        {conflict.suggestions.map((slot, i) => (
-                          <button
-                            key={i}
-                            onClick={() => setInputText(`שנה שעה ל${slot.startTime}-${slot.endTime} ב${conflict.day}`)}
-                            className="px-3 py-1.5 text-xs rounded-lg border border-amber-300 bg-white text-amber-800 hover:bg-amber-100 transition"
-                          >
-                            {slot.startTime} - {slot.endTime}
-                          </button>
-                        ))}
-                      </div>
+                  <div className="flex items-center gap-2 text-amber-800 font-semibold mb-2"><AlertTriangle className="w-5 h-5 text-amber-600" /><span>⚠️ התנגשות ב{dayTranslations[c.day] || c.day}</span></div>
+                  <p className="text-sm text-amber-700 mb-2">"{c.event.title}" ({c.event.startTime}-{c.event.endTime}) חופף לאירועים:</p>
+                  <ul className="text-sm text-amber-800 list-disc list-inside mb-3 space-y-1">{c.conflicts.map((cc, i) => <li key={i}>{cc.title} ({cc.startTime}-{cc.endTime})</li>)}</ul>
+                  {c.suggestions?.length > 0 && (
+                    <div><p className="text-sm font-medium text-amber-800 mb-1">🕒 שעות פנויות מומלצות:</p>
+                      <div className="flex flex-wrap gap-2">{c.suggestions.map((s, i) => (
+                        <button key={i} onClick={() => setInputText(`שנה שעה ל${s.startTime}-${s.endTime} ב${c.day}`)}
+                          className="px-3 py-1.5 text-xs rounded-lg border border-amber-300 bg-white text-amber-800 hover:bg-amber-100 transition">{s.startTime} - {s.endTime}</button>
+                      ))}</div>
                     </div>
                   )}
                 </div>
@@ -727,25 +592,11 @@ export default function App() {
           )}
 
           <div className="mt-4 flex items-center gap-3">
-            <button
-              onClick={handleParse}
-              disabled={loading}
-              className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-medium transition disabled:bg-blue-400 disabled:cursor-not-allowed w-full sm:w-48"
-            >
-              {loading ? (
-                <><Loader2 className="w-4 h-4 animate-spin" /> <span>מפענח...</span></>
-              ) : (
-                <><Send className="w-5 h-5 rotate-180" /> <span>הוסף ללוח שנה</span></>
-              )}
+            <button onClick={handleParse} disabled={loading}
+              className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-medium transition disabled:bg-blue-400 disabled:cursor-not-allowed w-full sm:w-48">
+              {loading ? <><Loader2 className="w-4 h-4 animate-spin" /> מפענח...</> : <><Send className="w-5 h-5 rotate-180" /> הוסף ללוח שנה</>}
             </button>
-            
-            <button
-              onClick={handleClearSchedule}
-              className="flex items-center gap-2 text-red-500 hover:text-red-700 px-4 py-3 rounded-lg hover:bg-red-50 transition text-sm"
-            >
-              <Trash2 className="w-4 h-4" />
-              נקה הכל
-            </button>
+            <button onClick={handleClearSchedule} className="flex items-center gap-2 text-red-500 hover:text-red-700 px-4 py-3 rounded-lg hover:bg-red-50 transition text-sm"><Trash2 className="w-4 h-4" /> נקה הכל</button>
           </div>
         </div>
 
@@ -754,67 +605,47 @@ export default function App() {
           <div className="flex flex-wrap items-center justify-between gap-4 mb-6 border-b pb-2">
             <h2 className="text-xl font-bold text-slate-800">הלו"ז השבועי שלך</h2>
             <div className="flex items-center gap-2">
-              {/* Location filter */}
               {allLocationsInEvents.length > 0 && (
                 <div className="flex items-center gap-1.5 text-xs">
                   <Filter className="w-3 h-3 text-slate-400" />
-                  <select
-                    value={locationFilter}
-                    onChange={(e) => setLocationFilter(e.target.value)}
-                    className="text-xs border border-slate-200 rounded-md px-2 py-1 bg-white text-slate-600 focus:ring-1 focus:ring-blue-500"
-                  >
+                  <select value={locationFilter} onChange={e => setLocationFilter(e.target.value)}
+                    className="text-xs border border-slate-200 rounded-md px-2 py-1 bg-white text-slate-600 focus:ring-1 focus:ring-blue-500">
                     <option value="all">כל המיקומים</option>
-                    {allLocationsInEvents.map(loc => (
-                      <option key={loc} value={loc}>{LOCATION_LABELS[loc] || loc}</option>
-                    ))}
+                    {allLocationsInEvents.map(loc => <option key={loc} value={loc}>{LOCATION_LABELS[loc] || loc}</option>)}
                   </select>
                 </div>
               )}
-              <button
-                onClick={handleOpenReschedule}
-                className="flex items-center gap-2 bg-indigo-100 text-indigo-700 px-4 py-2 rounded-lg hover:bg-indigo-200 transition text-sm font-medium border border-indigo-200"
-              >
-                <Wand2 className="w-4 h-4" />
-                תקן לי את הלו"ז
+              <button onClick={handleOpenReschedule}
+                className="flex items-center gap-2 bg-indigo-100 text-indigo-700 px-4 py-2 rounded-lg hover:bg-indigo-200 transition text-sm font-medium border border-indigo-200">
+                <Wand2 className="w-4 h-4" /> תקן לי את הלו"ז
               </button>
             </div>
           </div>
-
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {orderedDayKeys.map((dayKey) => {
+            {orderedDayKeys.map(dayKey => {
               if (dayKey === "Today" && (!schedule[dayKey] || schedule[dayKey].length === 0)) return null;
-
               const dayEvents = getFilteredEvents(dayKey);
               return (
                 <div key={dayKey} className={`border rounded-xl p-4 flex flex-col min-h-[150px] ${dayKey === todayName ? 'bg-indigo-50 ring-2 ring-indigo-300' : 'bg-slate-50'}`}>
                   <div className="font-bold text-slate-700 mb-3 border-b pb-1 text-center bg-white rounded shadow-sm py-1">
                     {dayTranslations[dayKey]}
-                    {dayEvents.length > 0 && (
-                      <span className="text-xs text-slate-400 mr-1">({dayEvents.length})</span>
-                    )}
+                    {dayEvents.length > 0 && <span className="text-xs text-slate-400 mr-1">({dayEvents.length})</span>}
                   </div>
-                  
                   <div className="flex-1 flex flex-col gap-2">
                     {dayEvents.length === 0 ? (
                       <p className="text-xs text-slate-300 text-center my-auto font-light">אין אירועים</p>
                     ) : (
                       dayEvents.map((event, index) => (
-                        <div 
-                          key={index} 
-                          className={`group relative bg-white p-3 rounded-lg shadow-xs border-r-4 flex flex-col gap-1 hover:shadow-md transition cursor-pointer ${
-                            event.isSleep ? 'border-indigo-500 bg-indigo-50/30' : 'border-blue-500'
-                          }`}
-                          onClick={() => handleOpenEditModal(dayKey, index)}
-                        >
-                          <button
-                            onClick={(e) => { e.stopPropagation(); handleRemoveEvent(dayKey, index); }}
-                            className="absolute -top-2 -left-2 opacity-0 group-hover:opacity-100 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center transition"
-                            title="הסר אירוע"
-                          >
+                        <div key={index}
+                          className={`group relative bg-white p-3 rounded-lg shadow-xs border-r-4 flex flex-col gap-1 hover:shadow-md transition cursor-pointer ${event.reminderMinutesBefore > 0 ? 'border-amber-400 bg-amber-50/20' : event.isSleep ? 'border-indigo-500 bg-indigo-50/30' : 'border-blue-500'}`}
+                          onClick={() => handleOpenEditModal(dayKey, index)}>
+                          <button onClick={e => { e.stopPropagation(); handleRemoveEvent(dayKey, index); }}
+                            className="absolute -top-2 -left-2 opacity-0 group-hover:opacity-100 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center transition">
                             <Trash2 className="w-3 h-3" />
                           </button>
                           <div className="font-semibold text-sm text-slate-800 flex items-center gap-1.5">
                             {event.isSleep && <Moon className="w-3.5 h-3.5 text-indigo-500" />}
+                            {event.reminderMinutesBefore > 0 && <Bell className="w-3.5 h-3.5 text-amber-500" />}
                             {event.title}
                             <Edit3 className="w-3 h-3 text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity mr-auto" />
                           </div>
@@ -823,24 +654,22 @@ export default function App() {
                             <span dir="ltr">{event.startTime} - {event.endTime}</span>
                             {event.isSleep && <span className="text-[10px] text-indigo-500 mr-1">🌙 לילה</span>}
                           </div>
-                          {/* Location badge */}
+                          {event.reminderMinutesBefore > 0 && (
+                            <div className="flex items-center gap-1 text-[10px] text-amber-600">
+                              <BellRing className="w-2.5 h-2.5" />
+                              <span>תזכורת: {event.reminderMinutesBefore} דקות לפני</span>
+                            </div>
+                          )}
                           {event.location && (
                             <div className="flex items-center gap-1 text-[10px] text-slate-400 mt-0.5">
                               <MapPin className="w-2.5 h-2.5" />
                               <span>{LOCATION_LABELS[event.location] || event.location}</span>
                             </div>
                           )}
-                          {event.recurrence && (
-                            <span className="text-[10px] text-blue-500 font-medium">
-                              {recurrenceLabels[event.recurrence] || event.recurrence}
-                            </span>
-                          )}
+                          {event.recurrence && <span className="text-[10px] text-blue-500 font-medium">{recurrenceLabels[event.recurrence] || event.recurrence}</span>}
                           {event.hasAdvice && event.aiAdvice && (
                             <div className="mt-1.5 bg-amber-50 border border-amber-200 rounded-lg p-2 text-xs text-amber-900">
-                              <div className="flex items-start gap-1.5">
-                                <span className="text-sm">💡</span>
-                                <span className="leading-relaxed">{event.aiAdvice}</span>
-                              </div>
+                              <div className="flex items-start gap-1.5"><span className="text-sm">💡</span><span>{event.aiAdvice}</span></div>
                             </div>
                           )}
                         </div>
@@ -852,10 +681,8 @@ export default function App() {
             })}
           </div>
         </div>
-        
-        {/* Monthly Calendar */}
+
         <MonthlyCalendar schedule={schedule} />
-        
       </main>
 
       {/* Reschedule Modal */}
@@ -863,112 +690,49 @@ export default function App() {
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" onClick={() => setIsRescheduleOpen(false)}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                <Wand2 className="text-indigo-600" />
-                תקן לי את הלו"ז
-              </h3>
-              <button onClick={() => setIsRescheduleOpen(false)} className="p-1 rounded-full hover:bg-slate-100">
-                <X className="w-5 h-5 text-slate-500" />
-              </button>
+              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2"><Wand2 className="text-indigo-600" /> תקן לי את הלו"ז</h3>
+              <button onClick={() => setIsRescheduleOpen(false)} className="p-1 rounded-full hover:bg-slate-100"><X className="w-5 h-5 text-slate-500" /></button>
             </div>
-
             {rescheduleLoading ? (
-              <div className="text-center p-8">
-                <Loader2 className="w-8 h-8 text-indigo-600 animate-spin mx-auto mb-4" />
-                <p className="text-slate-600">העוזר החכם מארגן את הלו"ז שלך מחדש...</p>
-                <p className="text-sm text-slate-400">זה עשוי לקחת מספר רגעים.</p>
-              </div>
+              <div className="text-center p-8"><Loader2 className="w-8 h-8 text-indigo-600 animate-spin mx-auto mb-4" /><p className="text-slate-600">העוזר החכם מארגן את הלו"ז...</p><p className="text-sm text-slate-400">זה עשוי לקחת מספר רגעים.</p></div>
             ) : rescheduleStep === "preview" && reschedulePreview ? (
               <div>
-                <p className="text-sm text-slate-600 bg-indigo-50 p-3 rounded-lg border border-indigo-200 mb-4">
-                  <span className="font-bold">העוזר מציע:</span> {reschedulePreview.summary}
-                </p>
-                <p className="font-semibold text-slate-800 mb-2">תצוגה מקדימה של השינויים:</p>
-                <div className="max-h-60 overflow-y-auto border rounded-lg p-2 bg-slate-50 text-xs font-mono">
-                  <pre>{JSON.stringify(reschedulePreview.newSchedule, null, 2)}</pre>
-                </div>
+                <p className="text-sm text-slate-600 bg-indigo-50 p-3 rounded-lg border border-indigo-200 mb-4"><span className="font-bold">העוזר מציע:</span> {reschedulePreview.summary}</p>
+                <p className="font-semibold text-slate-800 mb-2">תצוגה מקדימה:</p>
+                <div className="max-h-60 overflow-y-auto border rounded-lg p-2 bg-slate-50 text-xs font-mono"><pre>{JSON.stringify(reschedulePreview.newSchedule, null, 2)}</pre></div>
                 <div className="mt-6 flex items-center justify-end gap-3">
-                  <button onClick={handleOpenReschedule} className="text-sm text-slate-600 hover:text-slate-800">בטל ונסה שוב</button>
-                  <button onClick={handleConfirmReschedule} className="px-5 py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700">
-                    אשר עדכון לו"ז
-                  </button>
+                  <button onClick={handleOpenReschedule} className="text-sm text-slate-600 hover:text-slate-800">בטל</button>
+                  <button onClick={handleConfirmReschedule} className="px-5 py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700">אשר עדכון</button>
                 </div>
               </div>
             ) : rescheduleStep === "choose" && rescheduleDelay ? (
               <div>
-                <p className="text-sm text-slate-600 mb-4">
-                  בחר איך לארגן מחדש את הלו"ז בגלל האיחור של <strong>{rescheduleDelay}</strong> דקות:
-                </p>
+                <p className="text-sm text-slate-600 mb-4">בחר איך לארגן מחדש עקב איחור של <strong>{rescheduleDelay}</strong> דקות:</p>
                 <div className="flex flex-col gap-3">
-                  {gapsResult && gapsResult.hasGaps ? (
-                    <button
-                      onClick={handleMergeGaps}
-                      className="w-full text-right p-4 bg-green-50 rounded-lg border border-green-300 hover:bg-green-100 transition"
-                    >
-                      <div className="font-medium text-green-800">✅ בטל הפסקות בחלונות הפנויים</div>
-                      <div className="text-sm text-green-600 mt-1">
-                        נמצאו {gapsResult.gapCount} הפסקות בין אירועים. מיזוג יפנה זמן נוסף.
-                      </div>
-                      <div className="text-xs text-green-500 mt-1">
-                        {gapsResult.gaps.map((g, i) => (
-                          <div key={i}>• הפסקה של {g.gapMinutes} דקות בין "{g.beforeEvent}" ל"{g.afterEvent}"</div>
-                        ))}
-                      </div>
+                  {gapsResult?.hasGaps ? (
+                    <button onClick={handleMergeGaps} className="w-full text-right p-4 bg-green-50 rounded-lg border border-green-300 hover:bg-green-100 transition">
+                      <div className="font-medium text-green-800">✅ בטל הפסקות</div>
+                      <div className="text-sm text-green-600 mt-1">נמצאו {gapsResult.gapCount} הפסקות.</div>
                     </button>
                   ) : (
-                    <div className="w-full text-right p-4 bg-slate-50 rounded-lg border border-slate-200">
-                      <div className="font-medium text-slate-500">❌ לא מצאנו חלונות פנויים למיזוג</div>
-                      <div className="text-sm text-slate-400 mt-1">אין הפסקות בין האירועים להיום.</div>
-                    </div>
+                    <div className="w-full text-right p-4 bg-slate-50 rounded-lg border border-slate-200"><div className="font-medium text-slate-500">❌ אין חלונות למיזוג</div></div>
                   )}
-                  
-                  <button
-                    onClick={handleShiftEvents}
-                    className="w-full text-right p-4 bg-indigo-50 rounded-lg border border-indigo-300 hover:bg-indigo-100 transition"
-                  >
-                    <div className="font-medium text-indigo-800">🕐 הזז את כל האירועים קדימה ב{rescheduleDelay} דקות</div>
-                    <div className="text-sm text-indigo-600 mt-1">
-                      כל האירועים מהיום יזוזו קדימה ב{rescheduleDelay} דקות.
-                    </div>
+                  <button onClick={handleShiftEvents} className="w-full text-right p-4 bg-indigo-50 rounded-lg border border-indigo-300 hover:bg-indigo-100 transition">
+                    <div className="font-medium text-indigo-800">🕐 הזז הכל קדימה ב{rescheduleDelay} דקות</div>
                   </button>
                 </div>
-                {rescheduleError && (
-                  <div className="flex items-center gap-2 text-red-600 text-sm mt-4 bg-red-50 p-3 rounded-lg border border-red-200">
-                    <AlertCircle className="w-4 h-4" />
-                    <span>{rescheduleError}</span>
-                  </div>
-                )}
+                {rescheduleError && <div className="flex items-center gap-2 text-red-600 text-sm mt-4 bg-red-50 p-3 rounded-lg border border-red-200"><AlertCircle className="w-4 h-4" /><span>{rescheduleError}</span></div>}
               </div>
             ) : (
               <div>
-                <p className="text-sm text-slate-600 mb-4">בחר בכמה זמן אתה מאחר כדי לסדר את הלו"ז מחדש:</p>
+                <p className="text-sm text-slate-600 mb-4">בחר בכמה זמן אתה מאחר:</p>
                 <div className="flex flex-col gap-3">
-                  {[
-                    { label: 'אני באיחור של 30 דקות', delay: 30 },
-                    { label: 'אני באיחור של שעה', delay: 60 },
-                    { label: 'דחה משימות שלא בוצעו למחר', delay: null }
-                  ].map(item => (
-                    <button
-                      key={item.label}
-                      onClick={() => {
-                        if (item.delay) {
-                          handleDelaySelected(item.delay);
-                        } else {
-                          handleReschedule(item.label);
-                        }
-                      }}
-                      className="w-full text-right p-3 bg-slate-50 rounded-lg border border-slate-200 hover:bg-indigo-50 hover:border-indigo-300 transition"
-                    >
-                      {item.label}
-                    </button>
+                  {[{ label: 'אני באיחור של 30 דקות', delay: 30 }, { label: 'אני באיחור של שעה', delay: 60 }, { label: 'דחה משימות שלא בוצעו למחר', delay: null }].map(item => (
+                    <button key={item.label} onClick={() => item.delay ? handleDelaySelected(item.delay) : handleReschedule(item.label)}
+                      className="w-full text-right p-3 bg-slate-50 rounded-lg border border-slate-200 hover:bg-indigo-50 hover:border-indigo-300 transition">{item.label}</button>
                   ))}
                 </div>
-                {rescheduleError && (
-                  <div className="flex items-center gap-2 text-red-600 text-sm mt-4 bg-red-50 p-3 rounded-lg border border-red-200">
-                    <AlertCircle className="w-4 h-4" />
-                    <span>{rescheduleError}</span>
-                  </div>
-                )}
+                {rescheduleError && <div className="flex items-center gap-2 text-red-600 text-sm mt-4 bg-red-50 p-3 rounded-lg border border-red-200"><AlertCircle className="w-4 h-4" /><span>{rescheduleError}</span></div>}
               </div>
             )}
           </div>
@@ -980,51 +744,25 @@ export default function App() {
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" onClick={() => setIsFreeSlotsOpen(false)}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                <Sun className="text-green-600" />
-                חלונות פנויים
-              </h3>
-              <button onClick={() => setIsFreeSlotsOpen(false)} className="p-1 rounded-full hover:bg-slate-100">
-                <X className="w-5 h-5 text-slate-500" />
-              </button>
+              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2"><Sun className="text-green-600" /> חלונות פנויים</h3>
+              <button onClick={() => setIsFreeSlotsOpen(false)} className="p-1 rounded-full hover:bg-slate-100"><X className="w-5 h-5 text-slate-500" /></button>
             </div>
-
             {freeSlotsLoading ? (
-              <div className="text-center p-8">
-                <Loader2 className="w-8 h-8 text-green-600 animate-spin mx-auto mb-4" />
-                <p className="text-slate-600">מחפש חלונות פנויים...</p>
-              </div>
+              <div className="text-center p-8"><Loader2 className="w-8 h-8 text-green-600 animate-spin mx-auto mb-4" /><p className="text-slate-600">מחפש חלונות פנויים...</p></div>
             ) : freeSlotsError ? (
-              <div className="flex items-center gap-2 text-red-600 text-sm bg-red-50 p-3 rounded-lg border border-red-200">
-                <AlertCircle className="w-4 h-4" />
-                <span>{freeSlotsError}</span>
-              </div>
+              <div className="flex items-center gap-2 text-red-600 text-sm bg-red-50 p-3 rounded-lg border border-red-200"><AlertCircle className="w-4 h-4" /><span>{freeSlotsError}</span></div>
             ) : freeSlotsData && (
               <div>
-                <p className="text-sm text-slate-600 mb-3">
-                  נמצאו <strong>{freeSlotsData.totalFreeSlots}</strong> חלונות פנויים ב{dayTranslations[freeSlotsData.day] || freeSlotsData.day}
-                  {' '}(דרושות {freeSlotsData.requestedDurationMinutes} דקות):
-                </p>
-                
+                <p className="text-sm text-slate-600 mb-3">נמצאו <strong>{freeSlotsData.totalFreeSlots}</strong> חלונות ב{dayTranslations[freeSlotsData.day] || freeSlotsData.day} (דרושות {freeSlotsData.requestedDurationMinutes} דקות):</p>
                 {freeSlotsData.freeSlots.length === 0 ? (
-                  <p className="text-sm text-slate-500 bg-slate-50 p-3 rounded-lg">לא נמצאו חלונות פנויים מתאימים ביום זה.</p>
+                  <p className="text-sm text-slate-500 bg-slate-50 p-3 rounded-lg">לא נמצאו חלונות מתאימים.</p>
                 ) : (
                   <div className="space-y-2 max-h-60 overflow-y-auto">
                     {freeSlotsData.freeSlots.map((slot, i) => (
-                      <button
-                        key={i}
-                        onClick={() => {
-                          const title = prompt("הכנס כותרת לאירוע בחלון הפנוי:");
-                          if (title) handleSelectFreeSlot(slot, title);
-                        }}
-                        className="w-full text-right p-3 bg-green-50 rounded-lg border border-green-200 hover:bg-green-100 transition"
-                      >
-                        <div className="font-medium text-green-800">
-                          🕐 {slot.startTime} - {slot.endTime}
-                        </div>
-                        <div className="text-xs text-green-600 mt-0.5">
-                          משך: {slot.durationMinutes} דקות
-                        </div>
+                      <button key={i} onClick={() => { const t = prompt("הכנס כותרת:"); if (t) handleSelectFreeSlot(slot, t); }}
+                        className="w-full text-right p-3 bg-green-50 rounded-lg border border-green-200 hover:bg-green-100 transition">
+                        <div className="font-medium text-green-800">🕐 {slot.startTime} - {slot.endTime}</div>
+                        <div className="text-xs text-green-600 mt-0.5">משך: {slot.durationMinutes} דקות</div>
                       </button>
                     ))}
                   </div>
@@ -1035,121 +773,67 @@ export default function App() {
         </div>
       )}
 
-      {/* Event Edit Modal */}
+      {/* Event Edit Modal with Reminder Dropdown */}
       {editModalData && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" onClick={() => setEditModalData(null)}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                <Edit3 className="text-blue-600" />
-                עריכת אירוע
-              </h3>
-              <button onClick={() => setEditModalData(null)} className="p-1 rounded-full hover:bg-slate-100">
-                <X className="w-5 h-5 text-slate-500" />
-              </button>
+              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2"><Edit3 className="text-blue-600" /> עריכת אירוע</h3>
+              <button onClick={() => setEditModalData(null)} className="p-1 rounded-full hover:bg-slate-100"><X className="w-5 h-5 text-slate-500" /></button>
             </div>
-
             <div className="space-y-4">
-              {/* Title */}
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">כותרת</label>
-                <input
-                  type="text"
-                  value={editModalData.event.title}
-                  onChange={(e) => handleEditInputChange('title', e.target.value)}
-                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
+                <input type="text" value={editModalData.event.title} onChange={e => handleEditInputChange('title', e.target.value)}
+                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
               </div>
-
-              {/* Start Time */}
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">שעת התחלה</label>
-                <input
-                  type="text"
-                  value={editModalData.event.startTime}
-                  onChange={(e) => handleEditInputChange('startTime', e.target.value)}
-                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-800 font-mono focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="HH:MM AM/PM"
-                  dir="ltr"
-                />
+                <input type="text" value={editModalData.event.startTime} onChange={e => handleEditInputChange('startTime', e.target.value)}
+                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-800 font-mono focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="HH:MM AM/PM" dir="ltr" />
               </div>
-
-              {/* End Time */}
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">שעת סיום</label>
-                <input
-                  type="text"
-                  value={editModalData.event.endTime}
-                  onChange={(e) => handleEditInputChange('endTime', e.target.value)}
-                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-800 font-mono focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="HH:MM AM/PM"
-                  dir="ltr"
-                />
+                <input type="text" value={editModalData.event.endTime} onChange={e => handleEditInputChange('endTime', e.target.value)}
+                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-800 font-mono focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="HH:MM AM/PM" dir="ltr" />
               </div>
-
-              {/* Recurrence */}
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">תדירות</label>
-                <select
-                  value={editModalData.event.recurrence || 'weekly'}
-                  onChange={(e) => handleEditInputChange('recurrence', e.target.value)}
-                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                >
-                  {RECURRENCE_OPTIONS.map(opt => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                  ))}
+                <select value={editModalData.event.recurrence || 'weekly'} onChange={e => handleEditInputChange('recurrence', e.target.value)}
+                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                  {RECURRENCE_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
                 </select>
               </div>
-
-              {/* Sleep toggle */}
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="isSleep"
-                  checked={editModalData.event.isSleep || false}
-                  onChange={(e) => handleEditInputChange('isSleep', e.target.checked)}
-                  className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                />
-                <label htmlFor="isSleep" className="text-sm text-slate-700 flex items-center gap-1">
-                  <Moon className="w-3.5 h-3.5 text-indigo-500" />
-                  שעות שינה (חוצה חצות)
+              {/* Reminder Dropdown */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-1">
+                  <Bell className="w-4 h-4 text-amber-500" /> תזכורת מקדימה
                 </label>
+                <select value={editModalData.event.reminderMinutesBefore || 0} onChange={e => handleEditInputChange('reminderMinutesBefore', parseInt(e.target.value))}
+                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                  {REMINDER_MINUTES_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <input type="checkbox" id="isSleep" checked={editModalData.event.isSleep || false} onChange={e => handleEditInputChange('isSleep', e.target.checked)}
+                  className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
+                <label htmlFor="isSleep" className="text-sm text-slate-700 flex items-center gap-1"><Moon className="w-3.5 h-3.5 text-indigo-500" /> שעות שינה (חוצה חצות)</label>
               </div>
             </div>
-
             <div className="mt-6 flex items-center justify-end gap-3">
-              <button
-                onClick={() => setEditModalData(null)}
-                className="text-sm text-slate-600 hover:text-slate-800"
-              >
-                בטל
-              </button>
-              <button
-                onClick={handleEditEvent}
-                disabled={editLoading}
-                className="flex items-center gap-2 px-5 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:bg-blue-400 transition"
-              >
-                {editLoading ? (
-                  <><Loader2 className="w-4 h-4 animate-spin" /> מעדכן...</>
-                ) : (
-                  <><Check className="w-4 h-4" /> שמור שינויים</>
-                )}
+              <button onClick={() => setEditModalData(null)} className="text-sm text-slate-600 hover:text-slate-800">בטל</button>
+              <button onClick={handleEditEvent} disabled={editLoading}
+                className="flex items-center gap-2 px-5 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:bg-blue-400 transition">
+                {editLoading ? <><Loader2 className="w-4 h-4 animate-spin" /> מעדכן...</> : <><Check className="w-4 h-4" /> שמור שינויים</>}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Footer with build time */}
       <footer className="max-w-6xl mx-auto mt-12 text-center text-xs text-slate-400 border-t pt-4">
         <p>גרסה מעודכנת: {typeof __BUILD_TIME__ !== 'undefined' ? __BUILD_TIME__ : 'מקומית'}</p>
-        <button
-          onClick={() => setShowPrivacy(true)}
-          className="mt-2 inline-flex items-center gap-1 text-slate-400 hover:text-slate-600 transition"
-        >
-          <Shield className="w-3 h-3" />
-          Privacy Policy
-        </button>
+        <button onClick={() => setShowPrivacy(true)} className="mt-2 inline-flex items-center gap-1 text-slate-400 hover:text-slate-600 transition"><Shield className="w-3 h-3" /> Privacy Policy</button>
       </footer>
     </div>
   );
