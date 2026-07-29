@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw } from "lucide-react";
+import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Menu } from "lucide-react";
 import MonthlyCalendar from "./components/MonthlyCalendar";
 import LocationSelector from "./components/LocationSelector";
 import Privacy from "./components/Privacy";
 import ErrorBoundary from "./components/ErrorBoundary";
+import SidebarDrawer from "./components/SidebarDrawer";
 import translations from "./i18n";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
@@ -104,6 +105,23 @@ function App() {
   const [notificationPerm, setNotificationPerm] = useState(Notification.permission);
   const [toasts, setToasts] = useState([]);
   const notifiedRemindersRef = useRef(new Set());
+
+  // Sidebar state
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  // Detect login=success from Google OAuth redirect
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('login') === 'success') {
+      // Clean the URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+      // Immediately fetch user data
+      fetch(`${API_BASE}/api/auth/me`, { credentials: "include" })
+        .then(res => res.json())
+        .then(data => { if (data.user) setUser(data.user); })
+        .catch(() => {});
+    }
+  }, []);
 
   // Toggle language function
   const toggleLanguage = () => {
@@ -573,6 +591,11 @@ function App() {
       {/* Header */}
       <header className="max-w-6xl mx-auto mb-6 sm:mb-8 flex items-center justify-between border-b pb-4">
         <div className="flex items-center gap-3">
+          {/* Hamburger Menu Button */}
+          <button onClick={() => setIsSidebarOpen(true)}
+            className="flex items-center justify-center w-9 h-9 rounded-lg hover:bg-slate-100 transition text-slate-600">
+            <Menu className="w-5 h-5" />
+          </button>
           <Calendar className="w-8 h-8 text-blue-600 shrink-0" />
           <div>
             <span className="text-[10px] text-slate-400 tracking-widest mb-0.5 block">{t.besod}</span>
@@ -919,6 +942,17 @@ function App() {
         <p>{t.footerVersion} {typeof __BUILD_TIME__ !== 'undefined' ? __BUILD_TIME__ : t.footerLocal}</p>
         <button onClick={() => setShowPrivacy(true)} className="mt-2 inline-flex items-center gap-1 text-slate-400 hover:text-slate-600 transition"><Shield className="w-3 h-3" /> {t.footerPrivacy}</button>
       </footer>
+
+      {/* Sidebar Drawer */}
+      <SidebarDrawer
+        isOpen={isSidebarOpen}
+        onClose={() => setIsSidebarOpen(false)}
+        schedule={schedule}
+        lang={lang}
+        t={t}
+        user={user}
+        onLogout={handleLogout}
+      />
     </div>
     </>
   );

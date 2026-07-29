@@ -1203,7 +1203,9 @@ app.get('/api/auth/google',
 app.get('/api/auth/google/callback',
   passport.authenticate('google', { failureRedirect: '/' }),
   (req, res) => {
-    res.redirect(process.env.FRONTEND_URL || CLIENT_URL);
+    // Redirect to the main dashboard with login=success to auto-login the user
+    const baseUrl = process.env.FRONTEND_URL || CLIENT_URL;
+    res.redirect(`${baseUrl}?login=success`);
   }
 );
 
