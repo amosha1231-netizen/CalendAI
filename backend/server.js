@@ -1761,6 +1761,18 @@ app.get('/api/reschedule/gaps', (req, res) => {
   }
 });
 
+// PUT /api/schedule – replace the entire schedule for the user (used by Undo)
+app.put('/api/schedule', (req, res) => {
+  const { schedule } = req.body;
+  if (!schedule) {
+    return res.status(400).json({ error: 'schedule is required.' });
+  }
+  const userId = getUserId(req);
+  userSchedules.set(userId, schedule);
+  saveSchedulesNow();
+  res.json({ ok: true, message: 'Schedule restored.' });
+});
+
 // GET /api/schedule – get the current user's full schedule
 app.get('/api/schedule', (req, res) => {
   const userId = getUserId(req);

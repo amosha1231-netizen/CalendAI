@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck } from "lucide-react";
+import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw } from "lucide-react";
 import MonthlyCalendar from "./components/MonthlyCalendar";
 import LocationSelector from "./components/LocationSelector";
 import Privacy from "./components/Privacy";
+import ErrorBoundary from "./components/ErrorBoundary";
 import translations from "./i18n";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
@@ -49,14 +50,14 @@ function playNotificationSound() {
   }
 }
 
-export default function App() {
+function App() {
   // Language state - load from localStorage or default to 'he'
   const [lang, setLang] = useState(() => {
     try {
       return localStorage.getItem('calendai-lang') || 'he';
     } catch { return 'he'; }
   });
-  const t = translations[lang]; // shorthand for translations
+  const t = translations[lang] || translations['he']; // shorthand for translations with fallback
 
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [inputText, setInputText] = useState("");
@@ -93,6 +94,7 @@ export default function App() {
     Sunday: [], Monday: [], Tuesday: [], Wednesday: [],
     Thursday: [], Friday: [], Saturday: [], Today: []
   });
+  const scheduleHistoryRef = useRef([]); // Undo history stack
 
   // Splash Screen State
   const [splashDone, setSplashDone] = useState(false);
@@ -249,6 +251,28 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [splashDone]);
 
+  // Save the current schedule state to the undo history stack
+  const saveScheduleState = useCallback(() => {
+    scheduleHistoryRef.current.push(JSON.parse(JSON.stringify(schedule)));
+  }, [schedule]);
+
+  const handleUndo = async () => {
+    if (scheduleHistoryRef.current.length === 0) return;
+    const previousSchedule = scheduleHistoryRef.current.pop();
+    setSchedule(previousSchedule);
+    try {
+      await fetch(`${API_BASE}/api/schedule`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ schedule: previousSchedule }),
+        credentials: "include"
+      });
+      setSuccess(t.undo + "!");
+    } catch (err) {
+      console.error("Undo sync failed:", err);
+    }
+  };
+
   const handleSlotClick = (day, slot) => {
     const [hour, minute] = slot.split(':').map(Number);
     const hour12 = hour % 12 || 12;
@@ -263,6 +287,7 @@ export default function App() {
 
   const handleParse = async () => {
     if (!inputText.trim()) return;
+    saveScheduleState();
     setLoading(true);
     setError("");
     setSuccess("");
@@ -307,16 +332,8 @@ export default function App() {
     } catch (err) { console.error(err); }
   };
 
-  const handleClearSchedule = async () => {
-    if (!confirm(t.scheduleCleared + "?")) return;
-    try {
-      await fetch(`${API_BASE}/api/schedule/clear`, { method: "DELETE", credentials: "include" });
-      setSchedule({ Sunday: [], Monday: [], Tuesday: [], Wednesday: [], Thursday: [], Friday: [], Saturday: [], Today: [] });
-      setSuccess(t.scheduleCleared);
-    } catch (err) { console.error(err); }
-  };
-
   const handleRemoveEvent = async (day, index) => {
+    saveScheduleState();
     try {
       await fetch(`${API_BASE}/api/schedule/event`, {
         method: "DELETE",
@@ -407,6 +424,7 @@ export default function App() {
 
   const handleConfirmReschedule = () => {
     if (reschedulePreview?.newSchedule) {
+      saveScheduleState();
       setSchedule(reschedulePreview.newSchedule);
       setSuccess(reschedulePreview.summary || t.eventUpdated);
       setIsRescheduleOpen(false);
@@ -433,6 +451,7 @@ export default function App() {
 
   const handleSelectFreeSlot = async (slot, title) => {
     if (!title) { setFreeSlotsError(t.freeSlotPrompt.replace(':', '')); return; }
+    saveScheduleState();
     setFreeSlotsLoading(true);
     try {
       const res = await fetch(`${API_BASE}/api/schedule/add-to-free-slot`, {
@@ -458,6 +477,7 @@ export default function App() {
 
   const handleEditEvent = async () => {
     if (!editModalData) return;
+    saveScheduleState();
     setEditLoading(true);
     try {
       const res = await fetch(`${API_BASE}/api/schedule/event`, {
@@ -655,7 +675,7 @@ export default function App() {
               className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-medium transition disabled:bg-blue-400 disabled:cursor-not-allowed w-full sm:w-48">
               {loading ? <><Loader2 className="w-4 h-4 animate-spin" /> {t.parsing}</> : <><Send className={`w-5 h-5 ${isRTL ? 'rotate-180' : ''}`} /> {t.parseButton}</>}
             </button>
-            <button onClick={handleClearSchedule} className="flex items-center gap-2 text-red-500 hover:text-red-700 px-4 py-3 rounded-lg hover:bg-red-50 transition text-sm"><Trash2 className="w-4 h-4" /> {t.clearAll}</button>
+            <button onClick={handleUndo} disabled={scheduleHistoryRef.current.length === 0} className="flex items-center gap-2 text-slate-500 hover:text-slate-700 px-4 py-3 rounded-lg hover:bg-slate-50 transition text-sm disabled:opacity-30 disabled:cursor-not-allowed"><RotateCcw className="w-4 h-4" /> {t.undo}</button>
           </div>
         </div>
 
@@ -901,5 +921,13 @@ export default function App() {
       </footer>
     </div>
     </>
+  );
+}
+
+export default function AppWithBoundary() {
+  return (
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   );
 }
