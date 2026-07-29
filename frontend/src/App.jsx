@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Menu } from "lucide-react";
+import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Menu, Share2, Download, Eye, ExternalLink, Copy } from "lucide-react";
 import MonthlyCalendar from "./components/MonthlyCalendar";
 import LocationSelector from "./components/LocationSelector";
 import Privacy from "./components/Privacy";
 import ErrorBoundary from "./components/ErrorBoundary";
 import SidebarDrawer from "./components/SidebarDrawer";
+import Booking from "./components/Booking";
 import translations from "./i18n";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
@@ -49,6 +50,27 @@ function playNotificationSound() {
   } catch (e) {
     // Audio not supported
   }
+}
+
+// Detect iOS Safari
+function isIosSafari() {
+  const ua = navigator.userAgent || navigator.vendor || window.opera;
+  const isIos = /iPhone|iPad|iPod/.test(ua);
+  const isSafari = /Safari/.test(ua) && !/Chrome|CriOS|FxiOS|OPiOS|mercury/.test(ua);
+  return isIos && isSafari;
+}
+
+// Detect iOS non-Safari browser
+function isIosNonSafari() {
+  const ua = navigator.userAgent || navigator.vendor || window.opera;
+  const isIos = /iPhone|iPad|iPod/.test(ua);
+  const isNotSafari = !(/Safari/.test(ua) && !/Chrome|CriOS|FxiOS|OPiOS|mercury/.test(ua));
+  return isIos && isNotSafari;
+}
+
+// Check if already in standalone mode (PWA)
+function isStandalone() {
+  return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
 }
 
 function App() {
@@ -100,6 +122,8 @@ function App() {
   // Splash Screen State
   const [splashDone, setSplashDone] = useState(false);
   const [splashFading, setSplashFading] = useState(false);
+  const splashStartRef = useRef(Date.now());
+  const SPLASH_MIN_DURATION = 1800; // ms - minimum time splash stays visible before fade-out starts
 
   // Notification / Reminder State
   const [notificationPerm, setNotificationPerm] = useState(Notification.permission);
@@ -109,19 +133,143 @@ function App() {
   // Sidebar state
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
+  // Booking Mode State
+  const [isBookingOpen, setIsBookingOpen] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.has('book');
+  });
+
+  // PWA Install State
+  const [installPrompt, setInstallPrompt] = useState(null);
+  const [showPwaPopup, setShowPwaPopup] = useState(false);
+  const [pwaDismissed, setPwaDismissed] = useState(() => {
+    try { return localStorage.getItem('calendai-pwa-dismissed') === 'true'; } catch { return false; }
+  });
+
+  // Share Booking Link State
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [shareLinkCopied, setShareLinkCopied] = useState(false);
+
+  const bookingLink = typeof window !== 'undefined' ? `${window.location.origin}${window.location.pathname}?book=1` : '';
+
+  // Listen for beforeinstallprompt (Android Chrome)
+  useEffect(() => {
+    const handler = (e) => {
+      e.preventDefault();
+      setInstallPrompt(e);
+      if (!isStandalone() && !pwaDismissed) {
+        setShowPwaPopup(true);
+      }
+    };
+    window.addEventListener('beforeinstallprompt', handler);
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, [pwaDismissed]);
+
+  // Show iOS PWA prompt if not already dismissed
+  useEffect(() => {
+    if (!isStandalone() && !pwaDismissed && !installPrompt) {
+      const timer = setTimeout(() => {
+        setShowPwaPopup(true);
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [pwaDismissed, installPrompt]);
+
+  // Hide PWA popup if already standalone
+  useEffect(() => {
+    if (isStandalone()) {
+      setShowPwaPopup(false);
+    }
+  }, []);
+
+  const handleInstallClick = async () => {
+    if (installPrompt) {
+      installPrompt.prompt();
+      const result = await installPrompt.userChoice;
+      if (result.outcome === 'accepted') {
+        setInstallPrompt(null);
+        setShowPwaPopup(false);
+      }
+    }
+  };
+
+  const handleDismissPwa = () => {
+    setShowPwaPopup(false);
+    setPwaDismissed(true);
+    try { localStorage.setItem('calendai-pwa-dismissed', 'true'); } catch (e) {}
+  };
+
+  const handleCopyShareLink = () => {
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(bookingLink).then(() => {
+        setShareLinkCopied(true);
+        setTimeout(() => setShareLinkCopied(false), 2500);
+      }).catch(() => {
+        const textArea = document.createElement('textarea');
+        textArea.value = bookingLink;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+        setShareLinkCopied(true);
+        setTimeout(() => setShareLinkCopied(false), 2500);
+      });
+    }
+  };
+
+  const handlePreviewLink = () => {
+    window.open(bookingLink, '_blank');
+  };
+
   // Detect login=success from Google OAuth redirect
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('login') === 'success') {
-      // Clean the URL
       window.history.replaceState({}, document.title, window.location.pathname);
-      // Immediately fetch user data
       fetch(`${API_BASE}/api/auth/me`, { credentials: "include" })
         .then(res => res.json())
         .then(data => { if (data.user) setUser(data.user); })
         .catch(() => {});
     }
   }, []);
+
+  // Handle booking confirmation
+  const handleBookingConfirm = useCallback(async (bookingData) => {
+    saveScheduleState();
+    const { day, slots, guestName, duration } = bookingData;
+    try {
+      for (const slot of slots) {
+        const startH12 = slot.hour % 12 || 12;
+        const ampm = slot.hour >= 12 ? 'PM' : 'AM';
+        const endHour = slot.hour + Math.ceil(duration / 60);
+        const endMinute = (slot.minute + duration) % 60;
+        const endH12 = endHour % 12 || 12;
+        const endAmpm = endHour >= 12 ? 'PM' : 'AM';
+
+        const startTime = `${String(startH12).padStart(2, '0')}:${String(slot.minute).padStart(2, '0')} ${ampm}`;
+        const endTime = `${String(endH12).padStart(2, '0')}:${String(endMinute).padStart(2, '0')} ${endAmpm}`;
+
+        const res = await fetch(`${API_BASE}/api/schedule/add-to-free-slot`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            day: day,
+            startTime,
+            endTime,
+            title: `פגישה עם ${guestName}`,
+            recurrence: 'once',
+            location: selectedLocation
+          }),
+          credentials: "include"
+        });
+        if (!res.ok) throw new Error('Failed to book slot');
+      }
+      await fetchSchedule();
+      setSuccess(t.bookingConfirmation);
+    } catch (err) {
+      setError(err.message);
+    }
+  }, [schedule, selectedLocation, fetchSchedule, t]);
 
   // Toggle language function
   const toggleLanguage = () => {
@@ -248,24 +396,28 @@ function App() {
 
   useEffect(() => { fetchSchedule(); }, [fetchSchedule]);
 
-  // Splash screen: fade out when schedule loads or after 2 seconds max
+  // Splash screen: fade out when schedule loads, but ensure minimum display duration
   useEffect(() => {
     const hasData = Object.values(schedule).some(arr => arr.length > 0);
     if (hasData || user !== null) {
-      setSplashFading(true);
-      const timer = setTimeout(() => setSplashDone(true), 600);
-      return () => clearTimeout(timer);
+      const elapsed = Date.now() - splashStartRef.current;
+      const remaining = Math.max(0, SPLASH_MIN_DURATION - elapsed);
+      const fadeTimer = setTimeout(() => {
+        setSplashFading(true);
+        const doneTimer = setTimeout(() => setSplashDone(true), 600);
+        doneTimer._isSplashDone = true;
+      }, remaining);
+      return () => clearTimeout(fadeTimer);
     }
   }, [schedule, user]);
 
   useEffect(() => {
-    // Force splash to end after 2 seconds max
     const timer = setTimeout(() => {
       if (!splashDone) {
         setSplashFading(true);
         setTimeout(() => setSplashDone(true), 600);
       }
-    }, 2000);
+    }, SPLASH_MIN_DURATION + 1200);
     return () => clearTimeout(timer);
   }, [splashDone]);
 
@@ -604,6 +756,11 @@ function App() {
           </div>
         </div>
         <div className="flex items-center gap-3">
+          {/* Share Booking Link Button */}
+          <button onClick={() => setShowShareModal(true)}
+            className="flex items-center gap-1 bg-emerald-50 border border-emerald-300 text-emerald-700 px-3 py-2 rounded-lg hover:bg-emerald-100 transition text-sm font-medium">
+            <Share2 className="w-4 h-4" /> {t.shareBookingLink}
+          </button>
           {/* Language Toggle Button */}
           <button onClick={toggleLanguage}
             className="flex items-center gap-1 bg-white border border-slate-300 text-slate-700 px-3 py-2 rounded-lg hover:bg-slate-50 transition text-sm font-medium">
@@ -730,7 +887,6 @@ function App() {
               const isTodayColumn = dayKey === todayName;
               return (
                 <div key={dayKey} className={`border rounded-xl p-4 flex flex-col min-h-[150px] relative ${isTodayColumn ? 'today-column bg-blue-50 border-blue-400 ring-2 ring-blue-400 shadow-lg shadow-blue-100/50' : 'bg-slate-50 border-slate-200'}`}>
-                  {/* Today badge */}
                   {isTodayColumn && (
                     <div className="today-badge">היום / Today</div>
                   )}
@@ -943,6 +1099,131 @@ function App() {
         <button onClick={() => setShowPrivacy(true)} className="mt-2 inline-flex items-center gap-1 text-slate-400 hover:text-slate-600 transition"><Shield className="w-3 h-3" /> {t.footerPrivacy}</button>
       </footer>
 
+      {/* Booking Component (shown when ?book= parameter is present) */}
+      {isBookingOpen && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <Booking
+              schedule={schedule}
+              lang={lang}
+              t={t}
+              onClose={() => setIsBookingOpen(false)}
+              onConfirm={handleBookingConfirm}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Share Booking Link Modal */}
+      {showShareModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" onClick={() => setShowShareModal(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                <Share2 className="w-5 h-5 text-emerald-600" /> {t.shareBookingTitle}
+              </h3>
+              <button onClick={() => setShowShareModal(false)} className="p-1 rounded-full hover:bg-slate-100">
+                <X className="w-5 h-5 text-slate-500" />
+              </button>
+            </div>
+            <p className="text-sm text-slate-600 mb-4">{t.shareBookingDesc}</p>
+            <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 mb-4">
+              <label className="block text-xs font-medium text-slate-500 mb-1">{t.shareBookingLinkLabel}</label>
+              <div className="text-sm text-slate-800 font-mono break-all bg-white p-2 rounded border border-slate-200" dir="ltr">
+                {bookingLink}
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleCopyShareLink}
+                className="flex-1 flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-lg font-medium transition text-sm"
+              >
+                {shareLinkCopied ? (
+                  <><Check className="w-4 h-4" /> {t.shareBookingCopied}</>
+                ) : (
+                  <><Copy className="w-4 h-4" /> {t.shareBookingCopy}</>
+                )}
+              </button>
+              <button
+                onClick={handlePreviewLink}
+                className="flex items-center justify-center gap-2 bg-white border border-slate-300 text-slate-700 px-4 py-2.5 rounded-lg hover:bg-slate-50 transition text-sm font-medium"
+              >
+                <ExternalLink className="w-4 h-4" /> {t.shareBookingPreview}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PWA Install Popup */}
+      {showPwaPopup && !isStandalone() && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[9999]" onClick={handleDismissPwa}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
+            {/* Android Chrome Install Prompt */}
+            {installPrompt && (
+              <div className="text-center">
+                <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
+                  <Download className="w-8 h-8 text-white" />
+                </div>
+                <h3 className="text-lg font-bold text-slate-800 mb-2">{t.pwaInstall}</h3>
+                <p className="text-sm text-slate-500 mb-6">{t.pwaInstallDesc}</p>
+                <button onClick={handleInstallClick}
+                  className="w-full px-4 py-3 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-xl font-bold text-sm shadow-lg hover:shadow-xl transition">
+                  {t.pwaInstallButton}
+                </button>
+              </div>
+            )}
+            {/* iOS Safari Install Instructions */}
+            {isIosSafari() && !installPrompt && (
+              <div className="text-center">
+                <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-cyan-500 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
+                  <Download className="w-8 h-8 text-white" />
+                </div>
+                <h3 className="text-lg font-bold text-slate-800 mb-2">{t.pwaIosSafariTitle}</h3>
+                <p className="text-sm text-slate-500 mb-4">{t.pwaIosSafariDesc}</p>
+                <div className="bg-slate-50 rounded-lg p-4 text-right space-y-2 mb-4">
+                  <div className="flex items-center gap-2 text-sm text-slate-700">
+                    <span className="w-8 h-8 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-xs font-bold shrink-0">1</span>
+                    <span>{t.pwaIosSafariStep1}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-sm text-slate-700">
+                    <span className="w-8 h-8 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-xs font-bold shrink-0">2</span>
+                    <span>{t.pwaIosSafariStep2}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-sm text-slate-700">
+                    <span className="w-8 h-8 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-xs font-bold shrink-0">3</span>
+                    <span>{t.pwaIosSafariStep3}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+            {/* iOS Non-Safari Browser */}
+            {isIosNonSafari() && !installPrompt && (
+              <div className="text-center">
+                <div className="w-16 h-16 bg-gradient-to-br from-amber-400 to-orange-500 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
+                  <ExternalLink className="w-8 h-8 text-white" />
+                </div>
+                <h3 className="text-lg font-bold text-slate-800 mb-2">{t.pwaOpenInSafari}</h3>
+                <p className="text-sm text-slate-500 mb-6">{t.pwaOpenInSafariDesc}</p>
+                <button
+                  onClick={() => {
+                    const safariUrl = window.location.href;
+                    window.location.href = safariUrl;
+                  }}
+                  className="w-full px-4 py-3 bg-gradient-to-r from-amber-400 to-orange-500 text-white rounded-xl font-bold text-sm shadow-lg hover:shadow-xl transition"
+                >
+                  {t.pwaOpenInSafari}
+                </button>
+              </div>
+            )}
+            {/* Dismiss button */}
+            <button onClick={handleDismissPwa} className="w-full mt-3 text-sm text-slate-400 hover:text-slate-600 py-2 transition">
+              {t.cancel}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Sidebar Drawer */}
       <SidebarDrawer
         isOpen={isSidebarOpen}
@@ -952,6 +1233,7 @@ function App() {
         t={t}
         user={user}
         onLogout={handleLogout}
+        onOpenShareModal={() => setShowShareModal(true)}
       />
     </div>
     </>

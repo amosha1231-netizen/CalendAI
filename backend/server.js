@@ -1204,6 +1204,8 @@ app.get('/api/auth/google/callback',
   passport.authenticate('google', { failureRedirect: '/' }),
   (req, res) => {
     // Redirect to the main dashboard with login=success to auto-login the user
+    // Note: this redirects to the Dashboard (main schedule view), NOT to the Booking page.
+    // The Booking page is only accessed via a shared link (?book=... parameter).
     const baseUrl = process.env.FRONTEND_URL || CLIENT_URL;
     res.redirect(`${baseUrl}?login=success`);
   }
@@ -1846,6 +1848,129 @@ app.delete('/api/schedule/event', (req, res) => {
     res.json({ ok: true });
   } else {
     res.status(404).json({ error: 'Event not found.' });
+  }
+});
+
+// ──────────────────────────────────────────────
+// 9c. AI Booking Smart Finder
+// ──────────────────────────────────────────────
+
+/**
+ * POST /api/booking/ai-find-slot
+ * Uses AI to analyze the host's schedule, find gaps, suggest merging tasks,
+ * or propose alternative times for a guest booking.
+ */
+app.post('/api/booking/ai-find-slot', aiLimiter, async (req, res) => {
+  try {
+    const { day, durationMinutes, guestName, preferences } = req.body;
+    if (!day || !durationMinutes) {
+      return res.status(400).json({ error: 'day and durationMinutes are required.' });
+    }
+
+    const userId = getUserId(req);
+    const schedule = getUserSchedule(userId);
+    const todayName = getTodayDayName();
+    const actualDay = day === 'Today' ? todayName : day;
+    const dayEvents = schedule[actualDay] || [];
+
+    // Find free slots for the requested day
+    const freeSlots = findFreeSlotsForDay(schedule, actualDay, DEFAULT_LOCATION_ID);
+
+    // If no AI available, return deterministic free slots
+    if (!ai) {
+      const suitableSlots = freeSlots.filter(s => s.durationMinutes >= durationMinutes);
+      return res.json({
+        hasSuggestion: suitableSlots.length > 0,
+        freeSlots: suitableSlots,
+        suggestion: suitableSlots.length > 0
+          ? null
+          : { type: 'no_free_slot', message: 'No free slots available. Try another day.' },
+        aiMessage: null
+      });
+    }
+
+    const prompt = `
+      אתה עוזר AI חכם שמנתח לו"ז יומי. תפקידך למצוא חלון פנוי לאורח חדש, או להציע דרכים ליצור חלון פנוי על ידי מיזוג משימות.
+
+      הנה נתוני הקלט:
+      - היום: ${actualDay}
+      - משך הפגישה הרצוי: ${durationMinutes} דקות
+      - שם האורח: ${guestName || 'אורח'}
+      - העדפות: ${preferences || 'ללא העדפות מיוחדות'}
+      - האירועים הקיימים ביום זה: ${JSON.stringify(dayEvents)}
+
+      החלונות הפנויים הקיימים: ${JSON.stringify(freeSlots)}
+
+      אנא החזר JSON בפורמט הבא:
+      {
+        "hasSuggestion": boolean,
+        "aiMessage": "מסביר בעברית מה מצאת או מה אתה מציע",
+        "suggestion": {
+          "type": "free_slot" | "merge_tasks" | "try_another_day",
+          "startTime": "HH:MM AM/PM (אם יש הצעה לשעה)",
+          "endTime": "HH:MM AM/PM",
+          "message": "הסבר מפורט בעברית"
+        },
+        "freeSlots": [
+          { "startTime": "HH:MM AM/PM", "endTime": "HH:MM AM/PM", "durationMinutes": number }
+        ]
+      }
+    `;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.0-flash',
+      contents: prompt,
+      config: {
+        temperature: 0.4,
+        responseMimeType: 'application/json'
+      }
+    });
+
+    const raw = response.text || '{}';
+    const parsed = JSON.parse(raw);
+
+    // Fallback to deterministic free slots if AI response is malformed
+    if (!parsed.hasSuggestion === undefined && !parsed.freeSlots) {
+      const suitableSlots = freeSlots.filter(s => s.durationMinutes >= durationMinutes);
+      return res.json({
+        hasSuggestion: suitableSlots.length > 0,
+        freeSlots: suitableSlots,
+        suggestion: null,
+        aiMessage: suitableSlots.length > 0
+          ? `מצאתי ${suitableSlots.length} חלונות פנויים ביום ${actualDay}.`
+          : `לא מצאתי חלונות פנויים ביום ${actualDay}. נסה יום אחר.`
+      });
+    }
+
+    res.json({
+      hasSuggestion: parsed.hasSuggestion || false,
+      freeSlots: parsed.freeSlots || freeSlots.filter(s => s.durationMinutes >= durationMinutes),
+      suggestion: parsed.suggestion || null,
+      aiMessage: parsed.aiMessage || null
+    });
+
+  } catch (error) {
+    console.error('AI booking finder failed:', error);
+    // Fallback: return deterministic free slots
+    try {
+      const userId = getUserId(req);
+      const schedule = getUserSchedule(userId);
+      const todayName = getTodayDayName();
+      const actualDay = (req.body.day === 'Today' ? todayName : req.body.day) || todayName;
+      const freeSlots = findFreeSlotsForDay(schedule, actualDay, DEFAULT_LOCATION_ID);
+      const duration = parseInt(req.body.durationMinutes) || 30;
+      const suitableSlots = freeSlots.filter(s => s.durationMinutes >= duration);
+      return res.json({
+        hasSuggestion: suitableSlots.length > 0,
+        freeSlots: suitableSlots,
+        suggestion: null,
+        aiMessage: suitableSlots.length > 0
+          ? `מצאתי ${suitableSlots.length} חלונות פנויים ביום ${actualDay}.`
+          : `לא מצאתי חלונות פנויים ביום ${actualDay}. נסה יום אחר.`
+      });
+    } catch (fallbackErr) {
+      res.status(500).json({ error: 'Failed to analyze schedule for booking.' });
+    }
   }
 });
 

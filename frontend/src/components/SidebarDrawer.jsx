@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { X, BarChart3, Zap, Settings, Download, Moon, Sun, Target, Clock, Trophy, Activity } from 'lucide-react';
+import { X, BarChart3, Zap, Settings, Download, Moon, Sun, Target, Clock, Trophy, Activity, Share2 } from 'lucide-react';
 
 const CATEGORY_KEYWORDS = {
   sport: ['אימון', 'ריצה', 'שחייה', 'הליכה', 'ספורט', 'חדר כושר', 'יוגה', 'פילאטיס', 'רכיבה', 'טיפוס', 'workout', 'run', 'swim', 'walk', 'sport', 'gym', 'yoga', 'pilates', 'bike', 'climb'],
@@ -90,7 +90,7 @@ function computeAnalytics(schedule) {
   };
 }
 
-export default function SidebarDrawer({ isOpen, onClose, schedule, lang, t, user, onLogout }) {
+export default function SidebarDrawer({ isOpen, onClose, schedule, lang, t, user, onLogout, onOpenShareModal }) {
   const [activeTab, setActiveTab] = useState('analytics');
   const [settingsData, setSettingsData] = useState({
     lang: lang,
@@ -156,6 +156,20 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, t, user
           <h2 className="sidebar-title">{t.sidebarTitle}</h2>
           <button onClick={onClose} className="sidebar-close-btn">
             <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Share Booking Link Button - Prominent in Sidebar */}
+        <div className="sidebar-share-section">
+          <button
+            onClick={() => {
+              onClose();
+              if (onOpenShareModal) onOpenShareModal();
+            }}
+            className="sidebar-share-btn"
+          >
+            <Share2 className="w-5 h-5" />
+            <span>{t.shareBookingLink}</span>
           </button>
         </div>
 
