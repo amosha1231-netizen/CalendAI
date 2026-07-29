@@ -150,6 +150,15 @@ const translations = {
     // Toast notifications
     toastReminder: 'תזכורת:',
 
+    // Calendar / Monthly View
+    monthNames: ['ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני', 'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר'],
+    dayNamesShort: ['א\'', 'ב\'', 'ג\'', 'ד\'', 'ה\'', 'ו\'', 'ש\''],
+    calendarMonthlyView: 'לוח שנה חודשי',
+    calendarYearlyView: 'לוח שנה שנתי',
+    calendarYearViewDesc: 'תצוגה מתגלגלת - 12 חודשים קדימה מהחודש הנוכחי',
+    calendarToggleMonth: 'הצג חודש',
+    calendarToggleYear: 'הצג שנה מלאה',
+
     // Calendar slot click
     slotClickPrefix: 'ביום',
     slotClickFrom: 'מ-',

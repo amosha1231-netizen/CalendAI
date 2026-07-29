@@ -8,8 +8,8 @@ const enDays = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday"
 
 export default function MonthlyCalendar({ schedule, lang }) {
   const t = translations[lang] || translations.en;
-  const monthNames = t.monthNames;
-  const dayNames = t.dayNamesShort;
+  const monthNames = t.monthNames || ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const dayNames = t.dayNamesShort || ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const today = new Date();
   const [currentYear, setCurrentYear] = useState(today.getFullYear());
   const [currentMonth, setCurrentMonth] = useState(today.getMonth());

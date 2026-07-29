@@ -508,8 +508,8 @@ function App() {
   };
   const dayNamesEn = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   const dayNamesLocalized = [t.daySunday, t.dayMonday, t.dayTuesday, t.dayWednesday, t.dayThursday, t.dayFriday, t.daySaturday];
-  const todayName = dayNamesEn[new Date().getDay()];
-  const todayNameLocalized = dayNamesLocalized[new Date().getDay()];
+  const todayName = (dayNamesEn && dayNamesEn[new Date().getDay()]) || 'Sunday';
+  const todayNameLocalized = (dayNamesLocalized && dayNamesLocalized[new Date().getDay()]) || '';
 
   const dayTranslations = {
     Sunday: t.daySunday, Monday: t.dayMonday, Tuesday: t.dayTuesday, Wednesday: t.dayWednesday,
