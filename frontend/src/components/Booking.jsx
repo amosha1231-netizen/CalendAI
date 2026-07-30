@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { Calendar, Clock, Loader2, Sparkles, X, Check, Sun, Moon, MapPin, Filter, Eye, EyeOff, Square, Mail, Phone, MessageSquare, AlertCircle } from "lucide-react";
+import { Calendar, Clock, Loader2, Sparkles, X, Check, Sun, Moon, MapPin, Filter, Eye, EyeOff, Square, Mail, Phone, MessageSquare, AlertCircle, Share2, ExternalLink, Copy, Download, Users, Send } from "lucide-react";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
 
@@ -17,33 +17,35 @@ const MEETING_TYPES = [
   { id: 'consultation', mins: 60, icon: '🔍' }
 ];
 
-export default function Booking({ schedule, lang, t, onClose, onConfirm }) {
-  const [step, setStep] = useState('meeting-type'); // 'meeting-type' | 'select-time' | 'details' | 'success' | 'unavailable'
+export default function Booking({ schedule, lang, t, onClose, onConfirm, user }) {
+  const [step, setStep] = useState('meeting-type'); // 'meeting-type' | 'select-time' | 'details' | 'success' | 'share-link'
   const [selectedMeetingType, setSelectedMeetingType] = useState(null);
   const [selectedDay, setSelectedDay] = useState(() => {
     const today = new Date().getDay();
     return ALL_DAY_KEYS[today];
   });
-  const [priority1Slots, setPriority1Slots] = useState([]);
-  const [priority2Slots, setPriority2Slots] = useState([]);
+  const [selectedSlots, setSelectedSlots] = useState([]); // { hour, minute, priority: 1|2 }
+  const [activePriority, setActivePriority] = useState(1);
   const [duration, setDuration] = useState(30);
   const [guestName, setGuestName] = useState("");
   const [guestEmail, setGuestEmail] = useState("");
   const [guestPhone, setGuestPhone] = useState("");
   const [guestNotes, setGuestNotes] = useState("");
-  const [aiLoading, setAiLoading] = useState(false);
+  const [bookingLoading, setBookingLoading] = useState(false);
+  const [bookingError, setBookingError] = useState("");
+  const [ailoading, setAiLoading] = useState(false);
   const [aiResult, setAiResult] = useState(null);
   const [aiError, setAiError] = useState("");
+  const [showUnavailable, setShowUnavailable] = useState(false);
+  const [bookingId, setBookingId] = useState(null);
+  const [shareLink, setShareLink] = useState("");
+  const [shareLinkCopied, setShareLinkCopied] = useState(false);
+  const [calendaiUserInput, setCalendaiUserInput] = useState("");
+  const [calendaiUserSent, setCalendaiUserSent] = useState(false);
+  const [calendaiUserSending, setCalendaiUserSending] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState(null);
   const [dragCurrent, setDragCurrent] = useState(null);
-  const [dragPriority, setDragPriority] = useState(null);
-  const [showConfirmation, setShowConfirmation] = useState(false);
-  const [showUnavailable, setShowUnavailable] = useState(false);
-  const [activePriority, setActivePriority] = useState(1);
-  const [slotCheckLoading, setSlotCheckLoading] = useState(false);
-  const [slotCheckError, setSlotCheckError] = useState("");
-  const [bookingLoading, setBookingLoading] = useState(false);
   const gridRef = useRef(null);
 
   const isRTL = lang === 'he';
@@ -55,7 +57,6 @@ export default function Booking({ schedule, lang, t, onClose, onConfirm }) {
     title: e.title
   }));
 
-  // Determine if a specific time slot is busy
   function isSlotBusy(hour, minute) {
     const slotStart = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
     const slotEndHour = minute + duration >= 60 ? hour + 1 : hour;
@@ -65,7 +66,6 @@ export default function Booking({ schedule, lang, t, onClose, onConfirm }) {
     for (const busy of busySlots) {
       const busyStart = convertTo24(busy.start);
       const busyEnd = convertTo24(busy.end);
-      // Check overlap
       if (slotStart < busyEnd && slotEnd > busyStart) {
         return true;
       }
@@ -95,32 +95,33 @@ export default function Booking({ schedule, lang, t, onClose, onConfirm }) {
     return `${hour}:${minute}`;
   }
 
-  function isSlotInList(hour, minute, list) {
-    return list.some(s => s.hour === hour && s.minute === minute);
-  }
-
   function getSlotPriority(hour, minute) {
-    if (isSlotInList(hour, minute, priority1Slots)) return 1;
-    if (isSlotInList(hour, minute, priority2Slots)) return 2;
-    return 0;
+    const slot = selectedSlots.find(s => s.hour === hour && s.minute === minute);
+    return slot ? slot.priority : 0;
   }
 
-  // Handle click on a slot
+  // Cycle priority: 1 -> 2 -> available -> unselected
+  function cyclePriority(hour, minute) {
+    const existing = selectedSlots.find(s => s.hour === hour && s.minute === minute);
+    if (!existing) {
+      // Add with current active priority
+      return [...selectedSlots, { hour, minute, priority: activePriority }];
+    }
+    if (existing.priority === 1) {
+      // Upgrade to priority 2
+      return selectedSlots.map(s => s.hour === hour && s.minute === minute ? { ...s, priority: 2 } : s);
+    }
+    if (existing.priority === 2) {
+      // Remove it
+      return selectedSlots.filter(s => s.hour !== hour || s.minute !== minute);
+    }
+    return selectedSlots;
+  }
+
+  // Handle single click on a slot
   const handleSlotClick = (hour, minute) => {
     if (isSlotBusy(hour, minute)) return;
-
-    const existing1 = isSlotInList(hour, minute, priority1Slots);
-    const existing2 = isSlotInList(hour, minute, priority2Slots);
-
-    if (existing1) {
-      setPriority1Slots(prev => prev.filter(s => s.hour !== hour || s.minute !== minute));
-    } else if (existing2) {
-      setPriority2Slots(prev => prev.filter(s => s.hour !== hour || s.minute !== minute));
-    } else if (activePriority === 1) {
-      setPriority1Slots(prev => [...prev, { hour, minute }]);
-    } else {
-      setPriority2Slots(prev => [...prev, { hour, minute }]);
-    }
+    setSelectedSlots(prev => cyclePriority(hour, minute));
   };
 
   // Handle drag start
@@ -129,19 +130,6 @@ export default function Booking({ schedule, lang, t, onClose, onConfirm }) {
     setIsDragging(true);
     setDragStart({ hour, minute });
     setDragCurrent({ hour, minute });
-
-    const existing1 = isSlotInList(hour, minute, priority1Slots);
-    const existing2 = isSlotInList(hour, minute, priority2Slots);
-
-    if (existing1) {
-      setDragPriority(1);
-      setPriority1Slots(prev => prev.filter(s => s.hour !== hour || s.minute !== minute));
-    } else if (existing2) {
-      setDragPriority(2);
-      setPriority2Slots(prev => prev.filter(s => s.hour !== hour || s.minute !== minute));
-    } else {
-      setDragPriority(activePriority);
-    }
   };
 
   const handleDragMove = (hour, minute) => {
@@ -154,47 +142,33 @@ export default function Booking({ schedule, lang, t, onClose, onConfirm }) {
       setIsDragging(false);
       setDragStart(null);
       setDragCurrent(null);
-      setDragPriority(null);
       return;
     }
 
     const startH = Math.min(dragStart.hour, dragCurrent.hour);
     const endH = Math.max(dragStart.hour, dragCurrent.hour);
-    const startM = dragStart.hour < dragCurrent.hour ? dragStart.minute : dragCurrent.minute;
-    const endM = dragStart.hour > dragCurrent.hour ? dragStart.minute : dragCurrent.minute;
 
     const newSlots = [];
     for (let h = startH; h <= endH; h++) {
-      const minStart = (h === startH) ? startM : 0;
-      const minEnd = (h === endH) ? endM : 0;
-      for (let m = minStart; m <= minEnd; m += 30) {
+      for (let m = 0; m < 60; m += 30) {
         if (!isSlotBusy(h, m)) {
-          newSlots.push({ hour: h, minute: m });
+          newSlots.push({ hour: h, minute: m, priority: activePriority });
         }
       }
     }
 
-    const unique = newSlots.filter((s, i, self) => self.findIndex(x => x.hour === s.hour && x.minute === s.minute) === i);
-
-    if (dragPriority === 1) {
-      setPriority1Slots(prev => {
-        const filtered = prev.filter(s => !unique.some(u => u.hour === s.hour && u.minute === s.minute));
-        return [...filtered, ...unique];
-      });
-    } else if (dragPriority === 2) {
-      setPriority2Slots(prev => {
-        const filtered = prev.filter(s => !unique.some(u => u.hour === s.hour && u.minute === s.minute));
-        return [...filtered, ...unique];
-      });
-    }
+    // Merge: remove existing slots in the drag range, add new ones
+    setSelectedSlots(prev => {
+      const filtered = prev.filter(s => !newSlots.some(u => u.hour === s.hour && u.minute === s.minute));
+      return [...filtered, ...newSlots];
+    });
 
     setIsDragging(false);
     setDragStart(null);
     setDragCurrent(null);
-    setDragPriority(null);
   };
 
-  // Handle touch events for drag
+  // Touch events for drag
   const handleTouchStart = (hour, minute, e) => {
     handleDragStart(hour, minute, e);
   };
@@ -250,7 +224,7 @@ export default function Booking({ schedule, lang, t, onClose, onConfirm }) {
       const ampm = match[3].toUpperCase();
       if (ampm === 'PM' && h !== 12) h += 12;
       if (ampm === 'AM' && h === 12) h = 0;
-      setPriority1Slots([{ hour: h, minute: m }]);
+      setSelectedSlots([{ hour: h, minute: m, priority: 1 }]);
     }
   };
 
@@ -261,75 +235,29 @@ export default function Booking({ schedule, lang, t, onClose, onConfirm }) {
     setStep('select-time');
   };
 
-  // Handle proceeding to details - FIRST check slot availability
-  const handleProceedToDetails = async () => {
-    if (priority1Slots.length === 0) return;
-
-    setSlotCheckLoading(true);
-    setSlotCheckError("");
-
-    // Check if the selected slot is still available by calling backend
-    try {
-      const allSlots = [
-        ...priority1Slots.map(s => ({ ...s, priority: 1 })),
-        ...priority2Slots.map(s => ({ ...s, priority: 2 }))
-      ];
-
-      // Validate each priority 1 slot against the backend
-      for (const slot of allSlots) {
-        if (slot.priority !== 1) continue;
-        const startH12 = slot.hour % 12 || 12;
-        const ampm = slot.hour >= 12 ? 'PM' : 'AM';
-        const endHour = slot.hour + Math.ceil(duration / 60);
-        const endMinute = (slot.minute + duration) % 60;
-        const endH12 = endHour % 12 || 12;
-        const endAmpm = endHour >= 12 ? 'PM' : 'AM';
-
-        const startTime = `${String(startH12).padStart(2, '0')}:${String(slot.minute).padStart(2, '0')} ${ampm}`;
-        const endTime = `${String(endH12).padStart(2, '0')}:${String(endMinute).padStart(2, '0')} ${endAmpm}`;
-
-        const checkRes = await fetch(`${API_BASE}/api/schedule/check-slot`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            day: selectedDay,
-            startTime,
-            endTime
-          }),
-          credentials: "include"
-        });
-        const checkData = await checkRes.json();
-        if (!checkRes.ok || checkData.available === false) {
-          setSlotCheckError(t.bookingSlotUnavailable || 'The selected slot is no longer available. Please choose another slot.');
-          setSlotCheckLoading(false);
-          return;
-        }
-      }
-
-      // All slots are available - proceed to details
-      setSlotCheckLoading(false);
-      setStep('details');
-    } catch (err) {
-      setSlotCheckError(t.bookingSlotUnavailable || 'The selected slot is no longer available. Please choose another slot.');
-      setSlotCheckLoading(false);
-    }
+  // Confirm and create share link
+  const handleConfirmAndCreateLink = () => {
+    if (selectedSlots.length === 0) return;
+    // Generate a unique booking ID
+    const id = 'book_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+    setBookingId(id);
+    const link = typeof window !== 'undefined' 
+      ? `${window.location.origin}${window.location.pathname}?book=${id}&day=${selectedDay}&slots=${selectedSlots.map(s => `${s.hour}-${s.minute}`).join(',')}&dur=${duration}`
+      : '';
+    setShareLink(link);
+    setStep('share-link');
   };
 
-  // Handle final booking confirmation
+  // Handle booking confirmation (from details form)
   const handleConfirmBooking = async () => {
     if (!guestName.trim() || !guestEmail.trim()) return;
     setBookingLoading(true);
-    setSlotCheckError("");
+    setBookingError("");
 
     try {
-      const allSlots = [
-        ...priority1Slots.map(s => ({ ...s, priority: 1 })),
-        ...priority2Slots.map(s => ({ ...s, priority: 2 }))
-      ];
-
       await onConfirm({
         day: selectedDay,
-        slots: allSlots,
+        slots: selectedSlots,
         guestName: guestName || "אורח",
         guestEmail,
         guestPhone,
@@ -338,14 +266,143 @@ export default function Booking({ schedule, lang, t, onClose, onConfirm }) {
         meetingType: selectedMeetingType?.id || 'standard'
       });
 
-      setShowConfirmation(true);
       setStep('success');
     } catch (err) {
-      setSlotCheckError(err.message);
+      setBookingError(err.message);
     } finally {
       setBookingLoading(false);
     }
   };
+
+  const handleCopyShareLink = () => {
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(shareLink).then(() => {
+        setShareLinkCopied(true);
+        setTimeout(() => setShareLinkCopied(false), 2500);
+      }).catch(() => {
+        const textArea = document.createElement('textarea');
+        textArea.value = shareLink;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+        setShareLinkCopied(true);
+        setTimeout(() => setShareLinkCopied(false), 2500);
+      });
+    }
+  };
+
+  const handleWhatsAppShare = () => {
+    const text = encodeURIComponent(`${t.shareWhatsAppText} ${shareLink}`);
+    window.open(`https://wa.me/?text=${text}`, '_blank');
+  };
+
+  const handleEmailShare = () => {
+    const subject = encodeURIComponent(t.shareEmailSubject);
+    const body = encodeURIComponent(`${t.shareEmailBody}${shareLink}`);
+    window.open(`mailto:?subject=${subject}&body=${body}`, '_blank');
+  };
+
+  const handleAddCalendaiUser = async () => {
+    if (!calendaiUserInput.trim()) return;
+    setCalendaiUserSending(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/booking/send-invitation`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          recipient: calendaiUserInput.trim(),
+          bookingId,
+          shareLink,
+          day: selectedDay,
+          slots: selectedSlots,
+          duration
+        }),
+        credentials: "include"
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to send invitation');
+      setCalendaiUserSent(true);
+    } catch (err) {
+      setBookingError(err.message);
+    } finally {
+      setCalendaiUserSending(false);
+    }
+  };
+
+  // Generate Google Calendar link
+  function getGoogleCalendarUrl() {
+    if (selectedSlots.length === 0) return '#';
+    const firstSlot = selectedSlots[0];
+    const startDate = new Date();
+    const dayIndex = ALL_DAY_KEYS.indexOf(selectedDay);
+    const todayDay = new Date().getDay();
+    let diff = dayIndex - todayDay;
+    if (diff < 0) diff += 7;
+    startDate.setDate(startDate.getDate() + diff);
+    startDate.setHours(firstSlot.hour, firstSlot.minute, 0, 0);
+
+    const endDate = new Date(startDate);
+    endDate.setMinutes(endDate.getMinutes() + duration);
+
+    const fmt = (d) => {
+      return d.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+    };
+
+    const params = new URLSearchParams({
+      action: 'TEMPLATE',
+      text: `${t.bookingTitle}: ${guestName || 'Meeting'}`,
+      dates: `${fmt(startDate)}/${fmt(endDate)}`,
+      details: guestNotes || '',
+      location: '',
+      trp: 'false'
+    });
+
+    return `https://www.google.com/calendar/render?${params.toString()}`;
+  }
+
+  // Generate .ics file download
+  function downloadIcs() {
+    if (selectedSlots.length === 0) return;
+    const firstSlot = selectedSlots[0];
+    const startDate = new Date();
+    const dayIndex = ALL_DAY_KEYS.indexOf(selectedDay);
+    const todayDay = new Date().getDay();
+    let diff = dayIndex - todayDay;
+    if (diff < 0) diff += 7;
+    startDate.setDate(startDate.getDate() + diff);
+    startDate.setHours(firstSlot.hour, firstSlot.minute, 0, 0);
+
+    const endDate = new Date(startDate);
+    endDate.setMinutes(endDate.getMinutes() + duration);
+
+    const fmt = (d) => {
+      return d.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+    };
+
+    const icsContent = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//CalendAI//Booking//EN',
+      'BEGIN:VEVENT',
+      `DTSTART:${fmt(startDate)}`,
+      `DTEND:${fmt(endDate)}`,
+      `SUMMARY:${t.bookingTitle}: ${guestName || 'Meeting'}`,
+      `DESCRIPTION:${guestNotes || ''}`,
+      'END:VEVENT',
+      'END:VCALENDAR'
+    ].join('\r\n');
+
+    const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `CalendAI_${selectedDay}_${firstSlot.hour}-${firstSlot.minute}.ics`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
 
   function getDayDate(dayKey) {
     const dayIndex = ALL_DAY_KEYS.indexOf(dayKey);
@@ -357,13 +414,6 @@ export default function Booking({ schedule, lang, t, onClose, onConfirm }) {
     date.setDate(today.getDate() + diff);
     return date.getDate();
   }
-
-  // Get WhatsApp message
-  const getWhatsAppMessage = () => {
-    const msg = encodeURIComponent(t.bookingWhatsAppMsg || 'Hi, I booked a meeting through CalendAI. I would appreciate a reminder.');
-    const phone = guestPhone ? guestPhone.replace(/[^0-9]/g, '') : '';
-    return `https://wa.me/${phone ? '972' + phone.slice(phone.length === 10 ? 1 : 0) : ''}?text=${msg}`;
-  };
 
   // ===================== MEETING TYPE STEP =====================
   if (step === 'meeting-type') {
@@ -385,38 +435,25 @@ export default function Booking({ schedule, lang, t, onClose, onConfirm }) {
         <div className="booking-meeting-type-section">
           <label className="booking-label">{t.bookingMeetingType || 'Choose a meeting type:'}</label>
           <div className="booking-meeting-type-grid">
-            {/* Quick Chat Card */}
-            <div className="booking-meeting-card" onClick={() => handleSelectMeetingType({ id: 'quick', mins: 15, icon: '⚡' })}>
-              <div className="booking-meeting-card-icon">⚡</div>
-              <h3 className="booking-meeting-card-title">{t.bookingQuickChat || 'Quick Chat'}</h3>
-              <p className="booking-meeting-card-desc">{t.bookingQuickChatDesc || 'Short meeting of 15-30 minutes'}</p>
-              <div className="booking-meeting-card-footer">
-                <span className="booking-meeting-card-duration">15 {t.bookingMinutes}</span>
-                <span className="booking-meeting-card-select">{t.bookingSelectCard || 'Select'}</span>
+            {MEETING_TYPES.map(type => (
+              <div key={type.id} className="booking-meeting-card" onClick={() => handleSelectMeetingType(type)}>
+                <div className="booking-meeting-card-icon">{type.icon}</div>
+                <h3 className="booking-meeting-card-title">
+                  {type.id === 'quick' ? (t.bookingQuickChat || 'Quick Chat') :
+                   type.id === 'standard' ? (t.bookingStandard || 'Standard Meeting') :
+                   (t.bookingConsultation || 'Consultation')}
+                </h3>
+                <p className="booking-meeting-card-desc">
+                  {type.id === 'quick' ? (t.bookingQuickChatDesc || 'Short meeting') :
+                   type.id === 'standard' ? (t.bookingStandardDesc || 'Standard meeting') :
+                   (t.bookingConsultationDesc || 'In-depth consultation')}
+                </p>
+                <div className="booking-meeting-card-footer">
+                  <span className="booking-meeting-card-duration">{type.mins} {t.bookingMinutes}</span>
+                  <span className="booking-meeting-card-select">{t.bookingSelectCard || 'Select'}</span>
+                </div>
               </div>
-            </div>
-
-            {/* Standard Meeting Card */}
-            <div className="booking-meeting-card" onClick={() => handleSelectMeetingType({ id: 'standard', mins: 30, icon: '📅' })}>
-              <div className="booking-meeting-card-icon">📅</div>
-              <h3 className="booking-meeting-card-title">{t.bookingStandard || 'Standard Meeting'}</h3>
-              <p className="booking-meeting-card-desc">{t.bookingStandardDesc || 'Standard meeting of 30-60 minutes'}</p>
-              <div className="booking-meeting-card-footer">
-                <span className="booking-meeting-card-duration">30 {t.bookingMinutes}</span>
-                <span className="booking-meeting-card-select">{t.bookingSelectCard || 'Select'}</span>
-              </div>
-            </div>
-
-            {/* Consultation Card */}
-            <div className="booking-meeting-card" onClick={() => handleSelectMeetingType({ id: 'consultation', mins: 60, icon: '🔍' })}>
-              <div className="booking-meeting-card-icon">🔍</div>
-              <h3 className="booking-meeting-card-title">{t.bookingConsultation || 'Consultation'}</h3>
-              <p className="booking-meeting-card-desc">{t.bookingConsultationDesc || 'In-depth consultation of 60-90 minutes'}</p>
-              <div className="booking-meeting-card-footer">
-                <span className="booking-meeting-card-duration">60 {t.bookingMinutes}</span>
-                <span className="booking-meeting-card-select">{t.bookingSelectCard || 'Select'}</span>
-              </div>
-            </div>
+            ))}
           </div>
         </div>
       </div>
@@ -483,7 +520,7 @@ export default function Booking({ schedule, lang, t, onClose, onConfirm }) {
           </div>
         </div>
 
-        {/* Priority Selector & Filter */}
+        {/* Priority Selector */}
         <div className="booking-priority-section">
           <label className="booking-label">{t.bookingPrioritySelect}</label>
           <div className="booking-priority-options">
@@ -541,9 +578,9 @@ export default function Booking({ schedule, lang, t, onClose, onConfirm }) {
           </div>
         </div>
 
-        {/* Time Grid */}
+        {/* Single Day Time Grid */}
         <div className="booking-grid-wrapper">
-          <div className="booking-grid" ref={gridRef} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd}>
+          <div className="booking-grid booking-single-day" ref={gridRef} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd}>
             {/* Time labels column */}
             <div className="booking-time-labels">
               {HOURS.map(hour => (
@@ -553,7 +590,7 @@ export default function Booking({ schedule, lang, t, onClose, onConfirm }) {
               ))}
             </div>
 
-            {/* Slots */}
+            {/* Slots for the selected day */}
             <div className="booking-slots">
               {HOURS.map(hour => (
                 <div key={hour} className="booking-slot-row">
@@ -604,11 +641,11 @@ export default function Booking({ schedule, lang, t, onClose, onConfirm }) {
           </div>
         </div>
 
-        {/* Slot Check Error */}
-        {slotCheckError && (
+        {/* Error */}
+        {bookingError && (
           <div className="booking-slot-error">
             <AlertCircle className="w-4 h-4" />
-            <span>{slotCheckError}</span>
+            <span>{bookingError}</span>
           </div>
         )}
 
@@ -631,13 +668,13 @@ export default function Booking({ schedule, lang, t, onClose, onConfirm }) {
         {/* Selected slots summary */}
         <div className="booking-summary">
           <p>
-            {t.bookingPriority1}: {priority1Slots.length > 0
-              ? priority1Slots.map(s => formatTimeDisplay(s.hour, s.minute)).join(', ')
+            {t.bookingPriority1}: {selectedSlots.filter(s => s.priority === 1).length > 0
+              ? selectedSlots.filter(s => s.priority === 1).map(s => formatTimeDisplay(s.hour, s.minute)).join(', ')
               : '—'}
           </p>
           <p>
-            {t.bookingPriority2}: {priority2Slots.length > 0
-              ? priority2Slots.map(s => formatTimeDisplay(s.hour, s.minute)).join(', ')
+            {t.bookingPriority2}: {selectedSlots.filter(s => s.priority === 2).length > 0
+              ? selectedSlots.filter(s => s.priority === 2).map(s => formatTimeDisplay(s.hour, s.minute)).join(', ')
               : '—'}
           </p>
         </div>
@@ -646,10 +683,10 @@ export default function Booking({ schedule, lang, t, onClose, onConfirm }) {
         <div className="booking-ai-section">
           <button
             onClick={handleAiFind}
-            disabled={aiLoading}
+            disabled={ailoading}
             className="booking-ai-btn"
           >
-            {aiLoading ? (
+            {ailoading ? (
               <><Loader2 className="w-4 h-4 animate-spin" /> {t.bookingAiFinderLoading}</>
             ) : (
               <><Sparkles className="w-4 h-4" /> {t.bookingAiFinder}</>
@@ -696,15 +733,128 @@ export default function Booking({ schedule, lang, t, onClose, onConfirm }) {
         {/* Confirm Button */}
         <div className="booking-footer">
           <button
-            onClick={handleProceedToDetails}
-            disabled={priority1Slots.length === 0 || slotCheckLoading}
+            onClick={handleConfirmAndCreateLink}
+            disabled={selectedSlots.length === 0}
             className="booking-confirm-btn"
           >
-            {slotCheckLoading ? (
-              <><Loader2 className="w-4 h-4 animate-spin" /> {t.bookingAiFinderLoading}</>
+            <Share2 className="w-5 h-5" /> {t.bookingCreateLink}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ===================== SHARE LINK STEP =====================
+  if (step === 'share-link') {
+    return (
+      <div className="booking-container" dir={isRTL ? 'rtl' : 'ltr'}>
+        <div className="booking-header">
+          <button onClick={() => setStep('select-time')} className="booking-close-btn">
+            <X className="w-5 h-5" />
+          </button>
+          <div className="booking-header-content">
+            <Share2 className="w-6 h-6 text-emerald-600" />
+            <div>
+              <h2 className="booking-title">{t.bookingShareModalTitle}</h2>
+              <p className="booking-subtitle">{t.bookingShareModalDesc}</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Selected Slots Summary */}
+        <div className="booking-details-summary">
+          <div className="booking-details-summary-item">
+            <Clock className="w-4 h-4 text-blue-500" />
+            <span>
+              {lang === 'he' ? DAY_NAMES_HE[selectedDay] : selectedDay} — 
+              {selectedSlots.length > 0 ? selectedSlots.filter(s => s.priority === 1).slice(0, 3).map(s => formatTimeDisplay(s.hour, s.minute)).join(', ') : ''}
+              {selectedMeetingType ? ` (${selectedMeetingType.mins} ${t.bookingMinutes})` : ''}
+            </span>
+          </div>
+        </div>
+
+        {/* Share Link Display */}
+        <div className="booking-share-link-box">
+          <label className="booking-label">{t.shareBookingLinkLabel}</label>
+          <div className="booking-share-link-url" dir="ltr">
+            {shareLink}
+          </div>
+          <button onClick={handleCopyShareLink} className="booking-share-copy-btn">
+            {shareLinkCopied ? (
+              <><Check className="w-4 h-4" /> {t.shareBookingCopied}</>
             ) : (
-              <><Check className="w-5 h-5" /> {t.bookingConfirm}</>
+              <><Copy className="w-4 h-4" /> {t.shareBookingCopy}</>
             )}
+          </button>
+        </div>
+
+        {/* Share Options */}
+        <div className="booking-share-options">
+          <p className="booking-share-options-title">{t.bookingOr}</p>
+
+          {/* WhatsApp Share */}
+          <button onClick={handleWhatsAppShare} className="booking-share-btn booking-share-whatsapp">
+            <MessageSquare className="w-5 h-5" />
+            {t.shareWhatsAppBtn}
+          </button>
+
+          {/* Email Share */}
+          <button onClick={handleEmailShare} className="booking-share-btn booking-share-email">
+            <Mail className="w-5 h-5" />
+            {t.shareEmailBtn}
+          </button>
+
+          {/* Add CalendAI User */}
+          <div className="booking-share-calendai-user">
+            <label className="booking-label">
+              <Users className="w-4 h-4 inline mr-1" />
+              {t.shareAddCalendaiUser}
+            </label>
+            <div className="booking-share-calendai-input-row">
+              <input
+                type="text"
+                value={calendaiUserInput}
+                onChange={e => setCalendaiUserInput(e.target.value)}
+                placeholder={t.shareAddCalendaiUserPlaceholder}
+                className="booking-input"
+                dir={isRTL ? 'rtl' : 'ltr'}
+                disabled={calendaiUserSent}
+              />
+              <button
+                onClick={handleAddCalendaiUser}
+                disabled={!calendaiUserInput.trim() || calendaiUserSending || calendaiUserSent}
+                className="booking-share-calendai-send-btn"
+              >
+                {calendaiUserSending ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : calendaiUserSent ? (
+                  <Check className="w-4 h-4" />
+                ) : (
+                  <Send className="w-4 h-4" />
+                )}
+              </button>
+            </div>
+            {calendaiUserSent && (
+              <p className="booking-share-calendai-sent">{t.shareAddCalendaiUserSent}</p>
+            )}
+          </div>
+        </div>
+
+        {/* Error */}
+        {bookingError && (
+          <div className="booking-slot-error">
+            <AlertCircle className="w-4 h-4" />
+            <span>{bookingError}</span>
+          </div>
+        )}
+
+        {/* Proceed to Details */}
+        <div className="booking-footer">
+          <button
+            onClick={() => setStep('details')}
+            className="booking-confirm-btn booking-confirm-secondary"
+          >
+            <Check className="w-5 h-5" /> {t.bookingConfirm}
           </button>
         </div>
       </div>
@@ -716,7 +866,7 @@ export default function Booking({ schedule, lang, t, onClose, onConfirm }) {
     return (
       <div className="booking-container" dir={isRTL ? 'rtl' : 'ltr'}>
         <div className="booking-header">
-          <button onClick={() => setStep('select-time')} className="booking-close-btn">
+          <button onClick={() => setStep('share-link')} className="booking-close-btn">
             <X className="w-5 h-5" />
           </button>
           <div className="booking-header-content">
@@ -724,7 +874,7 @@ export default function Booking({ schedule, lang, t, onClose, onConfirm }) {
             <div>
               <h2 className="booking-title">{t.bookingDetailsTitle || 'Your Details'}</h2>
               <p className="booking-subtitle">
-                {selectedDay} {priority1Slots.length > 0 ? formatTimeDisplay(priority1Slots[0].hour, priority1Slots[0].minute) : ''}
+                {selectedDay} {selectedSlots.length > 0 ? formatTimeDisplay(selectedSlots[0].hour, selectedSlots[0].minute) : ''}
               </p>
             </div>
           </div>
@@ -736,17 +886,17 @@ export default function Booking({ schedule, lang, t, onClose, onConfirm }) {
             <Clock className="w-4 h-4 text-blue-500" />
             <span>
               {lang === 'he' ? DAY_NAMES_HE[selectedDay] : selectedDay} — 
-              {priority1Slots.length > 0 ? formatTimeDisplay(priority1Slots[0].hour, priority1Slots[0].minute) : ''}
+              {selectedSlots.length > 0 ? formatTimeDisplay(selectedSlots[0].hour, selectedSlots[0].minute) : ''}
               {selectedMeetingType ? ` (${selectedMeetingType.mins} ${t.bookingMinutes})` : ''}
             </span>
           </div>
         </div>
 
-        {/* Slot Check Error */}
-        {slotCheckError && (
+        {/* Error */}
+        {bookingError && (
           <div className="booking-slot-error">
             <AlertCircle className="w-4 h-4" />
-            <span>{slotCheckError}</span>
+            <span>{bookingError}</span>
           </div>
         )}
 
@@ -816,6 +966,28 @@ export default function Booking({ schedule, lang, t, onClose, onConfirm }) {
           </div>
         </div>
 
+        {/* Calendar Sync (for logged-in users) */}
+        {user && (
+          <div className="booking-calendar-sync-section">
+            <p className="booking-calendar-sync-label">{t.bookingDuration}</p>
+            <div className="booking-calendar-sync-buttons">
+              <a
+                href={getGoogleCalendarUrl()}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="booking-calendar-sync-btn booking-gcal-btn"
+              >
+                <Calendar className="w-4 h-4" />
+                {t.addToGoogleCalendar}
+              </a>
+              <button onClick={downloadIcs} className="booking-calendar-sync-btn booking-ics-btn">
+                <Download className="w-4 h-4" />
+                {t.downloadIcs}
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Confirm Button */}
         <div className="booking-footer">
           <button
@@ -836,7 +1008,6 @@ export default function Booking({ schedule, lang, t, onClose, onConfirm }) {
 
   // ===================== SUCCESS STEP =====================
   if (step === 'success') {
-    const waLink = getWhatsAppMessage();
     return (
       <div className="booking-container" dir={isRTL ? 'rtl' : 'ltr'}>
         <div className="booking-header">
@@ -881,7 +1052,7 @@ export default function Booking({ schedule, lang, t, onClose, onConfirm }) {
               <span className="booking-success-detail-label"><Clock className="w-3 h-3 inline" /> {t.bookingDayPicker}</span>
               <span className="booking-success-detail-value">
                 {lang === 'he' ? DAY_NAMES_HE[selectedDay] : selectedDay} — 
-                {priority1Slots.length > 0 ? formatTimeDisplay(priority1Slots[0].hour, priority1Slots[0].minute) : ''}
+                {selectedSlots.length > 0 ? formatTimeDisplay(selectedSlots[0].hour, selectedSlots[0].minute) : ''}
               </span>
             </div>
             {selectedMeetingType && (
@@ -892,22 +1063,36 @@ export default function Booking({ schedule, lang, t, onClose, onConfirm }) {
             )}
           </div>
 
+          {/* Calendar Sync Buttons */}
+          <div className="booking-calendar-sync-section">
+            <div className="booking-calendar-sync-buttons">
+              <a
+                href={getGoogleCalendarUrl()}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="booking-calendar-sync-btn booking-gcal-btn"
+              >
+                <Calendar className="w-4 h-4" />
+                {t.addToGoogleCalendar}
+              </a>
+              <button onClick={downloadIcs} className="booking-calendar-sync-btn booking-ics-btn">
+                <Download className="w-4 h-4" />
+                {t.downloadIcs}
+              </button>
+            </div>
+          </div>
+
           {/* Email Confirmation Sent */}
           <div className="booking-email-sent">
             <Mail className="w-4 h-4 text-green-500" />
             <span>{t.bookingEmailSent || '✅ Confirmation sent to your email'}</span>
           </div>
 
-          {/* WhatsApp Button */}
-          <a
-            href={waLink}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="booking-whatsapp-btn"
-          >
-            <MessageSquare className="w-5 h-5" />
-            {t.bookingWhatsAppBtn || 'Send WhatsApp Reminder'}
-          </a>
+          {/* Virality Banner */}
+          <div className="booking-virality-banner">
+            <Sparkles className="w-4 h-4 text-indigo-500" />
+            <span>{t.viralityBannerText}</span>
+          </div>
 
           {/* Close Button */}
           <button onClick={onClose} className="booking-success-close-btn">

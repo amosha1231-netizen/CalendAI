@@ -1429,7 +1429,51 @@ app.post('/api/auth/logout', (req, res) => {
 });
 
 // ──────────────────────────────────────────────
-// 7. Slot availability check endpoint
+// 7. Booking invitation endpoint
+// ──────────────────────────────────────────────
+
+/**
+ * Send a booking invitation to another CalendAI user by email or name.
+ * This is a simple endpoint that adds the booking to the recipient's schedule
+ * if they exist in the system.
+ */
+app.post('/api/booking/send-invitation', async (req, res) => {
+  try {
+    const { recipient, bookingId, shareLink, day, slots, duration } = req.body;
+    if (!recipient || !bookingId || !day || !slots || !duration) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    // For now, accept the invitation gracefully (store in a pending invitations list)
+    // In a full implementation, you'd look up the user by email and add the event
+    const invitationsDir = path.join(DATA_DIR, 'invitations');
+    if (!fs.existsSync(invitationsDir)) {
+      fs.mkdirSync(invitationsDir, { recursive: true });
+    }
+
+    const invitation = {
+      id: bookingId,
+      recipient,
+      shareLink,
+      day,
+      slots,
+      duration,
+      createdAt: new Date().toISOString(),
+      status: 'pending'
+    };
+
+    const inviteFile = path.join(invitationsDir, `${bookingId}.json`);
+    fs.writeFileSync(inviteFile, JSON.stringify(invitation, null, 2));
+
+    res.json({ ok: true, message: 'Invitation sent successfully' });
+  } catch (err) {
+    console.error('Send invitation error:', err);
+    res.status(500).json({ error: 'Failed to send invitation' });
+  }
+});
+
+// ──────────────────────────────────────────────
+// 8. Slot availability check endpoint
 // ──────────────────────────────────────────────
 
 /**

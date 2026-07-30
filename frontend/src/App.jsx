@@ -1207,6 +1207,7 @@ function App() {
               schedule={schedule}
               lang={lang}
               t={t}
+              user={user}
               onClose={() => setIsBookingOpen(false)}
               onConfirm={handleBookingConfirm}
             />

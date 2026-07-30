@@ -294,6 +294,27 @@ const translations = {
     pwaInstallBannerAndroid: 'התקן אפליקציה',
     pwaInstallBannerIos: 'הוסף למסך הבית',
     pwaInstallBannerClose: 'סגור',
+
+    // Viral Booking & Calendar Sync
+    viralityBannerText: 'מופעל על ידי CalendAI ✨ | רוצה לנהל את הלו"ז שלך ב-AI? התחל בחינם',
+    shareWhatsAppText: 'היי! מזמין אותך לתאם איתי פגישה בקלות ב-CalendAI 📅\nבחר את הזמן שנוח לך בקישור:',
+    shareWhatsAppBtn: '📱 שלח בוואצאפ',
+    shareEmailBtn: '📧 שלח במייל',
+    shareEmailSubject: 'הזמנה לתיאום פגישה - CalendAI',
+    shareEmailBody: 'היי! מזמין אותך לתאם איתי פגישה בקלות ב-CalendAI 📅\n\nבחר את הזמן שנוח לך בקישור:\n',
+    shareAddCalendaiUser: 'הוסף חבר מ-CalendAI',
+    shareAddCalendaiUserPlaceholder: 'הכנס שם או מייל של משתמש רשום',
+    shareAddCalendaiUserBtn: 'שלח הזמנה',
+    shareAddCalendaiUserSent: '✅ ההזמנה נשלחה!',
+    addToGoogleCalendar: '📅 הוסף ל-Google Calendar',
+    downloadIcs: '📥 הורד קובץ יומן (.ics)',
+    bookingCreateLink: 'אישור ויצירת קישור שיתוף',
+    bookingShareModalTitle: 'שיתוף קישור לתיאום',
+    bookingShareModalDesc: 'שלח קישור זה למשתתפים כדי שיוכלו לבחור זמנים פנויים:',
+    bookingPoweredBy: 'מופעל על ידי CalendAI ✨',
+    bookingStartFree: 'רוצה לנהל את הלו"ז שלך ב-AI? התחל בחינם',
+    bookingGuestAddToCalendar: 'הוסף ל-Google Calendar',
+    bookingGuestCreateAccount: 'צור חשבון CalendAI וקבל ניהול לו"ז חכם',
   },
 
   en: {
@@ -591,6 +612,27 @@ const translations = {
     pwaInstallBannerAndroid: 'Install App',
     pwaInstallBannerIos: 'Add to Home Screen',
     pwaInstallBannerClose: 'Dismiss',
+
+    // Viral Booking & Calendar Sync
+    viralityBannerText: 'Powered by CalendAI ✨ | Want to manage your schedule with AI? Start Free',
+    shareWhatsAppText: 'Hey! I invite you to schedule a meeting with me easily on CalendAI 📅\nPick a time that works for you at:',
+    shareWhatsAppBtn: '📱 Share via WhatsApp',
+    shareEmailBtn: '📧 Share via Email',
+    shareEmailSubject: 'Invitation to Schedule a Meeting - CalendAI',
+    shareEmailBody: 'Hey! I invite you to schedule a meeting with me easily on CalendAI 📅\n\nPick a time that works for you at:\n',
+    shareAddCalendaiUser: 'Add CalendAI User',
+    shareAddCalendaiUserPlaceholder: 'Enter name or email of registered user',
+    shareAddCalendaiUserBtn: 'Send Invitation',
+    shareAddCalendaiUserSent: '✅ Invitation sent!',
+    addToGoogleCalendar: '📅 Add to Google Calendar',
+    downloadIcs: '📥 Download .ics File',
+    bookingCreateLink: 'Confirm & Create Share Link',
+    bookingShareModalTitle: 'Share Scheduling Link',
+    bookingShareModalDesc: 'Send this link to participants so they can choose a convenient time:',
+    bookingPoweredBy: 'Powered by CalendAI ✨',
+    bookingStartFree: 'Want to manage your schedule with AI? Start Free',
+    bookingGuestAddToCalendar: 'Add to Google Calendar',
+    bookingGuestCreateAccount: 'Create a CalendAI account and get smart schedule management',
   }
 };
 
