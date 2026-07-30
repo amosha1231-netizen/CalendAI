@@ -1429,7 +1429,62 @@ app.post('/api/auth/logout', (req, res) => {
 });
 
 // ──────────────────────────────────────────────
-// 7. Conflict detection helper
+// 7. Slot availability check endpoint
+// ──────────────────────────────────────────────
+
+/**
+ * Check if a specific time slot is available on a given day.
+ * Returns { available: true } if the slot is free, { available: false } if busy.
+ */
+app.post('/api/schedule/check-slot', (req, res) => {
+  try {
+    const { day, startTime, endTime } = req.body;
+    if (!day || !startTime || !endTime) {
+      return res.status(400).json({ available: false, error: 'Missing required fields: day, startTime, endTime' });
+    }
+
+    const userId = getUserId(req);
+    const schedule = getUserSchedule(userId);
+    const dayEvents = schedule[day] || [];
+
+    // Check if the slot overlaps with any existing event
+    function parseToMinutes(timeStr) {
+      if (!timeStr) return null;
+      const match = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+      if (!match) return null;
+      let h = parseInt(match[1], 10);
+      const m = parseInt(match[2], 10);
+      const ampm = match[3].toUpperCase();
+      if (ampm === 'PM' && h !== 12) h += 12;
+      if (ampm === 'AM' && h === 12) h = 0;
+      return h * 60 + m;
+    }
+
+    const newStart = parseToMinutes(startTime);
+    const newEnd = parseToMinutes(endTime);
+    if (newStart === null || newEnd === null) {
+      return res.status(400).json({ available: false, error: 'Invalid time format. Use HH:MM AM/PM' });
+    }
+
+    for (const event of dayEvents) {
+      const exStart = parseToMinutes(event.startTime);
+      const exEnd = parseToMinutes(event.endTime);
+      if (exStart === null || exEnd === null) continue;
+      // Check overlap: new event starts before existing ends AND ends after existing starts
+      if (newStart < exEnd && newEnd > exStart) {
+        return res.json({ available: false, conflictingEvent: event });
+      }
+    }
+
+    return res.json({ available: true });
+  } catch (err) {
+    console.error('Check slot error:', err);
+    return res.status(500).json({ available: false, error: 'Internal server error' });
+  }
+});
+
+// ──────────────────────────────────────────────
+// 8. Conflict detection helper
 // ──────────────────────────────────────────────
 
 /**

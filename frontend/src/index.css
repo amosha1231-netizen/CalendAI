@@ -1063,3 +1063,297 @@
 .animate-slide-up {
   animation: slide-up 0.4s ease-out;
 }
+
+/* ──────────────────────────────────────────── */
+/* Meeting Type Cards (Equal Height)            */
+/* ──────────────────────────────────────────── */
+.booking-meeting-type-section {
+  margin-bottom: 1rem;
+}
+
+.booking-meeting-type-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.75rem;
+}
+
+@media (min-width: 640px) {
+  .booking-meeting-type-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+.booking-meeting-card {
+  display: flex;
+  flex-direction: column;
+  border: 2px solid #e2e8f0;
+  border-radius: 0.75rem;
+  padding: 1.25rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  background: white;
+  height: 100%;
+  min-height: 200px;
+}
+
+.booking-meeting-card:hover {
+  border-color: #3b82f6;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);
+  transform: translateY(-2px);
+}
+
+.booking-meeting-card-icon {
+  font-size: 2rem;
+  margin-bottom: 0.5rem;
+}
+
+.booking-meeting-card-title {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #1e293b;
+  margin-bottom: 0.35rem;
+}
+
+.booking-meeting-card-desc {
+  font-size: 0.8rem;
+  color: #64748b;
+  flex: 1;
+  margin-bottom: 0.75rem;
+  line-height: 1.4;
+}
+
+.booking-meeting-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: auto;
+  padding-top: 0.5rem;
+  border-top: 1px solid #f1f5f9;
+}
+
+.booking-meeting-card-duration {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #3b82f6;
+  background: #eff6ff;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+}
+
+.booking-meeting-card-select {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #059669;
+  background: #ecfdf5;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  transition: all 0.15s;
+}
+
+.booking-meeting-card:hover .booking-meeting-card-select {
+  background: #059669;
+  color: white;
+}
+
+/* Selected Meeting Type Badge */
+.booking-selected-type-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: #eff6ff;
+  border: 1px solid #93c5fd;
+  border-radius: 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #2563eb;
+}
+
+.booking-selected-type-duration {
+  font-size: 0.75rem;
+  color: #64748b;
+  font-weight: 400;
+}
+
+/* Slot Check Error */
+.booking-slot-error {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 0.5rem;
+  font-size: 0.85rem;
+  color: #dc2626;
+}
+
+/* ──────────────────────────────────────────── */
+/* Booking Details Form                        */
+/* ──────────────────────────────────────────── */
+.booking-details-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.booking-details-field {
+  display: flex;
+  flex-direction: column;
+}
+
+.booking-required {
+  color: #ef4444;
+  font-weight: 700;
+}
+
+.booking-textarea {
+  resize: vertical;
+  min-height: 80px;
+  font-family: inherit;
+}
+
+.booking-details-summary {
+  padding: 0.75rem;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.booking-details-summary-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #166534;
+}
+
+/* ──────────────────────────────────────────── */
+/* Booking Success Screen                      */
+/* ──────────────────────────────────────────── */
+.booking-success-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem 0;
+  text-align: center;
+}
+
+.booking-success-icon {
+  width: 64px;
+  height: 64px;
+  background: #f0fdf4;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 0.25rem;
+}
+
+.booking-success-heading {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #166534;
+  margin: 0;
+}
+
+.booking-success-desc {
+  font-size: 0.85rem;
+  color: #64748b;
+  line-height: 1.5;
+  max-width: 320px;
+}
+
+.booking-success-details {
+  width: 100%;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.75rem;
+  padding: 0.75rem;
+  text-align: right;
+}
+
+.booking-success-detail-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid #f1f5f9;
+  font-size: 0.8rem;
+}
+
+.booking-success-detail-item:last-child {
+  border-bottom: none;
+}
+
+.booking-success-detail-label {
+  font-weight: 600;
+  color: #475569;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.booking-success-detail-value {
+  color: #1e293b;
+  font-weight: 500;
+}
+
+.booking-email-sent {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 0.5rem;
+  font-size: 0.8rem;
+  color: #16a34a;
+  font-weight: 600;
+  width: 100%;
+}
+
+.booking-whatsapp-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.85rem;
+  background: #25D366;
+  color: white;
+  border: none;
+  border-radius: 0.75rem;
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-decoration: none;
+}
+
+.booking-whatsapp-btn:hover {
+  background: #128C7E;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(37, 211, 102, 0.4);
+}
+
+.booking-success-close-btn {
+  width: 100%;
+  padding: 0.75rem;
+  background: #e2e8f0;
+  color: #475569;
+  border: none;
+  border-radius: 0.75rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.booking-success-close-btn:hover {
+  background: #cbd5e1;
+}

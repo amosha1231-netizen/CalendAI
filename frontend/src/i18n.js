@@ -223,6 +223,35 @@ const translations = {
     bookingFirstChoiceColor: '🟦 עדיפות ראשונה',
     bookingSecondChoiceColor: '🟪 עדיפות שנייה',
 
+    // Meeting Type Cards
+    bookingMeetingType: 'בחר סוג פגישה:',
+    bookingQuickChat: 'שיחה מהירה',
+    bookingQuickChatDesc: 'פגישה קצרה של 15-30 דקות',
+    bookingStandard: 'פגישה רגילה',
+    bookingStandardDesc: 'פגישה סטנדרטית של 30-60 דקות',
+    bookingConsultation: 'ייעוץ',
+    bookingConsultationDesc: 'ייעוץ מעמיק של 60-90 דקות',
+    bookingSelectCard: 'בחר',
+    bookingSelectedCard: 'נבחר',
+
+    // Booking Details Form
+    bookingDetailsTitle: 'הפרטים שלך',
+    bookingGuestEmail: 'אימייל',
+    bookingGuestEmailPlaceholder: 'הכנס את כתובת האימייל שלך',
+    bookingGuestPhone: 'טלפון / וואצאפ',
+    bookingGuestPhonePlaceholder: 'הכנס מספר טלפון',
+    bookingGuestNotes: 'הערות / נושא הפגישה',
+    bookingGuestNotesPlaceholder: 'הכנס תיאור קצר או נושא לפגישה',
+    bookingSlotUnavailable: 'המשבצת שנבחרה כבר לא פנויה. אנא בחר משבצת אחרת.',
+
+    // Booking Success Screen
+    bookingSuccessTitle: 'הפגישה נקבעה בהצלחה! ✅',
+    bookingSuccessDesc: 'קיבלנו את בקשתך. נשלח לך אישור בדוא"ל ובטלפון.',
+    bookingWhatsAppBtn: 'שלח תזכורת בוואצאפ',
+    bookingWhatsAppMsg: 'היי, קבעתי פגישה דרך CalendAI. אשמח לתזכורת.',
+    bookingEmailSent: '✅ אישור נשלח לכתובת האימייל שלך',
+    bookingClose: 'סגור',
+
     // Share Booking Link
     shareBookingLink: '🔗 שתף קישור לתיאום',
     shareBookingTitle: 'שיתוף קישור לתיאום פגישות',
@@ -493,6 +522,35 @@ const translations = {
     bookingSecondChoice: 'Second Choice',
     bookingFirstChoiceColor: '🟦 First Choice',
     bookingSecondChoiceColor: '🟪 Second Choice',
+
+    // Meeting Type Cards
+    bookingMeetingType: 'Choose a meeting type:',
+    bookingQuickChat: 'Quick Chat',
+    bookingQuickChatDesc: 'Short meeting of 15-30 minutes',
+    bookingStandard: 'Standard Meeting',
+    bookingStandardDesc: 'Standard meeting of 30-60 minutes',
+    bookingConsultation: 'Consultation',
+    bookingConsultationDesc: 'In-depth consultation of 60-90 minutes',
+    bookingSelectCard: 'Select',
+    bookingSelectedCard: 'Selected',
+
+    // Booking Details Form
+    bookingDetailsTitle: 'Your Details',
+    bookingGuestEmail: 'Email',
+    bookingGuestEmailPlaceholder: 'Enter your email address',
+    bookingGuestPhone: 'Phone / WhatsApp',
+    bookingGuestPhonePlaceholder: 'Enter your phone number',
+    bookingGuestNotes: 'Notes / Meeting Topic',
+    bookingGuestNotesPlaceholder: 'Enter a short description or topic',
+    bookingSlotUnavailable: 'The selected slot is no longer available. Please choose another slot.',
+
+    // Booking Success Screen
+    bookingSuccessTitle: 'Booking Confirmed! ✅',
+    bookingSuccessDesc: 'We received your request. A confirmation will be sent via email and phone.',
+    bookingWhatsAppBtn: 'Send WhatsApp Reminder',
+    bookingWhatsAppMsg: 'Hi, I booked a meeting through CalendAI. I would appreciate a reminder.',
+    bookingEmailSent: '✅ Confirmation sent to your email',
+    bookingClose: 'Close',
 
     // Share Booking Link
     shareBookingLink: '🔗 Share Booking Link',
