@@ -402,12 +402,29 @@ const hebrewNumbers = {
 };
 
 function parseHebrewSingleTime(text) {
+  // Check for "רבע לX" (quarter to X) pattern FIRST — e.g., "רבע לשישה" = 5:45
+  const quarterToMatch = text.match(/רבע\s+ל(שתיים|שלוש|ארבע|חמש|שש|שבע|שמונה|תשע|עשר|אחת|אחד|שנים|ששה|שבעה|שמונה|תשעה|עשרה)/);
+  if (quarterToMatch) {
+    const hourWord = quarterToMatch[1];
+    const hour = hebrewNumbers[hourWord];
+    if (hour) {
+      // Quarter to X = (X-1):45, e.g., "רבע לשישה" = 5:45
+      let quarterHour = hour - 1;
+      if (quarterHour === 0) quarterHour = 12; // "רבע לאחת" = 12:45
+      return {
+        hour: quarterHour,
+        minute: 45
+      };
+    }
+  }
+
   const singlePatterns = [
     /ב(שתיים|שלוש|ארבע|חמש|שש|שבע|שמונה|תשע|עשר|אחת|אחד|שנים|ששה|שבעה|שמונה|תשעה|עשרה)/,
     /\b(שתיים|שלוש|ארבע|חמש|שש|שבע|שמונה|תשע|עשר|אחת|אחד|שנים|ששה|שבעה|תשעה|עשרה)\b/
   ];
 
   const hasHalf = text.includes('וחצי');
+  const hasQuarter = text.includes('ורבע'); // "X ורבע" = quarter past X, e.g., "שבע ורבע" = 7:15
 
   for (const pattern of singlePatterns) {
     const match = text.match(pattern);
@@ -415,9 +432,12 @@ function parseHebrewSingleTime(text) {
       const hourWord = match[1] || match[0];
       const hour = hebrewNumbers[hourWord];
       if (hour) {
+        let minute = 0;
+        if (hasQuarter) minute = 15;
+        else if (hasHalf) minute = 30;
         return {
           hour,
-          minute: hasHalf ? 30 : 0
+          minute
         };
       }
     }
@@ -542,18 +562,23 @@ function fallbackParse(text) {
     }
   }
 
-  // Check if "בערב" or "בלילה" to adjust AM/PM
-  if (text.includes('בערב') || text.includes('בלילה')) {
+  // Check for explicit morning/evening markers to adjust AM/PM
+  if (text.includes('בערב') || text.includes('בלילה') || text.includes('באחה"צ') || text.includes('אחר הצהריים')) {
+    // Evening/night/afternoon → PM
     if (startHour < 12) startHour += 12;
     if (endHour < 12) endHour += 12;
   } else if (text.includes('בבוקר') || text.includes('בבקר')) {
-    // Already morning, keep as is
+    // Morning → keep as AM (already correct)
   } else {
-    // Default: if hours are typical evening hours (5-11), assume PM
-    if (startHour >= 5 && startHour <= 11 && !text.includes('בבוקר')) {
+    // No explicit marker — apply SMART AM/PM logic:
+    // Low hours 1-7 → DEFAULT TO PM (afternoon/evening)
+    // Hours 8-11 → DEFAULT TO AM (morning)
+    // Hours 12+ → unambiguous
+    if (startHour >= 1 && startHour <= 7) {
       startHour += 12;
       endHour += 12;
     }
+    // Hours 8-11 stay as AM (morning) — no change needed
   }
 
   const startTime = formatTime(startHour, startMinute);
@@ -693,32 +718,51 @@ async function parseWithGemini(text) {
 
     **HEBREW TIME EXPRESSIONS — Parse these correctly:**
 
-    "חמש וחצי" → half past five → 05:30 PM (see AM/PM rules below)
-    "רבע לשישה" → quarter to six → 05:45 PM
-    "רבע לשבע" → quarter to seven → 06:45 PM
-    "שמונה בערב" → eight in the evening → 08:00 PM
-    "שבע ורבע" → quarter past seven → 07:15 PM (see AM/PM rules)
-    "עשר וחצי בבוקר" → half past ten in the morning → 10:30 AM
-    "שתיים ורבע" → quarter past two → 02:15 PM (see AM/PM rules)
-    "רבע לשלוש" → quarter to three → 02:45 PM
-    "תשע ורבע" → quarter past nine → 09:15 PM (see AM/PM rules)
-    "שש וחצי בערב" → half past six in the evening → 06:30 PM
-    "רבע לשמונה בבוקר" → quarter to eight in the morning → 07:45 AM
+    **CRITICAL — "QUARTER TO" (רבע ל) RULE**: "רבע ל-X" means quarter TO X, so the time is (X-1):45. Examples:
+    - "רבע לשישה" → quarter to six → 05:45 PM (NOT 06:45!)
+    - "רבע לשבע" → quarter to seven → 06:45 PM (NOT 07:45!)
+    - "רבע לשלוש" → quarter to three → 02:45 PM (NOT 03:45!)
+    - "רבע לשמונה בבוקר" → quarter to eight in the morning → 07:45 AM (NOT 08:45!)
+
+    **CRITICAL — "QUARTER PAST" (ורבע) RULE**: "X ורבע" means quarter past X, so the time is X:15. Examples:
+    - "שבע ורבע" → quarter past seven → 07:15 PM (see AM/PM rules)
+    - "שתיים ורבע" → quarter past two → 02:15 PM (see AM/PM rules)
+    - "תשע ורבע" → quarter past nine → 09:15 PM (see AM/PM rules)
+    - "שבע ורבע בבוקר" → quarter past seven in the morning → 07:15 AM
+
+    **HALF PAST (וחצי) RULE**: "X וחצי" means half past X, so the time is X:30. Examples:
+    - "חמש וחצי" → half past five → 05:30 PM (see AM/PM rules below)
+    - "עשר וחצי בבוקר" → half past ten in the morning → 10:30 AM
+    - "שש וחצי בערב" → half past six in the evening → 06:30 PM
+
+    **EXPLICIT MARKER RULE**: "בבוקר" / "in the morning" → AM. "בערב" / "in the evening" → PM.
+    - "שמונה בערב" → eight in the evening → 08:00 PM
+    - "שש וחצי בערב" → half past six in the evening → 06:30 PM
+    - "רבע לשמונה בבוקר" → quarter to eight in the morning → 07:45 AM
 
     **ENGLISH TIME EXPRESSIONS — Parse these correctly:**
 
-    "half past five" → 05:30 PM (see AM/PM rules)
-    "quarter to six" → 05:45 PM
-    "5:30pm" → 05:30 PM
-    "eight in the evening" → 08:00 PM
-    "quarter past seven" → 07:15 PM (see AM/PM rules)
-    "ten thirty in the morning" → 10:30 AM
-    "half past two" → 02:30 PM (see AM/PM rules)
-    "quarter to three" → 02:45 PM
-    "six thirty in the evening" → 06:30 PM
-    "quarter to eight in the morning" → 07:45 AM
+    **CRITICAL — "QUARTER TO" RULE**: "quarter to X" means (X-1):45. Examples:
+    - "quarter to six" → 05:45 PM (NOT 06:45!)
+    - "quarter to three" → 02:45 PM (NOT 03:45!)
+    - "quarter to eight in the morning" → 07:45 AM (NOT 08:45!)
 
-    **IMPORTANT**: When you see "quarter to X" (Hebrew: "רבע ל-X"), the time is (X-1):45. For example, "quarter to six" / "רבע לשישה" = 5:45, NOT 6:45.
+    **CRITICAL — "QUARTER PAST" RULE**: "quarter past X" means X:15. Examples:
+    - "quarter past seven" → 07:15 PM (see AM/PM rules)
+    - "half past two" → 02:30 PM (see AM/PM rules)
+    - "quarter past two" → 02:15 PM (see AM/PM rules)
+
+    **HALF PAST RULE**: "half past X" means X:30. Examples:
+    - "half past five" → 05:30 PM (see AM/PM rules)
+    - "ten thirty in the morning" → 10:30 AM
+    - "six thirty in the evening" → 06:30 PM
+
+    **DIGITAL FORMAT**: 
+    - "5:30pm" → 05:30 PM
+    - "eight in the evening" → 08:00 PM
+    - "quarter to eight in the morning" → 07:45 AM
+
+    **CRITICAL REMINDER**: "quarter to X" / "רבע ל-X" = (X-1):45, NOT X:45. For example, "quarter to six" / "רבע לשישה" = 5:45, NOT 6:45. "quarter past X" / "X ורבע" = X:15. "half past X" / "X וחצי" = X:30.
 
     ─────────────────────────────────────────────
     STEP 5: AM/PM SMART LOGIC (CRITICAL)
@@ -1354,11 +1398,11 @@ app.get('/api/auth/google',
 app.get('/api/auth/google/callback',
   passport.authenticate('google', { failureRedirect: '/' }),
   (req, res) => {
-    // Redirect to the main dashboard with login=success to auto-login the user
+    // Redirect to the main dashboard with auth=success to auto-login the user
     // Note: this redirects to the Dashboard (main schedule view), NOT to the Booking page.
     // The Booking page is only accessed via a shared link (?book=... parameter).
     const baseUrl = process.env.FRONTEND_URL || CLIENT_URL;
-    res.redirect(`${baseUrl}?login=success`);
+    res.redirect(`${baseUrl}/?auth=success`);
   }
 );
 

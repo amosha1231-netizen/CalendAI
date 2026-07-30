@@ -281,14 +281,55 @@ function App() {
     scheduleHistoryRef.current.push(JSON.parse(JSON.stringify(schedule)));
   }, [schedule]);
 
+  // Keep-alive ping to wake up Render server if it's sleeping
+  // Pings every 5 minutes, but only when the page is visible
+  useEffect(() => {
+    let pingInterval;
+    const startPing = () => {
+      pingInterval = setInterval(() => {
+        fetch(`${API_BASE}/api/health`, { method: 'GET', cache: 'no-store' })
+          .catch(() => {}); // Silently fail - server might be waking up
+      }, 5 * 60 * 1000); // Every 5 minutes
+    };
+    const stopPing = () => {
+      if (pingInterval) clearInterval(pingInterval);
+    };
+    // Start immediately when component mounts
+    startPing();
+    // Stop when tab is hidden, resume when visible
+    const handleVisibility = () => {
+      if (document.hidden) {
+        stopPing();
+      } else {
+        startPing();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      stopPing();
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, []);
+
   // Detect login=success from Google OAuth redirect
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get('login') === 'success') {
+    if (params.get('login') === 'success' || params.get('auth') === 'success') {
+      // 1. Immediately clear the URL parameters
       window.history.replaceState({}, document.title, window.location.pathname);
+      // 2. Fetch user data from backend
       fetch(`${API_BASE}/api/auth/me`, { credentials: "include" })
         .then(res => res.json())
-        .then(data => { if (data.user) { setUser(data.user); setShowLoginPrompt(false); } })
+        .then(data => {
+          if (data.user) {
+            setUser(data.user);
+            setShowLoginPrompt(false);
+            // 3. Save user data to localStorage for persistence
+            try {
+              localStorage.setItem('calendai-user', JSON.stringify(data.user));
+            } catch (e) {}
+          }
+        })
         .catch(() => {});
     }
   }, []);
