@@ -90,7 +90,7 @@ function computeAnalytics(schedule) {
   };
 }
 
-export default function SidebarDrawer({ isOpen, onClose, schedule, lang, t, user, onLogout, onOpenShareModal }) {
+export default function SidebarDrawer({ isOpen, onClose, schedule, lang, t, user, onLogout, onOpenShareModal, selectedLocation, onLocationChange }) {
   const [activeTab, setActiveTab] = useState('analytics');
   const [settingsData, setSettingsData] = useState({
     lang: lang,
@@ -344,6 +344,31 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, t, user
                   onChange={(e) => setSettingsData(prev => ({ ...prev, defaultEnd: e.target.value }))}
                   className="w-full px-3 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500"
                 />
+              </div>
+
+              {/* Profile Settings - Default Location */}
+              <div className="border-t border-slate-200 pt-4 mt-2">
+                <h4 className="text-sm font-bold text-slate-700 mb-3 flex items-center gap-2">
+                  <Settings className="w-4 h-4 text-slate-500" />
+                  {t.profileTitle}
+                </h4>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">{t.profileDefaultLocation}</label>
+                  <p className="text-xs text-slate-400 mb-2">{t.profileLocationDesc}</p>
+                  <select
+                    value={selectedLocation || 'none'}
+                    onChange={(e) => {
+                      if (onLocationChange) onLocationChange(e.target.value);
+                    }}
+                    className="w-full px-3 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="none">{t.noLocation}</option>
+                    <option value="jerusalem">Jerusalem</option>
+                    <option value="newyork">New York</option>
+                    <option value="london">London</option>
+                    <option value="losangeles">Los Angeles</option>
+                  </select>
+                </div>
               </div>
 
               <button

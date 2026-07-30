@@ -247,6 +247,24 @@ const translations = {
 
     // Rate limit
     rateLimit: 'יותר מדי בקשות. אנא נסה שוב בעוד דקה.',
+
+    // Profile Settings (Location moved to settings)
+    profileTitle: 'הגדרות פרופיל',
+    profileDefaultLocation: 'מיקום ברירת מחדל',
+    profileLocationDesc: 'בחר מיקום ברירת מחדל לאירועים שלך (אופציונלי)',
+    profileLocationSaved: 'מיקום ברירת מחדל נשמר',
+    noLocation: 'ללא מיקום',
+
+    // Smart Auth
+    loginRequired: 'עליך להתחבר כדי לבצע פעולה זו',
+    loginToSave: 'התחבר כדי לשמור',
+    loginToSaveDesc: 'כדי לשמור אירועים בלוח השנה, עליך להתחבר קודם',
+
+    // PWA Smart Install Banner
+    pwaInstallBanner: '📱 התקן את CalendAI במסך הבית לגישה מהירה יותר',
+    pwaInstallBannerAndroid: 'התקן אפליקציה',
+    pwaInstallBannerIos: 'הוסף למסך הבית',
+    pwaInstallBannerClose: 'סגור',
   },
 
   en: {
@@ -497,6 +515,24 @@ const translations = {
     pwaOpenInSafari: 'Open in Safari',
     pwaOpenInSafariDesc: 'Please open this page in Safari to add to home screen',
     pwaNotAvailable: '⚠️ Not available in this browser',
+
+    // Profile Settings (Location moved to settings)
+    profileTitle: 'Profile Settings',
+    profileDefaultLocation: 'Default Location',
+    profileLocationDesc: 'Choose a default location for your events (optional)',
+    profileLocationSaved: 'Default location saved',
+    noLocation: 'No location',
+
+    // Smart Auth
+    loginRequired: 'You need to log in to perform this action',
+    loginToSave: 'Login to save',
+    loginToSaveDesc: 'To save events to your calendar, please log in first',
+
+    // PWA Smart Install Banner
+    pwaInstallBanner: '📱 Install CalendAI on your home screen for faster access',
+    pwaInstallBannerAndroid: 'Install App',
+    pwaInstallBannerIos: 'Add to Home Screen',
+    pwaInstallBannerClose: 'Dismiss',
   }
 };
 

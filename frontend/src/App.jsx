@@ -80,7 +80,7 @@ function App() {
       return localStorage.getItem('calendai-lang') || 'he';
     } catch { return 'he'; }
   });
-  const t = translations[lang] || translations['he']; // shorthand for translations with fallback
+  const t = translations[lang] || translations['he'];
 
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [inputText, setInputText] = useState("");
@@ -117,13 +117,13 @@ function App() {
     Sunday: [], Monday: [], Tuesday: [], Wednesday: [],
     Thursday: [], Friday: [], Saturday: [], Today: []
   });
-  const scheduleHistoryRef = useRef([]); // Undo history stack
+  const scheduleHistoryRef = useRef([]);
 
   // Splash Screen State
   const [splashDone, setSplashDone] = useState(false);
   const [splashFading, setSplashFading] = useState(false);
   const splashStartRef = useRef(Date.now());
-  const SPLASH_MIN_DURATION = 1800; // ms - minimum time splash stays visible before fade-out starts
+  const SPLASH_MIN_DURATION = 1800;
 
   // Notification / Reminder State
   const [notificationPerm, setNotificationPerm] = useState(Notification.permission);
@@ -146,11 +146,36 @@ function App() {
     try { return localStorage.getItem('calendai-pwa-dismissed') === 'true'; } catch { return false; }
   });
 
+  // Smart PWA Install Banner (bottom toast, appears after 60s)
+  const [showPwaBanner, setShowPwaBanner] = useState(false);
+  const [pwaBannerDismissed, setPwaBannerDismissed] = useState(() => {
+    try { return localStorage.getItem('calendai-pwa-banner-dismissed') === 'true'; } catch { return false; }
+  });
+
+  // Smart Auth: show login prompt for save operations
+  const [showLoginPrompt, setShowLoginPrompt] = useState(false);
+  const [pendingAction, setPendingAction] = useState(null);
+
   // Share Booking Link State
   const [showShareModal, setShowShareModal] = useState(false);
   const [shareLinkCopied, setShareLinkCopied] = useState(false);
 
+  // Profile settings (location in sidebar)
+  const [profileLocation, setProfileLocation] = useState(() => {
+    try { return localStorage.getItem('calendai-profile-location') || 'none'; } catch { return 'none'; }
+  });
+
   const bookingLink = typeof window !== 'undefined' ? `${window.location.origin}${window.location.pathname}?book=1` : '';
+
+  // Smart Auth: require login for save operations
+  const handleLoginRequired = useCallback((action) => {
+    if (!user) {
+      setPendingAction(action);
+      setShowLoginPrompt(true);
+      return true;
+    }
+    return false;
+  }, [user]);
 
   // Listen for beforeinstallprompt (Android Chrome)
   useEffect(() => {
@@ -182,6 +207,16 @@ function App() {
     }
   }, []);
 
+  // Smart PWA Banner: show after 60 seconds of active usage
+  useEffect(() => {
+    if (splashDone && !isStandalone() && !pwaBannerDismissed) {
+      const timer = setTimeout(() => {
+        setShowPwaBanner(true);
+      }, 60000);
+      return () => clearTimeout(timer);
+    }
+  }, [splashDone, pwaBannerDismissed]);
+
   const handleInstallClick = async () => {
     if (installPrompt) {
       installPrompt.prompt();
@@ -189,6 +224,7 @@ function App() {
       if (result.outcome === 'accepted') {
         setInstallPrompt(null);
         setShowPwaPopup(false);
+        setShowPwaBanner(false);
       }
     }
   };
@@ -197,6 +233,12 @@ function App() {
     setShowPwaPopup(false);
     setPwaDismissed(true);
     try { localStorage.setItem('calendai-pwa-dismissed', 'true'); } catch (e) {}
+  };
+
+  const handleDismissPwaBanner = () => {
+    setShowPwaBanner(false);
+    setPwaBannerDismissed(true);
+    try { localStorage.setItem('calendai-pwa-banner-dismissed', 'true'); } catch (e) {}
   };
 
   const handleCopyShareLink = () => {
@@ -228,13 +270,14 @@ function App() {
       window.history.replaceState({}, document.title, window.location.pathname);
       fetch(`${API_BASE}/api/auth/me`, { credentials: "include" })
         .then(res => res.json())
-        .then(data => { if (data.user) setUser(data.user); })
+        .then(data => { if (data.user) { setUser(data.user); setShowLoginPrompt(false); } })
         .catch(() => {});
     }
   }, []);
 
   // Handle booking confirmation
   const handleBookingConfirm = useCallback(async (bookingData) => {
+    if (handleLoginRequired('booking')) return;
     saveScheduleState();
     const { day, slots, guestName, duration } = bookingData;
     try {
@@ -269,7 +312,7 @@ function App() {
     } catch (err) {
       setError(err.message);
     }
-  }, [schedule, selectedLocation, fetchSchedule, t]);
+  }, [schedule, selectedLocation, fetchSchedule, t, handleLoginRequired]);
 
   // Toggle language function
   const toggleLanguage = () => {
@@ -457,6 +500,7 @@ function App() {
 
   const handleParse = async () => {
     if (!inputText.trim()) return;
+    if (handleLoginRequired('parse')) return;
     saveScheduleState();
     setLoading(true);
     setError("");
@@ -668,6 +712,18 @@ function App() {
     setEditModalData(prev => ({ ...prev, event: { ...prev.event, [field]: value } }));
   };
 
+  const handlePwaBannerInstall = () => {
+    if (installPrompt) {
+      handleInstallClick();
+    } else if (isIosSafari()) {
+      setShowPwaBanner(false);
+      setShowPwaPopup(true);
+    } else if (isIosNonSafari()) {
+      setShowPwaBanner(false);
+      setShowPwaPopup(true);
+    }
+  };
+
   const recurrenceLabels = {
     once: t.recurrenceOnce,
     daily: t.recurrenceDaily,
@@ -721,7 +777,7 @@ function App() {
           <span className="splash-version">{t.splashVersion}</span>
         </div>
       )}
-      <div className={`min-h-screen bg-slate-50 p-4 sm:p-6 font-sans`} dir={isRTL ? 'rtl' : 'ltr'}>
+      <div className={`min-h-screen bg-slate-50 p-4 sm:p-6 font-sans pb-20`} dir={isRTL ? 'rtl' : 'ltr'}>
       {/* Toast Notifications */}
       {toasts.length > 0 && (
         <div className={`fixed top-4 ${isRTL ? 'left-4' : 'right-4'} z-[100] flex flex-col gap-2 max-w-sm`}>
@@ -811,10 +867,6 @@ function App() {
               className="px-2.5 py-1 text-xs rounded-full border transition bg-indigo-50 text-indigo-600 border-indigo-200 hover:bg-indigo-100 shrink-0 flex items-center gap-1">
               <Moon className="w-3 h-3" /> {t.suggestionSleep}
             </button>
-          </div>
-
-          <div className="mt-4">
-            <LocationSelector selectedLocation={selectedLocation} onLocationChange={setSelectedLocation} onSlotClick={handleSlotClick} />
           </div>
 
           <div className="mt-4 flex flex-wrap items-center gap-3">
@@ -1224,6 +1276,49 @@ function App() {
         </div>
       )}
 
+      {/* Smart PWA Install Banner (bottom toast, after 60s) */}
+      {showPwaBanner && !isStandalone() && (
+        <div className="fixed bottom-0 left-0 right-0 z-[9999] p-4 animate-slide-up">
+          <div className="max-w-md mx-auto bg-white rounded-xl shadow-2xl border border-slate-200 p-4 flex items-center gap-3">
+            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center shrink-0">
+              <Download className="w-5 h-5 text-white" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-slate-800">{t.pwaInstallBanner}</p>
+            </div>
+            <button
+              onClick={handlePwaBannerInstall}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition shrink-0"
+            >
+              {installPrompt ? t.pwaInstallBannerAndroid : (isIosSafari() ? t.pwaInstallBannerIos : t.pwaInstallBannerAndroid)}
+            </button>
+            <button onClick={handleDismissPwaBanner} className="text-slate-400 hover:text-slate-600 shrink-0">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Smart Auth Login Prompt Modal */}
+      {showLoginPrompt && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-[9999]" onClick={() => setShowLoginPrompt(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center" onClick={e => e.stopPropagation()}>
+            <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <LogIn className="w-8 h-8 text-blue-600" />
+            </div>
+            <h3 className="text-lg font-bold text-slate-800 mb-2">{t.loginToSave}</h3>
+            <p className="text-sm text-slate-500 mb-6">{t.loginToSaveDesc}</p>
+            <button onClick={handleLogin}
+              className="w-full px-4 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition shadow-lg">
+              {t.loginWithGoogle}
+            </button>
+            <button onClick={() => setShowLoginPrompt(false)} className="w-full mt-3 text-sm text-slate-400 hover:text-slate-600 py-2 transition">
+              {t.cancel}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Sidebar Drawer */}
       <SidebarDrawer
         isOpen={isSidebarOpen}
@@ -1234,6 +1329,11 @@ function App() {
         user={user}
         onLogout={handleLogout}
         onOpenShareModal={() => setShowShareModal(true)}
+        selectedLocation={profileLocation !== 'none' ? profileLocation : selectedLocation}
+        onLocationChange={(loc) => {
+          setProfileLocation(loc);
+          try { localStorage.setItem('calendai-profile-location', loc); } catch (e) {}
+        }}
       />
     </div>
     </>
