@@ -346,6 +346,7 @@ function App() {
     saveScheduleState();
     const { day, slots, guestName, duration } = bookingData;
     try {
+      let firstSlotTime = '';
       for (const slot of slots) {
         const startH12 = slot.hour % 12 || 12;
         const ampm = slot.hour >= 12 ? 'PM' : 'AM';
@@ -356,6 +357,8 @@ function App() {
 
         const startTime = `${String(startH12).padStart(2, '0')}:${String(slot.minute).padStart(2, '0')} ${ampm}`;
         const endTime = `${String(endH12).padStart(2, '0')}:${String(endMinute).padStart(2, '0')} ${endAmpm}`;
+
+        if (!firstSlotTime) firstSlotTime = startTime;
 
         const res = await fetch(`${API_BASE}/api/schedule/add-to-free-slot`, {
           method: "POST",
@@ -374,6 +377,21 @@ function App() {
       }
       await fetchSchedule();
       setSuccess(t.bookingConfirmation);
+      
+      // Show booking confirmation toast notification
+      const toastId = Date.now();
+      const meetingTime = firstSlotTime || '';
+      const toastMessage = t.bookingToastMessage
+        .replace('{guestName}', guestName || '')
+        .replace('{meetingTime}', meetingTime);
+      setToasts(prev => [...prev, {
+        id: toastId,
+        title: t.bookingToastTitle,
+        message: toastMessage
+      }]);
+      setTimeout(() => {
+        setToasts(prev => prev.filter(t => t.id !== toastId));
+      }, 8000);
     } catch (err) {
       setError(err.message);
     }

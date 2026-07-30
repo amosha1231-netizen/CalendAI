@@ -295,6 +295,21 @@ const translations = {
     pwaInstallBannerIos: 'הוסף למסך הבית',
     pwaInstallBannerClose: 'סגור',
 
+    // Booking Confirmation Toast (Real-time Notification)
+    bookingToastTitle: 'תואמה פגישה בהצלחה! 🎉',
+    bookingToastMessage: 'תואמה פגישה עם {guestName} בשעה {meetingTime} בהצלחה! 🎉',
+
+    // Detect Location
+    detectLocation: 'זהה מיקום אוטומטי 📍',
+    detectLocationLoading: 'מזהה מיקום...',
+    detectLocationSuccess: 'מיקום זוהה: {city}',
+    detectLocationError: 'לא ניתן לזהות מיקום. בדוק הרשאות.',
+    timezoneDetected: 'אזור זמן: {timezone}',
+
+    // Timezone Converter for Booking
+    bookingTimezoneNote: 'השעות מוצגות לפי {timezone}',
+    bookingTimezoneDetected: 'השעות מותאמות לאזור הזמן שלך: {timezone}',
+
     // Viral Booking & Calendar Sync
     viralityBannerText: 'מופעל על ידי CalendAI ✨ | רוצה לנהל את הלו"ז שלך ב-AI? התחל בחינם',
     shareWhatsAppText: 'היי! מזמין אותך לתאם איתי פגישה בקלות ב-CalendAI 📅\nבחר את הזמן שנוח לך בקישור:',
@@ -612,6 +627,21 @@ const translations = {
     pwaInstallBannerAndroid: 'Install App',
     pwaInstallBannerIos: 'Add to Home Screen',
     pwaInstallBannerClose: 'Dismiss',
+
+    // Booking Confirmation Toast (Real-time Notification)
+    bookingToastTitle: 'Meeting Booked Successfully! 🎉',
+    bookingToastMessage: 'Meeting booked with {guestName} at {meetingTime} successfully! 🎉',
+
+    // Detect Location
+    detectLocation: 'Detect Location 📍',
+    detectLocationLoading: 'Detecting location...',
+    detectLocationSuccess: 'Location detected: {city}',
+    detectLocationError: 'Could not detect location. Check permissions.',
+    timezoneDetected: 'Timezone: {timezone}',
+
+    // Timezone Converter for Booking
+    bookingTimezoneNote: 'Times are shown in {timezone}',
+    bookingTimezoneDetected: 'Times adjusted to your timezone: {timezone}',
 
     // Viral Booking & Calendar Sync
     viralityBannerText: 'Powered by CalendAI ✨ | Want to manage your schedule with AI? Start Free',

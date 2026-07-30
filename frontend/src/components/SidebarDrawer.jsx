@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { X, BarChart3, Zap, Settings, Download, Moon, Sun, Target, Clock, Trophy, Activity, Share2 } from 'lucide-react';
+import { X, BarChart3, Zap, Settings, Download, Moon, Sun, Target, Clock, Trophy, Activity, Share2, MapPin, Loader2 } from 'lucide-react';
 
 const CATEGORY_KEYWORDS = {
   sport: ['אימון', 'ריצה', 'שחייה', 'הליכה', 'ספורט', 'חדר כושר', 'יוגה', 'פילאטיס', 'רכיבה', 'טיפוס', 'workout', 'run', 'swim', 'walk', 'sport', 'gym', 'yoga', 'pilates', 'bike', 'climb'],
@@ -99,6 +99,9 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, t, user
   });
   const [settingsSaved, setSettingsSaved] = useState(false);
   const [installPrompt, setInstallPrompt] = useState(null);
+  const [detectLoading, setDetectLoading] = useState(false);
+  const [detectError, setDetectError] = useState("");
+  const [detectedCity, setDetectedCity] = useState("");
 
   useEffect(() => {
     window.addEventListener('beforeinstallprompt', (e) => {
@@ -106,6 +109,69 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, t, user
       setInstallPrompt(e);
     });
   }, []);
+
+  // Auto-detect location using Geolocation API + reverse geocoding
+  const handleDetectLocation = async () => {
+    if (!navigator.geolocation) {
+      setDetectError(t.detectLocationError || 'Could not detect location. Check permissions.');
+      return;
+    }
+    setDetectLoading(true);
+    setDetectError("");
+    setDetectedCity("");
+    try {
+      const position = await new Promise((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 60000
+        });
+      });
+      const { latitude, longitude } = position.coords;
+      
+      // Use reverse geocoding via OpenStreetMap Nominatim API
+      const geoRes = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&accept-language=he`,
+        { headers: { 'User-Agent': 'CalendAI/1.0' } }
+      );
+      if (!geoRes.ok) throw new Error('Geocoding failed');
+      const geoData = await geoRes.json();
+      const city = geoData.address?.city || geoData.address?.town || geoData.address?.village || geoData.address?.county || 'Unknown';
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      
+      setDetectedCity(city);
+      
+      // Update the location in localStorage
+      try {
+        localStorage.setItem('calendai-detected-location', JSON.stringify({
+          city,
+          timezone,
+          lat: latitude,
+          lng: longitude,
+          timestamp: Date.now()
+        }));
+      } catch (e) {}
+      
+      // If we have a city name, try to match it to a known location
+      const cityLower = city.toLowerCase();
+      let matchedLocation = 'none';
+      if (cityLower.includes('jerusalem') || cityLower.includes('ירושלים')) matchedLocation = 'jerusalem';
+      else if (cityLower.includes('new york') || cityLower.includes('nyc') || cityLower.includes('manhattan')) matchedLocation = 'newyork';
+      else if (cityLower.includes('london') || cityLower.includes('לונדון')) matchedLocation = 'london';
+      else if (cityLower.includes('los angeles') || cityLower.includes('la ')) matchedLocation = 'losangeles';
+      
+      if (matchedLocation !== 'none' && onLocationChange) {
+        onLocationChange(matchedLocation);
+      }
+      
+      // Show success via settingsSaved styled message
+      setDetectLoading(false);
+    } catch (err) {
+      console.error('Location detection failed:', err);
+      setDetectError(t.detectLocationError || 'Could not detect location. Check permissions.');
+      setDetectLoading(false);
+    }
+  };
 
   const analytics = useCallback(() => computeAnalytics(schedule), [schedule])();
   const isRTL = lang === 'he';
@@ -368,6 +434,36 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, t, user
                     <option value="london">London</option>
                     <option value="losangeles">Los Angeles</option>
                   </select>
+                </div>
+
+                {/* Detect Location Button */}
+                <div className="mt-3">
+                  <button
+                    onClick={handleDetectLocation}
+                    disabled={detectLoading}
+                    className="w-full flex items-center justify-center gap-2 px-3 py-2.5 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-lg hover:bg-indigo-100 transition text-sm font-medium disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    {detectLoading ? (
+                      <><Loader2 className="w-4 h-4 animate-spin" /> {t.detectLocationLoading || 'Detecting location...'}</>
+                    ) : (
+                      <><MapPin className="w-4 h-4" /> {t.detectLocation || 'Detect Location 📍'}</>
+                    )}
+                  </button>
+                  {detectedCity && (
+                    <div className="mt-2 flex items-center gap-1.5 text-xs bg-green-50 text-green-700 border border-green-200 rounded-lg p-2">
+                      <MapPin className="w-3.5 h-3.5 shrink-0" />
+                      <span>
+                        {(t.detectLocationSuccess || 'Location detected: {city}').replace('{city}', detectedCity)}
+                        {' · '}
+                        {(t.timezoneDetected || 'Timezone: {timezone}').replace('{timezone}', Intl.DateTimeFormat().resolvedOptions().timeZone)}
+                      </span>
+                    </div>
+                  )}
+                  {detectError && (
+                    <div className="mt-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg p-2">
+                      {detectError}
+                    </div>
+                  )}
                 </div>
               </div>
 

@@ -48,6 +48,15 @@ export default function Booking({ schedule, lang, t, onClose, onConfirm, user })
   const [dragCurrent, setDragCurrent] = useState(null);
   const gridRef = useRef(null);
 
+  // Timezone detection for guest
+  const [guestTimezone, setGuestTimezone] = useState(() => {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone;
+    } catch {
+      return '';
+    }
+  });
+
   const isRTL = lang === 'he';
 
   const dayEvents = schedule[selectedDay] || [];
@@ -664,6 +673,16 @@ export default function Booking({ schedule, lang, t, onClose, onConfirm, user })
             <span>{t.bookingPriority2}</span>
           </div>
         </div>
+
+        {/* Timezone indicator */}
+        {guestTimezone && (
+          <div className="booking-timezone-indicator">
+            <Clock className="w-3.5 h-3.5 text-slate-400" />
+            <span>
+              {(t.bookingTimezoneDetected || 'Times adjusted to your timezone: {timezone}').replace('{timezone}', guestTimezone)}
+            </span>
+          </div>
+        )}
 
         {/* Selected slots summary */}
         <div className="booking-summary">
