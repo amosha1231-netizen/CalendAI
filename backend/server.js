@@ -687,6 +687,113 @@ async function parseWithGemini(text) {
     - **Editing Events**: If a user says "תעדכן/תשנה" / "update/change" an event, include "isEdit": true.
 
     ─────────────────────────────────────────────
+    STEP 4: NATURAL LANGUAGE TIME PARSING (CRITICAL)
+    ─────────────────────────────────────────────
+    You MUST accurately parse complex time expressions in BOTH Hebrew and English and convert them to the correct "HH:MM AM/PM" format. This is a core requirement.
+
+    **HEBREW TIME EXPRESSIONS — Parse these correctly:**
+
+    "חמש וחצי" → half past five → 05:30 PM (see AM/PM rules below)
+    "רבע לשישה" → quarter to six → 05:45 PM
+    "רבע לשבע" → quarter to seven → 06:45 PM
+    "שמונה בערב" → eight in the evening → 08:00 PM
+    "שבע ורבע" → quarter past seven → 07:15 PM (see AM/PM rules)
+    "עשר וחצי בבוקר" → half past ten in the morning → 10:30 AM
+    "שתיים ורבע" → quarter past two → 02:15 PM (see AM/PM rules)
+    "רבע לשלוש" → quarter to three → 02:45 PM
+    "תשע ורבע" → quarter past nine → 09:15 PM (see AM/PM rules)
+    "שש וחצי בערב" → half past six in the evening → 06:30 PM
+    "רבע לשמונה בבוקר" → quarter to eight in the morning → 07:45 AM
+
+    **ENGLISH TIME EXPRESSIONS — Parse these correctly:**
+
+    "half past five" → 05:30 PM (see AM/PM rules)
+    "quarter to six" → 05:45 PM
+    "5:30pm" → 05:30 PM
+    "eight in the evening" → 08:00 PM
+    "quarter past seven" → 07:15 PM (see AM/PM rules)
+    "ten thirty in the morning" → 10:30 AM
+    "half past two" → 02:30 PM (see AM/PM rules)
+    "quarter to three" → 02:45 PM
+    "six thirty in the evening" → 06:30 PM
+    "quarter to eight in the morning" → 07:45 AM
+
+    **IMPORTANT**: When you see "quarter to X" (Hebrew: "רבע ל-X"), the time is (X-1):45. For example, "quarter to six" / "רבע לשישה" = 5:45, NOT 6:45.
+
+    ─────────────────────────────────────────────
+    STEP 5: AM/PM SMART LOGIC (CRITICAL)
+    ─────────────────────────────────────────────
+    Apply the following AM/PM resolution rules STRICTLY:
+
+    1. **Explicit morning/evening markers override everything**:
+       - "בבוקר" / "in the morning" / "AM" → treat as AM (morning)
+       - "בערב" / "in the evening" / "PM" / "באחה"צ" / "אחר הצהריים" → treat as PM (afternoon/evening)
+       - "בלילה" / "at night" → treat as PM (night)
+
+    2. **Low hours (1-7) WITHOUT explicit marker → DEFAULT TO PM (afternoon/evening)**:
+       - "חמש וחצי" → 05:30 PM (17:30), NOT 05:30 AM
+       - "five thirty" → 05:30 PM (17:30), NOT 05:30 AM
+       - "שתיים ורבע" → 02:15 PM (14:15), NOT 02:15 AM
+       - "half past two" → 02:30 PM (14:30), NOT 02:30 AM
+       - "שש" → 06:00 PM (18:00), NOT 06:00 AM
+       - "six" → 06:00 PM (18:00), NOT 06:00 AM
+       - "שבע" → 07:00 PM (19:00), NOT 07:00 AM
+       - "seven" → 07:00 PM (19:00), NOT 07:00 AM
+       - "רבע לשישה" → 05:45 PM (17:45), NOT 05:45 AM
+       - "quarter to six" → 05:45 PM (17:45), NOT 05:45 AM
+
+    3. **Hours 8-11 WITHOUT explicit marker → DEFAULT TO AM (morning)**:
+       - "שמונה" → 08:00 AM, NOT 08:00 PM
+       - "eight" → 08:00 AM, NOT 08:00 PM
+       - "תשע" → 09:00 AM, NOT 09:00 PM
+       - "nine" → 09:00 AM, NOT 09:00 PM
+       - "עשר" → 10:00 AM, NOT 10:00 PM
+       - "ten" → 10:00 AM, NOT 10:00 PM
+       - "אחת עשרה" → 11:00 AM, NOT 11:00 PM
+       - "eleven" → 11:00 AM, NOT 11:00 PM
+
+    4. **Hours 12+ are unambiguous**:
+       - "שתים עשרה" / "twelve" → 12:00 PM (noon) unless "בבוקר" specified
+       - "13:00" → 01:00 PM
+       - "ארבע אחר הצהריים" → 04:00 PM
+
+    5. **Digital format (e.g., "5:30pm", "17:30")**:
+       - If "am"/"pm" suffix is present → use it directly
+       - If 24h format (e.g., "17:30") → convert to 12h AM/PM correctly
+
+    **CRITICAL REMINDER**: When the user says "חמש וחצי" or "five thirty" WITHOUT "בבוקר" / "in the morning", the time is 05:30 PM (17:30), NOT 05:30 AM. This is the most common mistake to avoid.
+
+    ─────────────────────────────────────────────
+    STEP 6: SEAMLESS TEXT PARSING (CRITICAL)
+    ─────────────────────────────────────────────
+    When the user's text is dense or lacks punctuation, you MUST intelligently separate:
+    - The **time** (when the event happens)
+    - The **duration** (how long it lasts, if mentioned)
+    - The **title** (what the event is about)
+
+    **Rules for seamless parsing**:
+
+    1. **Time comes first, then title**: In Hebrew, the time expression typically appears at the beginning of the phrase. Extract the time, then the remaining text is the title.
+       - "חמש וחצי ספרים לעמי" → time: 17:30, title: "ספרים לעמי"
+       - "שבע בערב ארוחת ערב" → time: 19:00, title: "ארוחת ערב"
+       - "רבע לשישה פגישה עם דני" → time: 17:45, title: "פגישה עם דני"
+       - "שמונה וחצי בבוקר קפה עם יוסי" → time: 08:30, title: "קפה עם יוסי"
+
+    2. **English patterns**:
+       - "five thirty books for ami" → time: 17:30, title: "Books for Ami"
+       - "seven pm dinner" → time: 19:00, title: "Dinner"
+       - "quarter to six meeting with Danny" → time: 17:45, title: "Meeting with Danny"
+       - "half past eight morning coffee with Yossi" → time: 08:30, title: "Coffee with Yossi"
+
+    3. **Duration extraction**: If a duration is mentioned (e.g., "שעה", "חצי שעה", "שעתיים", "30 דקות", "an hour", "half hour", "2 hours"), calculate the endTime accordingly.
+       - "חמש וחצי שעה ספרים לעמי" → start: 17:30, duration: 1 hour, end: 18:30, title: "ספרים לעמי"
+       - "five thirty for an hour books for ami" → start: 17:30, duration: 1 hour, end: 18:30, title: "Books for Ami"
+
+    4. **No time mentioned**: If no time expression is found, use the default time based on activity type (see STEP 3).
+
+    5. **Title cleanup**: The title should be the remaining text after removing time expressions, duration expressions, and filler words. Keep it concise (max 4 words).
+
+    ─────────────────────────────────────────────
     OUTPUT FORMAT
     ─────────────────────────────────────────────
     Return a single JSON object with these keys:
@@ -765,6 +872,50 @@ async function parseWithGemini(text) {
         { "title": "שינה", "day": "Thursday", "startTime": "11:00 PM", "endTime": "07:00 AM", "recurrence": "daily", "isRecurring": true, "isSleep": true, "hasAdvice": false, "aiAdvice": "" },
         { "title": "שינה", "day": "Friday", "startTime": "11:00 PM", "endTime": "07:00 AM", "recurrence": "daily", "isRecurring": true, "isSleep": true, "hasAdvice": false, "aiAdvice": "" },
         { "title": "שינה", "day": "Saturday", "startTime": "11:00 PM", "endTime": "07:00 AM", "recurrence": "daily", "isRecurring": true, "isSleep": true, "hasAdvice": false, "aiAdvice": "" }
+      ]
+    }
+
+    Example 5 (Hebrew): Seamless text parsing — time + title without punctuation
+    User text: "חמש וחצי ספרים לעמי"
+    Expected JSON:
+    {
+      "reasoning": "המשתמש רוצה לקבוע אירוע בשם 'ספרים לעמי' בשעה 17:30. 'חמש וחצי' ללא ציון בוקר/ערב מתפרש כשעה 17:30 לפי חוקי ה-AM/PM (שעות נמוכות 1-7 ברירת מחדל אחה״צ). משך ברירת מחדל: שעה אחת, עד 18:30.",
+      "replyMessage": "קבעתי לך 'ספרים לעמי' להיום (יום חמישי) בשעה 17:30-18:30.",
+      "events": [
+        { "title": "ספרים לעמי", "day": "Thursday", "startTime": "05:30 PM", "endTime": "06:30 PM", "recurrence": "once", "isRecurring": false, "isSleep": false, "hasAdvice": false, "aiAdvice": "" }
+      ]
+    }
+
+    Example 6 (English): Seamless text parsing — time + title without punctuation
+    User text: "five thirty books for ami"
+    Expected JSON:
+    {
+      "reasoning": "The user wants to schedule an event called 'Books for Ami' at 17:30. 'five thirty' without AM/PM marker defaults to PM (low hours 1-7 default to afternoon/evening). Default duration: 1 hour, until 18:30.",
+      "replyMessage": "I've scheduled 'Books for Ami' for today (Thursday) at 05:30 PM - 06:30 PM.",
+      "events": [
+        { "title": "Books for Ami", "day": "Thursday", "startTime": "05:30 PM", "endTime": "06:30 PM", "recurrence": "once", "isRecurring": false, "isSleep": false, "hasAdvice": false, "aiAdvice": "" }
+      ]
+    }
+
+    Example 7 (Hebrew): Quarter to pattern
+    User text: "רבע לשישה פגישה עם דני"
+    Expected JSON:
+    {
+      "reasoning": "המשתמש רוצה לקבוע פגישה עם דני. 'רבע לשישה' = 17:45 (רבע לשש בערב, לפי חוקי ה-AM/PM). משך ברירת מחדל: שעה, עד 18:45.",
+      "replyMessage": "קבעתי לך פגישה עם דני להיום (יום חמישי) בשעה 17:45-18:45.",
+      "events": [
+        { "title": "פגישה עם דני", "day": "Thursday", "startTime": "05:45 PM", "endTime": "06:45 PM", "recurrence": "once", "isRecurring": false, "isSleep": false, "hasAdvice": false, "aiAdvice": "" }
+      ]
+    }
+
+    Example 8 (English): Quarter to pattern
+    User text: "quarter to six meeting with Danny"
+    Expected JSON:
+    {
+      "reasoning": "The user wants a meeting with Danny. 'quarter to six' = 5:45 PM (quarter to six in the evening, default PM for low hours). Default duration: 1 hour, until 6:45 PM.",
+      "replyMessage": "I've scheduled a meeting with Danny for today (Thursday) at 05:45 PM - 06:45 PM.",
+      "events": [
+        { "title": "Meeting with Danny", "day": "Thursday", "startTime": "05:45 PM", "endTime": "06:45 PM", "recurrence": "once", "isRecurring": false, "isSleep": false, "hasAdvice": false, "aiAdvice": "" }
       ]
     }
 
