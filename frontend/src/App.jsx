@@ -263,6 +263,24 @@ function App() {
     window.open(bookingLink, '_blank');
   };
 
+  // Fetch schedule from backend
+  const fetchSchedule = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/schedule`, { credentials: "include" });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.schedule) setSchedule(data.schedule);
+      }
+    } catch (err) {
+      console.error("Failed to fetch schedule:", err);
+    }
+  }, []);
+
+  // Save the current schedule state to the undo history stack
+  const saveScheduleState = useCallback(() => {
+    scheduleHistoryRef.current.push(JSON.parse(JSON.stringify(schedule)));
+  }, [schedule]);
+
   // Detect login=success from Google OAuth redirect
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -425,18 +443,6 @@ function App() {
     }
   }, [placeholderIndex, PLACEHOLDER_EXAMPLES.length]);
 
-  const fetchSchedule = useCallback(async () => {
-    try {
-      const res = await fetch(`${API_BASE}/api/schedule`, { credentials: "include" });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.schedule) setSchedule(data.schedule);
-      }
-    } catch (err) {
-      console.error("Failed to fetch schedule:", err);
-    }
-  }, []);
-
   useEffect(() => { fetchSchedule(); }, [fetchSchedule]);
 
   // Splash screen: fade out when schedule loads, but ensure minimum display duration
@@ -463,11 +469,6 @@ function App() {
     }, SPLASH_MIN_DURATION + 1200);
     return () => clearTimeout(timer);
   }, [splashDone]);
-
-  // Save the current schedule state to the undo history stack
-  const saveScheduleState = useCallback(() => {
-    scheduleHistoryRef.current.push(JSON.parse(JSON.stringify(schedule)));
-  }, [schedule]);
 
   const handleUndo = async () => {
     if (scheduleHistoryRef.current.length === 0) return;
