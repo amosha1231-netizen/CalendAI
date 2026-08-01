@@ -284,6 +284,10 @@ const translations = {
     profileLocationSaved: 'מיקום ברירת מחדל נשמר',
     noLocation: 'ללא מיקום',
 
+    // Guest Usage Limit
+    guestLimitTitle: 'אוהב את CalendAI? 🚀',
+    guestLimitDesc: 'הגעת ל-5 פעולות ניסיון בחינם. התחבר בקליק עם גוגל כדי לשמור את הלו"ז שלך ולמנוע אובדן נתונים!',
+
     // Smart Auth
     loginRequired: 'עליך להתחבר כדי לבצע פעולה זו',
     loginToSave: 'התחבר כדי לשמור',
@@ -616,6 +620,10 @@ const translations = {
     profileLocationDesc: 'Choose a default location for your events (optional)',
     profileLocationSaved: 'Default location saved',
     noLocation: 'No location',
+
+    // Guest Usage Limit
+    guestLimitTitle: 'Love CalendAI? 🚀',
+    guestLimitDesc: 'You\'ve reached 5 free trial actions. Log in with Google in one click to save your schedule and prevent data loss!',
 
     // Smart Auth
     loginRequired: 'You need to log in to perform this action',

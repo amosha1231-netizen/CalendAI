@@ -34,6 +34,11 @@ const LOCATION_LABELS = {
   losangeles: "Los Angeles"
 };
 
+// ── Guest Usage Limit Constants ──
+const GUEST_MAX_ACTIONS = 5;
+const GUEST_COUNT_KEY = 'calendai-guest-usage-count';
+const GUEST_DATA_KEY = 'calendai-guest-temp-data';
+
 function playNotificationSound() {
   try {
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -133,6 +138,14 @@ function App() {
   // Sidebar state
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
+  // ── Guest Usage Limit State ──
+  const [guestUsageCount, setGuestUsageCount] = useState(() => {
+    try {
+      return parseInt(localStorage.getItem(GUEST_COUNT_KEY) || '0', 10);
+    } catch { return 0; }
+  });
+  const [showGuestLimitModal, setShowGuestLimitModal] = useState(false);
+
   // Booking Mode State - use currentView to track which view is active
   const [currentView, setCurrentView] = useState(() => {
     const params = new URLSearchParams(window.location.search);
@@ -172,6 +185,68 @@ function App() {
   });
 
   const bookingLink = typeof window !== 'undefined' ? `${window.location.origin}${window.location.pathname}?book=1` : '';
+
+  // ── Guest Usage Counter Helpers ──
+  const incrementGuestUsage = useCallback(() => {
+    setGuestUsageCount(prev => {
+      const next = prev + 1;
+      try {
+        localStorage.setItem(GUEST_COUNT_KEY, String(next));
+      } catch (e) {}
+      return next;
+    });
+  }, []);
+
+  // Save guest-created data temporarily to localStorage
+  const saveGuestTempData = useCallback((actionType, data) => {
+    try {
+      const existing = JSON.parse(localStorage.getItem(GUEST_DATA_KEY) || '[]');
+      existing.push({ type: actionType, data, timestamp: Date.now() });
+      localStorage.setItem(GUEST_DATA_KEY, JSON.stringify(existing));
+    } catch (e) {}
+  }, []);
+
+  // Check if guest can perform an action: return true if allowed, false if blocked
+  const checkGuestActionLimit = useCallback(() => {
+    if (user) return true; // Logged-in users have no limit
+    if (guestUsageCount < GUEST_MAX_ACTIONS) return true;
+    // Show the limit modal
+    setShowGuestLimitModal(true);
+    return false;
+  }, [user, guestUsageCount]);
+
+  // Sync guest temp data to backend after login
+  const syncGuestDataToBackend = useCallback(async () => {
+    try {
+      const raw = localStorage.getItem(GUEST_DATA_KEY);
+      if (!raw) return;
+      const guestData = JSON.parse(raw);
+      if (!Array.isArray(guestData) || guestData.length === 0) return;
+
+      // For each saved action, replay it to the backend
+      for (const entry of guestData) {
+        if (entry.type === 'parse' && entry.data?.text) {
+          await fetch(`${API_BASE}/api/parse-schedule`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              text: entry.data.text,
+              recurrence: entry.data.recurrence || 'weekly',
+              location: entry.data.location || 'jerusalem'
+            }),
+            credentials: "include"
+          });
+        }
+      }
+
+      // Clear guest temp data after sync
+      localStorage.removeItem(GUEST_DATA_KEY);
+      localStorage.removeItem(GUEST_COUNT_KEY);
+      setGuestUsageCount(0);
+    } catch (e) {
+      console.error('Failed to sync guest data:', e);
+    }
+  }, []);
 
   // Smart Auth: require login for save operations
   const handleLoginRequired = useCallback((action) => {
@@ -323,26 +398,32 @@ function App() {
     if (params.get('login') === 'success' || params.get('auth') === 'success') {
       // 1. Immediately clear the URL parameters
       window.history.replaceState({}, document.title, window.location.pathname);
-      // 2. Fetch user data from backend
+      // 2. Force view to dashboard (prevents any race condition with booking view)
+      setCurrentView('dashboard');
+      // 3. Fetch user data from backend
       fetch(`${API_BASE}/api/auth/me`, { credentials: "include" })
         .then(res => res.json())
         .then(data => {
           if (data.user) {
             setUser(data.user);
             setShowLoginPrompt(false);
-            // 3. Save user data to localStorage for persistence
+            setShowGuestLimitModal(false);
+            // 4. Save user data to localStorage for persistence
             try {
               localStorage.setItem('calendai-user', JSON.stringify(data.user));
             } catch (e) {}
+            // 5. Sync guest temp data to backend
+            syncGuestDataToBackend();
           }
         })
         .catch(() => {});
     }
-  }, []);
+  }, [syncGuestDataToBackend]);
 
   // Handle booking confirmation
   const handleBookingConfirm = useCallback(async (bookingData) => {
     if (handleLoginRequired('booking')) return;
+    if (!checkGuestActionLimit()) return;
     saveScheduleState();
     const { day, slots, guestName, duration } = bookingData;
     try {
@@ -378,6 +459,12 @@ function App() {
       await fetchSchedule();
       setSuccess(t.bookingConfirmation);
       
+      // Track guest usage
+      if (!user) {
+        incrementGuestUsage();
+        saveGuestTempData('booking', { day, slots, guestName, duration, location: selectedLocation });
+      }
+
       // Show booking confirmation toast notification
       const toastId = Date.now();
       const meetingTime = firstSlotTime || '';
@@ -395,7 +482,7 @@ function App() {
     } catch (err) {
       setError(err.message);
     }
-  }, [schedule, selectedLocation, fetchSchedule, t, handleLoginRequired]);
+  }, [schedule, selectedLocation, fetchSchedule, t, handleLoginRequired, checkGuestActionLimit, user, incrementGuestUsage, saveGuestTempData]);
 
   // Toggle language function
   const toggleLanguage = () => {
@@ -567,6 +654,7 @@ function App() {
   const handleParse = async () => {
     if (!inputText.trim()) return;
     if (handleLoginRequired('parse')) return;
+    if (!checkGuestActionLimit()) return;
     saveScheduleState();
     setLoading(true);
     setError("");
@@ -595,6 +683,12 @@ function App() {
       await fetchSchedule();
       setSuccess(data.replyMessage || `${t.successAdded} ${data.events?.length || 0} ${t.successEvents}`);
       setInputText("");
+
+      // Track guest usage
+      if (!user) {
+        incrementGuestUsage();
+        saveGuestTempData('parse', { text: inputText, recurrence, location: selectedLocation });
+      }
     } catch (err) {
       setError(err.message);
     } finally {
@@ -998,6 +1092,7 @@ function App() {
               </button>
             </div>
           </div>
+
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {orderedDayKeys.map(dayKey => {
               if (dayKey === "Today" && (!schedule[dayKey] || schedule[dayKey].length === 0)) return null;
@@ -1380,6 +1475,26 @@ function App() {
               {t.loginWithGoogle}
             </button>
             <button onClick={() => setShowLoginPrompt(false)} className="w-full mt-3 text-sm text-slate-400 hover:text-slate-600 py-2 transition">
+              {t.cancel}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Guest Usage Limit Modal ── */}
+      {showGuestLimitModal && !user && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-[9999]" onClick={() => setShowGuestLimitModal(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center" onClick={e => e.stopPropagation()}>
+            <div className="w-16 h-16 bg-gradient-to-br from-amber-400 to-orange-500 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
+              <Sparkles className="w-8 h-8 text-white" />
+            </div>
+            <h3 className="text-lg font-bold text-slate-800 mb-2">{t.guestLimitTitle}</h3>
+            <p className="text-sm text-slate-500 mb-6">{t.guestLimitDesc}</p>
+            <button onClick={handleLogin}
+              className="w-full px-4 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition shadow-lg flex items-center justify-center gap-2">
+              <LogIn className="w-4 h-4" /> {t.loginWithGoogle}
+            </button>
+            <button onClick={() => setShowGuestLimitModal(false)} className="w-full mt-3 text-sm text-slate-400 hover:text-slate-600 py-2 transition">
               {t.cancel}
             </button>
           </div>
