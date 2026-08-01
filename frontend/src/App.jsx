@@ -149,10 +149,11 @@ function App() {
   // Booking Mode State - use currentView to track which view is active
   const [currentView, setCurrentView] = useState(() => {
     const params = new URLSearchParams(window.location.search);
+    // If auth params are present, we want dashboard (will be cleared by useEffect)
+    // IMPORTANT: Check auth FIRST so login redirect always shows dashboard, never booking
+    if (params.get('login') === 'success' || params.get('auth') === 'success') return 'dashboard';
     // If ?book= is present, show booking. Otherwise show dashboard.
     if (params.has('book')) return 'booking';
-    // If auth params are present, we want dashboard (will be cleared by useEffect)
-    if (params.get('login') === 'success' || params.get('auth') === 'success') return 'dashboard';
     return 'dashboard';
   });
   const isBookingOpen = currentView === 'booking';
@@ -396,7 +397,7 @@ function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('login') === 'success' || params.get('auth') === 'success') {
-      // 1. Immediately clear the URL parameters
+      // 1. Immediately clear the URL parameters (removes both ?auth=success and any ?book=)
       window.history.replaceState({}, document.title, window.location.pathname);
       // 2. Force view to dashboard (prevents any race condition with booking view)
       setCurrentView('dashboard');
