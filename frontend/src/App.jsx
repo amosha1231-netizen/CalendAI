@@ -146,18 +146,13 @@ function App() {
   });
   const [showGuestLimitModal, setShowGuestLimitModal] = useState(false);
 
-  // Booking Mode State - use currentView to track which view is active
+  // Booking Mode State - DISABLED: Booking feature is not needed currently
+  // Always show dashboard. The ?book= parameter is ignored.
   const [currentView, setCurrentView] = useState(() => {
-    const params = new URLSearchParams(window.location.search);
-    // If auth params are present, we want dashboard (will be cleared by useEffect)
-    // IMPORTANT: Check auth FIRST so login redirect always shows dashboard, never booking
-    if (params.get('login') === 'success' || params.get('auth') === 'success') return 'dashboard';
-    // If ?book= is present, show booking. Otherwise show dashboard.
-    if (params.has('book')) return 'booking';
     return 'dashboard';
   });
-  const isBookingOpen = currentView === 'booking';
-  const setIsBookingOpen = (val) => setCurrentView(val ? 'booking' : 'dashboard');
+  const isBookingOpen = false;
+  const setIsBookingOpen = () => {};
 
   // PWA Install State
   const [installPrompt, setInstallPrompt] = useState(null);
