@@ -1048,18 +1048,17 @@ function App() {
     return dayEvents.filter(e => e.location === locationFilter);
   };
 
-  // ── Force currentView to 'dashboard' if user is logged in AND no explicit ?book=true/?book=1 ──
+  // ── Force currentView to 'dashboard' for ALL users unless ?book=true or ?book=1 is explicitly in the URL ──
   // This prevents any background fetch/effect from accidentally switching to booking view
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const hasExplicitBook = params.get('book') === 'true' || params.get('book') === '1';
-    const isLoggedIn = !!user || localStorage.getItem('calendai-isLoggedIn') === 'true';
 
-    // If user is logged in and no explicit ?book=1 in the URL right now, must show dashboard
-    if (isLoggedIn && !hasExplicitBook && currentView !== 'dashboard') {
+    // If no explicit ?book=1 in the URL right now, everyone (guests and logged-in) stays on dashboard
+    if (!hasExplicitBook && currentView !== 'dashboard') {
       setCurrentView('dashboard');
     }
-  }, [currentView, user]);
+  }, [currentView]);
 
   // If a dynamic booking ID is in the URL, show the guest booking view
   if (guestBookingId) {
