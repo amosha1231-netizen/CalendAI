@@ -2198,7 +2198,188 @@ app.post('/api/booking/ai-find-slot', aiLimiter, async (req, res) => {
 });
 
 // ──────────────────────────────────────────────
-// 9d. Expiration & Extension Notification
+// 9d. Dynamic Booking Link Endpoints
+// ──────────────────────────────────────────────
+
+/**
+ * POST /api/booking/create-link
+ * Creates a dynamic booking link with specific time slots and duration.
+ * Returns a unique ID that can be used in the URL for guest booking.
+ */
+app.post('/api/booking/create-link', (req, res) => {
+  try {
+    const { subject, duration, slots, day, hostName } = req.body;
+    if (!slots || !Array.isArray(slots) || slots.length === 0 || !duration || !day) {
+      return res.status(400).json({ error: 'slots, duration, and day are required.' });
+    }
+
+    const userId = getUserId(req);
+    const bookingId = 'dyn_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+
+    const bookingData = {
+      id: bookingId,
+      hostId: userId,
+      hostName: hostName || 'Host',
+      subject: subject || 'Meeting',
+      duration,
+      day,
+      slots: slots.map(s => ({ hour: s.hour, minute: s.minute, booked: false })),
+      createdAt: new Date().toISOString(),
+      status: 'active'
+    };
+
+    const bookingDir = path.join(DATA_DIR, 'bookings');
+    if (!fs.existsSync(bookingDir)) {
+      fs.mkdirSync(bookingDir, { recursive: true });
+    }
+
+    const bookingFile = path.join(bookingDir, `${bookingId}.json`);
+    fs.writeFileSync(bookingFile, JSON.stringify(bookingData, null, 2));
+
+    const link = `${CLIENT_URL}/?book=${bookingId}`;
+
+    res.json({ ok: true, bookingId, link, booking: bookingData });
+  } catch (err) {
+    console.error('Create booking link error:', err);
+    res.status(500).json({ error: 'Failed to create booking link.' });
+  }
+});
+
+/**
+ * GET /api/booking/:id
+ * Returns the booking data for a given dynamic booking ID.
+ * Used by the guest view to display available slots.
+ */
+app.get('/api/booking/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const bookingFile = path.join(DATA_DIR, 'bookings', `${id}.json`);
+
+    if (!fs.existsSync(bookingFile)) {
+      return res.status(404).json({ error: 'Booking not found.' });
+    }
+
+    const booking = JSON.parse(fs.readFileSync(bookingFile, 'utf-8'));
+
+    if (booking.status !== 'active') {
+      return res.status(410).json({ error: 'This booking link has expired.', booking });
+    }
+
+    // Return available slots only (not booked)
+    const availableSlots = booking.slots.filter(s => !s.booked);
+
+    res.json({
+      ok: true,
+      booking: {
+        id: booking.id,
+        hostName: booking.hostName,
+        subject: booking.subject,
+        duration: booking.duration,
+        day: booking.day,
+        createdAt: booking.createdAt
+      },
+      slots: availableSlots
+    });
+  } catch (err) {
+    console.error('Get booking error:', err);
+    res.status(500).json({ error: 'Failed to get booking.' });
+  }
+});
+
+/**
+ * POST /api/booking/:id/confirm
+ * Confirms a booking by a guest: marks the selected slot as booked,
+ * adds the event to the host's schedule, and returns confirmation.
+ */
+app.post('/api/booking/:id/confirm', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { slotIndex, guestName } = req.body;
+
+    if (slotIndex === undefined || !guestName) {
+      return res.status(400).json({ error: 'slotIndex and guestName are required.' });
+    }
+
+    const bookingFile = path.join(DATA_DIR, 'bookings', `${id}.json`);
+
+    if (!fs.existsSync(bookingFile)) {
+      return res.status(404).json({ error: 'Booking not found.' });
+    }
+
+    const booking = JSON.parse(fs.readFileSync(bookingFile, 'utf-8'));
+
+    if (booking.status !== 'active') {
+      return res.status(410).json({ error: 'This booking link has expired.' });
+    }
+
+    if (slotIndex < 0 || slotIndex >= booking.slots.length) {
+      return res.status(400).json({ error: 'Invalid slot index.' });
+    }
+
+    const slot = booking.slots[slotIndex];
+    if (slot.booked) {
+      return res.status(409).json({ error: 'This slot is already booked.' });
+    }
+
+    // Mark slot as booked
+    slot.booked = true;
+    slot.bookedBy = guestName;
+    slot.bookedAt = new Date().toISOString();
+    booking.status = 'completed';
+
+    // Save booking update
+    fs.writeFileSync(bookingFile, JSON.stringify(booking, null, 2));
+
+    // Add the event to the host's schedule
+    const hostSchedule = getUserSchedule(booking.hostId);
+    const dayName = booking.day;
+
+    const startHour = slot.hour;
+    const startMin = slot.minute;
+    const endMinTotal = startHour * 60 + startMin + booking.duration;
+    const endHour = Math.floor(endMinTotal / 60);
+    const endMin = endMinTotal % 60;
+
+    const formatTime12 = (h, m) => {
+      const ampm = h >= 12 ? 'PM' : 'AM';
+      const h12 = h % 12 || 12;
+      return `${String(h12).padStart(2, '0')}:${String(m).padStart(2, '0')} ${ampm}`;
+    };
+
+    const newEvent = {
+      title: `${booking.subject} - ${guestName}`,
+      day: dayName,
+      startTime: formatTime12(startHour, startMin),
+      endTime: formatTime12(endHour, endMin),
+      recurrence: 'once',
+      location: DEFAULT_LOCATION_ID,
+      guestName: guestName,
+      bookingId: id
+    };
+
+    if (hostSchedule[dayName]) {
+      hostSchedule[dayName].push(newEvent);
+    } else {
+      hostSchedule['Today'].push(newEvent);
+    }
+
+    syncTodayWithCurrentDay(hostSchedule);
+    saveSchedulesNow();
+
+    res.json({
+      ok: true,
+      message: 'Booking confirmed successfully!',
+      event: newEvent,
+      booking
+    });
+  } catch (err) {
+    console.error('Confirm booking error:', err);
+    res.status(500).json({ error: 'Failed to confirm booking.' });
+  }
+});
+
+// ──────────────────────────────────────────────
+// 9e. Expiration & Extension Notification
 // ──────────────────────────────────────────────
 
 /**

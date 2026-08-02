@@ -5,6 +5,8 @@ import LocationSelector from "./components/LocationSelector";
 import Privacy from "./components/Privacy";
 import ErrorBoundary from "./components/ErrorBoundary";
 import SidebarDrawer from "./components/SidebarDrawer";
+import MeetingWizard from "./components/MeetingWizard";
+import GuestBookingView from "./components/GuestBookingView";
 import translations from "./i18n";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
@@ -145,9 +147,13 @@ function App() {
   });
   const [showGuestLimitModal, setShowGuestLimitModal] = useState(false);
 
+  // Meeting Wizard State
+  const [showWizard, setShowWizard] = useState(false);
+
   // ── View State ──
   // 'dashboard' = default for ALL users (guests can try the app, up to 10 actions)
-  // 'booking'   = ONLY if ?book=true is explicitly in the URL
+  // 'booking'   = ONLY if ?book=true or ?book=dyn_xxx is explicitly in the URL
+  // 'guest-booking' = when a dynamic booking ID is in the URL
   const [currentView, setCurrentView] = useState(() => {
     const params = new URLSearchParams(window.location.search);
     // 1. If auth=success is in URL, force dashboard and save flag
@@ -162,6 +168,15 @@ function App() {
     }
     // 3. Default: show dashboard for everyone (guests can try the app freely)
     return 'dashboard';
+  });
+  const [guestBookingId, setGuestBookingId] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    const bookParam = params.get('book');
+    // Check if it's a dynamic booking ID (starts with dyn_)
+    if (bookParam && bookParam !== 'true' && bookParam !== '1') {
+      return bookParam;
+    }
+    return null;
   });
   const [authLoading, setAuthLoading] = useState(() => {
     // Only show loading if we think we're logged in but don't have user yet
@@ -997,6 +1012,22 @@ function App() {
     return dayEvents.filter(e => e.location === locationFilter);
   };
 
+  // If a dynamic booking ID is in the URL, show the guest booking view
+  if (guestBookingId) {
+    return (
+      <GuestBookingView
+        bookingId={guestBookingId}
+        lang={lang}
+        t={t}
+        onClose={() => {
+          window.history.replaceState({}, document.title, window.location.pathname);
+          setGuestBookingId(null);
+          setCurrentView('dashboard');
+        }}
+      />
+    );
+  }
+
   if (showPrivacy) return <Privacy onBack={() => setShowPrivacy(false)} />;
 
   const isRTL = lang === 'he';
@@ -1057,10 +1088,10 @@ function App() {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          {/* Share Booking Link Button */}
-          <button onClick={() => setShowShareModal(true)}
-            className="flex items-center gap-1 bg-emerald-50 border border-emerald-300 text-emerald-700 px-3 py-2 rounded-lg hover:bg-emerald-100 transition text-sm font-medium">
-            <Share2 className="w-4 h-4" /> {t.shareBookingLink}
+          {/* Meeting Wizard Button */}
+          <button onClick={() => setShowWizard(true)}
+            className="flex items-center gap-1 bg-gradient-to-r from-blue-500 to-indigo-600 border border-blue-400 text-white px-4 py-2 rounded-lg hover:from-blue-600 hover:to-indigo-700 transition text-sm font-medium shadow-sm">
+            <Calendar className="w-4 h-4" /> {t.wizardTitle}
           </button>
           {/* Language Toggle Button */}
           <button onClick={toggleLanguage}
@@ -1595,6 +1626,16 @@ function App() {
             </button>
           </div>
         </div>
+      )}
+
+      {/* Meeting Wizard Modal */}
+      {showWizard && (
+        <MeetingWizard
+          schedule={schedule}
+          lang={lang}
+          t={t}
+          onClose={() => setShowWizard(false)}
+        />
       )}
 
       {/* Sidebar Drawer */}
