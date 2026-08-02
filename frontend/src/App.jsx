@@ -430,6 +430,19 @@ function App() {
     try { localStorage.removeItem('calendai-jwt'); } catch (e) {}
   };
 
+  // ── Block Booking for logged-in users & clean URL on auth redirect ──
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const isAuthRedirect = params.get('login') === 'success' || params.get('auth') === 'success';
+    
+    if (isAuthRedirect) {
+      // ניקוי מוחלט של כל הפרמטרים בשורת הכתובת
+      window.history.replaceState({}, document.title, window.location.pathname);
+      setCurrentView('dashboard');
+      try { localStorage.setItem('calendai-isLoggedIn', 'true'); } catch (e) {}
+    }
+  }, []);
+
   // Detect login=success from Google OAuth redirect
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -1035,15 +1048,18 @@ function App() {
     return dayEvents.filter(e => e.location === locationFilter);
   };
 
-  // ── Force currentView to 'dashboard' if the URL does NOT have ?book=true or ?book=1 ──
+  // ── Force currentView to 'dashboard' if user is logged in AND no explicit ?book=true/?book=1 ──
   // This prevents any background fetch/effect from accidentally switching to booking view
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const hasBook = params.get('book') === 'true' || params.get('book') === '1';
-    if (!hasBook && currentView !== 'dashboard') {
+    const hasExplicitBook = params.get('book') === 'true' || params.get('book') === '1';
+    const isLoggedIn = !!user || localStorage.getItem('calendai-isLoggedIn') === 'true';
+
+    // If user is logged in and no explicit ?book=1 in the URL right now, must show dashboard
+    if (isLoggedIn && !hasExplicitBook && currentView !== 'dashboard') {
       setCurrentView('dashboard');
     }
-  }, [currentView]);
+  }, [currentView, user]);
 
   // If a dynamic booking ID is in the URL, show the guest booking view
   if (guestBookingId) {
