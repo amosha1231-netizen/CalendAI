@@ -145,12 +145,13 @@ function App() {
   });
   const [showGuestLimitModal, setShowGuestLimitModal] = useState(false);
 
-  // View State: 'dashboard' | 'login' | 'booking'
-  // Booking is only shown when ?book=true is explicitly in the URL.
-  // Otherwise: logged-in users see dashboard, guests see login view.
+  // ── View State ──
+  // 'landing'   = unauthenticated user (no ?auth=success, no localStorage flag)
+  // 'dashboard' = logged-in user (or ?auth=success in URL, or localStorage flag)
+  // 'booking'   = ONLY if ?book=true is explicitly in the URL
   const [currentView, setCurrentView] = useState(() => {
     const params = new URLSearchParams(window.location.search);
-    // 1. If auth=success is in URL, force dashboard and save to localStorage
+    // 1. If auth=success is in URL, force dashboard and save flag
     if (params.get('login') === 'success' || params.get('auth') === 'success') {
       try { localStorage.setItem('calendai-isLoggedIn', 'true'); } catch (e) {}
       window.history.replaceState({}, document.title, window.location.pathname);
@@ -160,17 +161,19 @@ function App() {
     if (params.get('book') === 'true') {
       return 'booking';
     }
-    // 3. If user was previously logged in (localStorage flag), show dashboard
+    // 3. If localStorage says logged-in, show dashboard
     try {
       if (localStorage.getItem('calendai-isLoggedIn') === 'true') {
         return 'dashboard';
       }
     } catch (e) {}
-    // 4. Default: show the login view
-    return 'login';
+    // 4. Default: show the landing page (no redirect to Google)
+    return 'landing';
   });
-  const isBookingOpen = currentView === 'booking';
-  const setIsBookingOpen = (val) => setCurrentView(val ? 'booking' : 'dashboard');
+  const [authLoading, setAuthLoading] = useState(() => {
+    // Only show loading if we think we're logged in but don't have user yet
+    try { return localStorage.getItem('calendai-isLoggedIn') === 'true'; } catch { return false; }
+  });
 
   // PWA Install State
   const [installPrompt, setInstallPrompt] = useState(null);
@@ -968,8 +971,9 @@ function App() {
   const isRTL = lang === 'he';
   const SUGGESTION_CHIPS = t.suggestionChips;
 
-  // LOGIN VIEW: shown when user is not logged in and no ?book=true param
-  if (currentView === 'login') {
+  // LANDING VIEW: shown when user is not logged in and no ?book=true param
+  // No automatic redirect to Google - user must click the button.
+  if (currentView === 'landing') {
     return (
       <>
         {!splashDone && (
