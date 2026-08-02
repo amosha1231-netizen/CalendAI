@@ -524,43 +524,65 @@ function App() {
     try {
       let firstSlotTime = '';
       for (const slot of slots) {
+        const totalStartMinutes = slot.hour * 60 + slot.minute;
+        const totalEndMinutes = totalStartMinutes + duration;
+        
+        const endHour24 = Math.floor(totalEndMinutes / 60) % 24;
+        const endMin = totalEndMinutes % 60;
+        
         const startH12 = slot.hour % 12 || 12;
-        const ampm = slot.hour >= 12 ? 'PM' : 'AM';
-        const endHour = slot.hour + Math.ceil(duration / 60);
-        const endMinute = (slot.minute + duration) % 60;
-        const endH12 = endHour % 12 || 12;
-        const endAmpm = endHour >= 12 ? 'PM' : 'AM';
+        const startAmpm = slot.hour >= 12 ? 'PM' : 'AM';
+        
+        const endH12 = endHour24 % 12 || 12;
+        const endAmpm = endHour24 >= 12 ? 'PM' : 'AM';
 
-        const startTime = `${String(startH12).padStart(2, '0')}:${String(slot.minute).padStart(2, '0')} ${ampm}`;
-        const endTime = `${String(endH12).padStart(2, '0')}:${String(endMinute).padStart(2, '0')} ${endAmpm}`;
+        const startTime = `${String(startH12).padStart(2, '0')}:${String(slot.minute).padStart(2, '0')} ${startAmpm}`;
+        const endTime = `${String(endH12).padStart(2, '0')}:${String(endMin).padStart(2, '0')} ${endAmpm}`;
 
         if (!firstSlotTime) firstSlotTime = startTime;
 
-        const res = await fetch(`${API_BASE}/api/schedule/add-to-free-slot`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            day: day,
-            startTime,
-            endTime,
-            title: `פגישה עם ${guestName}`,
-            recurrence: 'once',
-            location: selectedLocation
-          }),
-          credentials: "include"
-        });
-        if (!res.ok) throw new Error('Failed to book slot');
+        if (user) {
+          const res = await fetch(`${API_BASE}/api/schedule/add-to-free-slot`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              day: day,
+              startTime,
+              endTime,
+              title: `פגישה עם ${guestName}`,
+              recurrence: 'once',
+              location: selectedLocation
+            }),
+            credentials: "include"
+          });
+          if (!res.ok) throw new Error('Failed to book slot');
+        } else {
+          setSchedule(prev => {
+            const updated = { ...prev };
+            const dayEvents = updated[day] || [];
+            updated[day] = [...dayEvents, {
+              title: `פגישה עם ${guestName}`,
+              startTime,
+              endTime,
+              recurrence: 'once',
+              location: selectedLocation
+            }];
+            return updated;
+          });
+        }
       }
-      await fetchSchedule();
+
+      if (user) {
+        await fetchSchedule();
+      }
+
       setSuccess(t.bookingConfirmation);
       
-      // Track guest usage
       if (!user) {
         incrementGuestUsage();
         saveGuestTempData('booking', { day, slots, guestName, duration, location: selectedLocation });
       }
 
-      // Show booking confirmation toast notification
       const toastId = Date.now();
       const meetingTime = firstSlotTime || '';
       const toastMessage = t.bookingToastMessage
