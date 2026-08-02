@@ -1321,8 +1321,22 @@ app.get('/api/auth/google',
 app.get('/api/auth/google/callback',
   passport.authenticate('google', { failureRedirect: '/' }),
   (req, res) => {
-    const baseUrl = process.env.FRONTEND_URL || CLIENT_URL;
-    res.redirect(`${baseUrl}/?auth=success`);
+    // 1. מנקה נתיבי חזרה ישנים שנשמרו ב-Session
+    if (req.session) {
+      delete req.session.returnTo;
+    }
+
+    // 2. חילוץ הכתובת וניקוי מוחלט מכל פרמטר קודם (?book וכד')
+    let rawUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || 'https://calendai.onrender.com';
+    try {
+      const parsed = new URL(rawUrl);
+      rawUrl = parsed.origin; // מחזיר אך ורק https://calendai.onrender.com
+    } catch (e) {
+      rawUrl = rawUrl.split('?')[0].replace(/\/+$/, '');
+    }
+
+    // 3. הפנייה נקייה ל-Dashboard
+    res.redirect(`${rawUrl}/?auth=success`);
   }
 );
 
