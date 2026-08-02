@@ -145,21 +145,32 @@ function App() {
   });
   const [showGuestLimitModal, setShowGuestLimitModal] = useState(false);
 
-  // Booking Mode State - DISABLED: Booking feature is not needed currently
-  // Always show dashboard. The ?book= parameter is ignored.
-  // Check localStorage for logged-in state to survive server wake-up delays
+  // View State: 'dashboard' | 'login' | 'booking'
+  // Booking is only shown when ?book=true is explicitly in the URL.
+  // Otherwise: logged-in users see dashboard, guests see login view.
   const [currentView, setCurrentView] = useState(() => {
-    // If auth=success is in URL, immediately force dashboard and save to localStorage
     const params = new URLSearchParams(window.location.search);
+    // 1. If auth=success is in URL, force dashboard and save to localStorage
     if (params.get('login') === 'success' || params.get('auth') === 'success') {
       try { localStorage.setItem('calendai-isLoggedIn', 'true'); } catch (e) {}
       window.history.replaceState({}, document.title, window.location.pathname);
       return 'dashboard';
     }
-    return 'dashboard';
+    // 2. Only show booking if ?book=true is explicitly present
+    if (params.get('book') === 'true') {
+      return 'booking';
+    }
+    // 3. If user was previously logged in (localStorage flag), show dashboard
+    try {
+      if (localStorage.getItem('calendai-isLoggedIn') === 'true') {
+        return 'dashboard';
+      }
+    } catch (e) {}
+    // 4. Default: show the login view
+    return 'login';
   });
-  const isBookingOpen = false;
-  const setIsBookingOpen = () => {};
+  const isBookingOpen = currentView === 'booking';
+  const setIsBookingOpen = (val) => setCurrentView(val ? 'booking' : 'dashboard');
 
   // PWA Install State
   const [installPrompt, setInstallPrompt] = useState(null);
@@ -956,6 +967,48 @@ function App() {
 
   const isRTL = lang === 'he';
   const SUGGESTION_CHIPS = t.suggestionChips;
+
+  // LOGIN VIEW: shown when user is not logged in and no ?book=true param
+  if (currentView === 'login') {
+    return (
+      <>
+        {!splashDone && (
+          <div className={`splash-screen${splashFading ? ' fade-out' : ''}`} dir="ltr">
+            <div className="splash-logo-container">
+              <div className="splash-logo-ring" />
+              <div className="splash-logo-ring" />
+              <CalendarCheck className="splash-logo-icon" />
+            </div>
+            <h1 className="splash-title">CalendAI</h1>
+            <p className="splash-subtitle">{t.splashSubtitle}</p>
+            <div className="splash-dots">
+              <div className="splash-dot" />
+              <div className="splash-dot" />
+              <div className="splash-dot" />
+            </div>
+            <span className="splash-version">{t.splashVersion}</span>
+          </div>
+        )}
+        <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 flex items-center justify-center p-4">
+          <div className="max-w-md w-full text-center">
+            <div className="mb-8">
+              <div className="flex items-center justify-center gap-3 mb-4">
+                <Calendar className="w-12 h-12 text-blue-600" />
+                <h1 className="text-4xl font-bold text-slate-900">CalendAI</h1>
+              </div>
+              <p className="text-lg text-slate-600" dir={isRTL ? 'rtl' : 'ltr'}>{t.tagline}</p>
+            </div>
+            <button onClick={handleLogin}
+              className="flex items-center justify-center gap-3 bg-white border-2 border-slate-200 text-slate-700 px-8 py-4 rounded-2xl hover:bg-slate-50 hover:border-blue-300 hover:shadow-lg transition-all duration-200 text-lg font-medium w-full shadow-sm">
+              <LogIn className="w-6 h-6" />
+              {t.loginWithGoogle}
+            </button>
+            <p className="mt-6 text-sm text-slate-400">{t.splashVersion}</p>
+          </div>
+        </div>
+      </>
+    );
+  }
 
   return (
     <>
