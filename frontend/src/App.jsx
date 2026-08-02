@@ -15,9 +15,9 @@ const RECURRENCE_OPTIONS = (lang) => [
   { value: "daily", label: translations[lang].recurrenceDaily },
   { value: "weekly", label: translations[lang].recurrenceWeekly },
   { value: "monthly", label: translations[lang].recurrenceMonthly },
-  { value: "yearly", label: translations[lang].recurrenceYearly },
-  { value: "forever", label: translations[lang].recurrenceForever }
+  { value: "yearly", label: translations[lang].recurrenceYearly }
 ];
+// "forever" is now the default behavior (no end date / no UNTIL in RRULE)
 
 const REMINDER_MINUTES_OPTIONS = (lang) => [
   { value: 0, label: translations[lang].reminderNone },
@@ -35,7 +35,7 @@ const LOCATION_LABELS = {
 };
 
 // ── Guest Usage Limit Constants ──
-const GUEST_MAX_ACTIONS = 5;
+const GUEST_MAX_ACTIONS = 10;
 const GUEST_COUNT_KEY = 'calendai-guest-usage-count';
 const GUEST_DATA_KEY = 'calendai-guest-temp-data';
 
@@ -148,7 +148,15 @@ function App() {
 
   // Booking Mode State - DISABLED: Booking feature is not needed currently
   // Always show dashboard. The ?book= parameter is ignored.
+  // Check localStorage for logged-in state to survive server wake-up delays
   const [currentView, setCurrentView] = useState(() => {
+    // If auth=success is in URL, immediately force dashboard and save to localStorage
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('login') === 'success' || params.get('auth') === 'success') {
+      try { localStorage.setItem('calendai-isLoggedIn', 'true'); } catch (e) {}
+      window.history.replaceState({}, document.title, window.location.pathname);
+      return 'dashboard';
+    }
     return 'dashboard';
   });
   const isBookingOpen = false;
@@ -396,25 +404,57 @@ function App() {
       window.history.replaceState({}, document.title, window.location.pathname);
       // 2. Force view to dashboard (prevents any race condition with booking view)
       setCurrentView('dashboard');
-      // 3. Fetch user data from backend
-      fetch(`${API_BASE}/api/auth/me`, { credentials: "include" })
-        .then(res => res.json())
-        .then(data => {
-          if (data.user) {
-            setUser(data.user);
-            setShowLoginPrompt(false);
-            setShowGuestLimitModal(false);
-            // 4. Save user data to localStorage for persistence
-            try {
-              localStorage.setItem('calendai-user', JSON.stringify(data.user));
-            } catch (e) {}
-            // 5. Sync guest temp data to backend
-            syncGuestDataToBackend();
-          }
-        })
-        .catch(() => {});
+      // 3. Mark as logged-in in localStorage so the UI stays on Dashboard
+      //    even if the Render server is still waking up.
+      try {
+        localStorage.setItem('calendai-isLoggedIn', 'true');
+      } catch (e) {}
+      // 4. Fetch user data from backend with retry (Render server may be waking up)
+      const fetchUserWithRetry = (attempt = 0) => {
+        fetch(`${API_BASE}/api/auth/me`, { credentials: "include" })
+          .then(res => res.json())
+          .then(data => {
+            if (data.user) {
+              setUser(data.user);
+              setShowLoginPrompt(false);
+              setShowGuestLimitModal(false);
+              // 5. Save user data to localStorage for persistence
+              try {
+                localStorage.setItem('calendai-user', JSON.stringify(data.user));
+                localStorage.setItem('calendai-isLoggedIn', 'true');
+              } catch (e) {}
+              // 6. Sync guest temp data to backend
+              syncGuestDataToBackend();
+            } else if (attempt < 3) {
+              // Retry after 2s, 4s, 8s if the server is still waking up
+              setTimeout(() => fetchUserWithRetry(attempt + 1), 2000 * (attempt + 1));
+            }
+          })
+          .catch(() => {
+            if (attempt < 3) {
+              // Retry on network errors too (server waking up)
+              setTimeout(() => fetchUserWithRetry(attempt + 1), 2000 * (attempt + 1));
+            }
+          });
+      };
+      fetchUserWithRetry();
     }
   }, [syncGuestDataToBackend]);
+  // On mount: if localStorage says we were logged in, also try to restore the user
+  useEffect(() => {
+    let cancelled = false;
+    const tryRestoreUser = async () => {
+      try {
+        if (localStorage.getItem('calendai-isLoggedIn') === 'true') {
+          const res = await fetch(`${API_BASE}/api/auth/me`, { credentials: "include" });
+          const data = await res.json();
+          if (data.user && !cancelled) setUser(data.user);
+        }
+      } catch (e) {}
+    };
+    tryRestoreUser();
+    return () => { cancelled = true; };
+  }, []);
 
   // Handle booking confirmation
   const handleBookingConfirm = useCallback(async (bookingData) => {
@@ -699,6 +739,11 @@ function App() {
       await fetch(`${API_BASE}/api/auth/logout`, { method: "POST", credentials: "include" });
       setUser(null);
       setSchedule({ Sunday: [], Monday: [], Tuesday: [], Wednesday: [], Thursday: [], Friday: [], Saturday: [], Today: [] });
+      // Clear the logged-in flag from localStorage
+      try {
+        localStorage.removeItem('calendai-isLoggedIn');
+        localStorage.removeItem('calendai-user');
+      } catch (e) {}
     } catch (err) { console.error(err); }
   };
 
@@ -1275,6 +1320,33 @@ function App() {
                   className="w-full px-3 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                   {RECURRENCE_OPTIONS(lang).map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
                 </select>
+                {/* End Date Selector - Default: Never Ends ("forever") */}
+                <div className="mt-2">
+                  <label className="block text-xs font-medium text-slate-500 mb-1">{t.recurrenceEndLabel || 'Ends'}</label>
+                  <select
+                    value={editModalData.event.recurrenceEndType || 'never'}
+                    onChange={e => {
+                      const val = e.target.value;
+                      handleEditInputChange('recurrenceEndType', val);
+                      // If "never", remove any endDate; if "date", keep existing endDate
+                      if (val === 'never') {
+                        handleEditInputChange('recurrenceEndDate', '');
+                      }
+                    }}
+                    className="w-full px-3 py-2 border rounded-lg text-sm text-slate-800 bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  >
+                    <option value="never">{t.recurrenceNeverEnds || 'Never Ends'}</option>
+                    <option value="date">{t.recurrenceEndsOnDate || 'Ends on date...'}</option>
+                  </select>
+                  {editModalData.event.recurrenceEndType === 'date' && (
+                    <input
+                      type="date"
+                      value={editModalData.event.recurrenceEndDate || ''}
+                      onChange={e => handleEditInputChange('recurrenceEndDate', e.target.value)}
+                      className="mt-2 w-full px-3 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                  )}
+                </div>
               </div>
               {/* Reminder Dropdown */}
               <div>

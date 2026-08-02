@@ -15,7 +15,6 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-
 // ──────────────────────────────────────────────
 // Persistent file-based storage
 // ──────────────────────────────────────────────
@@ -31,7 +30,6 @@ function loadSchedules() {
     if (fs.existsSync(SCHEDULES_FILE)) {
       const raw = fs.readFileSync(SCHEDULES_FILE, 'utf-8');
       const data = JSON.parse(raw);
-      // Convert plain objects back to Map
       const map = new Map();
       for (const [key, value] of Object.entries(data)) {
         map.set(key, value);
@@ -65,7 +63,6 @@ const isProduction = process.env.NODE_ENV === 'production' || !!process.env.REND
 const CLIENT_URL = process.env.CLIENT_URL || (isProduction ? 'https://calendai.onrender.com' : 'http://localhost:5173');
 const BACKEND_URL = process.env.BACKEND_URL || (isProduction ? 'https://calendai.onrender.com' : 'http://localhost:5000');
 
-// Trust the Render/production reverse proxy so secure cookies work correctly
 if (isProduction) {
   app.set('trust proxy', 1);
 }
@@ -86,8 +83,8 @@ app.use(session({
   secret: process.env.SESSION_SECRET || 'calendai-secret-key-change-me',
   resave: false,
   saveUninitialized: false,
-  cookie: { 
-    secure: isProduction, // true when on Render (HTTPS)
+  cookie: {
+    secure: isProduction,
     sameSite: isProduction ? 'none' : 'lax'
   }
 }));
@@ -99,13 +96,12 @@ app.use(passport.session());
 // Rate limiting for AI-powered / expensive endpoints
 // ──────────────────────────────────────────────
 const aiLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: 20, // max 20 requests per minute per IP
+  windowMs: 60 * 1000,
+  max: 20,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many requests. Please try again in a minute.' }
 });
-
 
 // ──────────────────────────────────────────────
 // 2. Google OAuth Strategy (if keys are configured)
@@ -127,14 +123,9 @@ if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET &&
       email: profile.emails?.[0]?.value || '',
       photo: profile.photos?.[0]?.value || ''
     };
-    // Pass accessToken to the session
     return done(null, { ...user, accessToken });
   }));
 
-  // Store the FULL user object (including accessToken) in the session.
-  // This is required because getUserId() and the Google Calendar sync route
-  // both read req.session.passport.user directly and expect the full object
-  // (id, googleId, displayName, email, photo, accessToken), not just an ID.
   passport.serializeUser((user, done) => {
     done(null, user);
   });
@@ -143,7 +134,6 @@ if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET &&
     done(null, user);
   });
 }
-
 
 // ──────────────────────────────────────────────
 // 3. Locations data
@@ -208,7 +198,6 @@ function expandEventForMonth(event, year, month) {
   const targetDayOfWeek = dayMap[event.day];
   if (targetDayOfWeek === undefined) return results;
 
-  // If the event has a stored targetDate, use it for "once" events
   const storedTargetDate = event.targetDate && new Date(event.targetDate);
 
   for (let d = 1; d <= daysInMonth; d++) {
@@ -221,21 +210,16 @@ function expandEventForMonth(event, year, month) {
 
     switch (event.recurrence || 'weekly') {
       case 'once': {
-        // For "once" events: use the stored targetDate if available,
-        // otherwise calculate the next occurrence of this day from today
         if (storedTargetDate) {
-          // Use the stored exact date
           const thisDateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
           const targetDateStr = `${storedTargetDate.getFullYear()}-${String(storedTargetDate.getMonth()+1).padStart(2,'0')}-${String(storedTargetDate.getDate()).padStart(2,'0')}`;
           if (thisDateStr === targetDateStr) {
             include = true;
           }
         } else {
-          // Fallback: calculate the next occurrence of this day from today
           const today = new Date();
           const currentDayOfWeek = today.getDay();
           let daysUntilTarget = targetDayOfWeek - currentDayOfWeek;
-          // If today is the target day, event is for today (not next week)
           if (daysUntilTarget < 0) daysUntilTarget += 7;
           const nextDate = new Date(today);
           nextDate.setDate(today.getDate() + daysUntilTarget);
@@ -248,25 +232,20 @@ function expandEventForMonth(event, year, month) {
         break;
       }
       case 'daily':
-        // Daily events appear every day regardless of day of week
-        // Since we iterate by day-of-week match above, we need to handle daily differently
-        // For daily events, we include ALL days, not just matching day-of-week
-        // We'll handle this by returning early with all days
         break;
       case 'weekly':
         include = true;
         break;
       case 'monthly':
-        // Only the first occurrence of that day in the month
-        // Include only if this is the first week that contains this day
         if (d <= 7) {
           include = true;
         }
         break;
       case 'yearly':
-        // Only if it's the same month as the event was created
-        // Store the creation month in event.createdMonth
-        if (event.createdMonth === undefined || event.createdMonth === month) {
+        // Yearly events: only show in the SAME month as the event's createdMonth.
+        if (event.createdMonth !== undefined && event.createdMonth === month) {
+          include = true;
+        } else if (event.createdMonth === undefined && month === new Date().getMonth()) {
           include = true;
         }
         break;
@@ -292,7 +271,6 @@ function expandEventForMonth(event, year, month) {
 
 /**
  * Expand a daily recurring event into ALL dates within a given month/year.
- * This is separate because daily events should appear every day, not just on a specific day-of-week.
  */
 function expandDailyEventForMonth(event, year, month) {
   const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -310,32 +288,21 @@ function expandDailyEventForMonth(event, year, month) {
   return results;
 }
 
-/**
- * Generate a unique deduplication key for a daily event.
- * Daily events stored on multiple days would create duplicates; 
- * this key ensures we only expand each unique daily event once.
- */
 function getDailyEventKey(event) {
   return `${event.title}|${event.startTime}|${event.endTime}|${event.recurrence}`;
 }
 
-/**
- * Expand events for a full year, returning all occurrences.
- * Deduplicates daily events to avoid duplicates from identical events stored on multiple days.
- */
 function expandEventsForYear(schedule, year) {
   const allEvents = [];
-  const expandedDailyKeys = new Set(); // Track already-expanded daily events by unique key
+  const expandedDailyKeys = new Set();
 
   for (let month = 0; month < 12; month++) {
     for (const dayKey of Object.keys(schedule)) {
-      // Skip "Today" key to avoid duplicate expansion — "Today" mirrors the actual day's events
       if (dayKey === 'Today') continue;
       const dayEvents = schedule[dayKey] || [];
       for (const event of dayEvents) {
         let expanded;
         if (event.recurrence === 'daily') {
-          // Deduplicate: if we've already expanded this daily event (same title/time), skip it
           const dailyKey = getDailyEventKey(event);
           if (expandedDailyKeys.has(dailyKey)) continue;
           expandedDailyKeys.add(dailyKey);
@@ -360,7 +327,6 @@ try {
   }
 } catch (e) {
   console.error('Failed to initialize Gemini AI:', e.message);
-  // ai stays null -> system falls back to Hebrew parser
 }
 
 function formatTime(hour, minute = '00', meridiem) {
@@ -402,15 +368,13 @@ const hebrewNumbers = {
 };
 
 function parseHebrewSingleTime(text) {
-  // Check for "רבע לX" (quarter to X) pattern FIRST — e.g., "רבע לשישה" = 5:45
   const quarterToMatch = text.match(/רבע\s+ל(שתיים|שלוש|ארבע|חמש|שש|שבע|שמונה|תשע|עשר|אחת|אחד|שנים|ששה|שבעה|שמונה|תשעה|עשרה)/);
   if (quarterToMatch) {
     const hourWord = quarterToMatch[1];
     const hour = hebrewNumbers[hourWord];
     if (hour) {
-      // Quarter to X = (X-1):45, e.g., "רבע לשישה" = 5:45
       let quarterHour = hour - 1;
-      if (quarterHour === 0) quarterHour = 12; // "רבע לאחת" = 12:45
+      if (quarterHour === 0) quarterHour = 12;
       return {
         hour: quarterHour,
         minute: 45
@@ -424,7 +388,7 @@ function parseHebrewSingleTime(text) {
   ];
 
   const hasHalf = text.includes('וחצי');
-  const hasQuarter = text.includes('ורבע'); // "X ורבע" = quarter past X, e.g., "שבע ורבע" = 7:15
+  const hasQuarter = text.includes('ורבע');
 
   for (const pattern of singlePatterns) {
     const match = text.match(pattern);
@@ -503,7 +467,6 @@ function fallbackParse(text) {
     if (hebrewDays[word]) {
       foundDays.push(hebrewDays[word]);
     } else {
-      // Strip prefixes: ב, כ, פ, ל, מ, ו, ש
       const noPrefix = word.replace(/^[בוכפלמש]/, '');
       if (noPrefix !== word && hebrewDays[noPrefix]) {
         foundDays.push(hebrewDays[noPrefix]);
@@ -513,7 +476,6 @@ function fallbackParse(text) {
 
   let days = [...new Set(foundDays)];
 
-  // Handle "מחר" (tomorrow) - resolve to the next day
   if (text.includes('מחר')) {
     const today = new Date();
     const tomorrow = new Date(today);
@@ -521,8 +483,7 @@ function fallbackParse(text) {
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     days = [dayNames[tomorrow.getDay()]];
   }
-  
-  // Handle "היום" (today) - resolve to the current day
+
   if (text.includes('היום')) {
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     days = [dayNames[new Date().getDay()]];
@@ -562,29 +523,21 @@ function fallbackParse(text) {
     }
   }
 
-  // Check for explicit morning/evening markers to adjust AM/PM
   if (text.includes('בערב') || text.includes('בלילה') || text.includes('באחה"צ') || text.includes('אחר הצהריים')) {
-    // Evening/night/afternoon → PM
     if (startHour < 12) startHour += 12;
     if (endHour < 12) endHour += 12;
   } else if (text.includes('בבוקר') || text.includes('בבקר')) {
-    // Morning → keep as AM (already correct)
+    // Morning → keep as AM
   } else {
-    // No explicit marker — apply SMART AM/PM logic:
-    // Low hours 1-7 → DEFAULT TO PM (afternoon/evening)
-    // Hours 8-11 → DEFAULT TO AM (morning)
-    // Hours 12+ → unambiguous
     if (startHour >= 1 && startHour <= 7) {
       startHour += 12;
       endHour += 12;
     }
-    // Hours 8-11 stay as AM (morning) — no change needed
   }
 
   const startTime = formatTime(startHour, startMinute);
   const endTime = formatTime(endHour, endMinute);
 
-  // Better title extraction: take the last meaningful words
   let title = text
     .replace(/^(מחר\s*)?/, '')
     .replace(/משעה\s+[א-ת]+\s*(?:וחצי|ורבע)?\s*(?:ועד|עד)\s*[א-ת]+\s*(?:וחצי|ורבע)?\s*/, '')
@@ -593,7 +546,6 @@ function fallbackParse(text) {
     .replace(/[,!?;:]/g, '')
     .trim();
 
-  // If title is still too long, take last 3-4 words
   if (title.length > 30) {
     const titleWords = title.split(/\s+/);
     if (titleWords.length > 4) {
@@ -625,7 +577,6 @@ async function parseWithGemini(text) {
   const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   const todayEnglish = dayNames[now.getDay()];
 
-  // Detect if the user's text is in English or Hebrew
   const isEnglish = /^[a-zA-Z0-9\s.,!?;:'"()-]+$/.test(text.trim()) && /[a-zA-Z]/.test(text.trim());
 
   const prompt = `
@@ -710,6 +661,16 @@ async function parseWithGemini(text) {
       8. **CRITICAL**: The startTime "11:00 PM" and endTime "07:00 AM" MUST be identical for ALL 7 days of the week. Every night is exactly 11:00 PM → 07:00 AM.
     - **Free Slot Detection**: When a user says "תפנה לי X דקות/שעות" / "find me X minutes/hours free", set "needsFreeSlot": true with "freeSlotDuration" (in minutes).
     - **Editing Events**: If a user says "תעדכן/תשנה" / "update/change" an event, include "isEdit": true.
+    - **YEARLY / BIRTHDAY / ANNUAL EVENT DETECTION (CRITICAL)**: When the user mentions "יום הולדת" / "birthday", "אירוע שנתי" / "annual event", "חג" / "holiday", "נישואין" / "anniversary", or any event that should repeat once a year on the same date, you MUST set "recurrence": "yearly". This is critical for the system to generate a proper RRULE with FREQ=YEARLY. Examples:
+      * "יום הולדת לילד ב-18.8" → set recurrence="yearly"
+      * "birthday party on August 18" → set recurrence="yearly"
+      * "אירוע שנתי של המשפחה" → set recurrence="yearly"
+      * "anniversary dinner" → set recurrence="yearly"
+      * Do NOT use "weekly" or "once" for these events — they MUST be "yearly".
+      * When the user selects "שנתי" / "Yearly" from the recurrence UI buttons, the system will also set it correctly.
+      * The current month index (0-11) will be added automatically by the backend as "createdMonth".
+      * For yearly events, if the user specifies a specific date (e.g., "18.8" or "August 18"), set the "targetDate" field to that date so the event appears on the correct day each year.
+      * If the user says "תזכיר לי כל שנה" / "remind me every year", also set recurrence="yearly".
 
     ─────────────────────────────────────────────
     STEP 4: NATURAL LANGUAGE TIME PARSING (CRITICAL)
@@ -1044,10 +1005,8 @@ async function parseWithGemini(text) {
 }
 
 function fallbackParseAdvice(text) {
-  // Detect if the text is in English
   const isEnglish = /^[a-zA-Z0-9\s.,!?;:'"()-]+$/.test(text.trim()) && /[a-zA-Z]/.test(text.trim());
-  
-  // Check if the text contains advice-related keywords (both Hebrew and English)
+
   const adviceKeywordsHe = ['תן לי','תמצא','תציע','המלץ','עזור','עזרי','רעיון','איך','מה להכין','מה לעשות','תעזור לי'];
   const adviceKeywordsEn = ['suggest', 'recommend', 'help', 'idea', 'how', 'what', 'find me', 'advice'];
   const hasAdvice = adviceKeywordsHe.some(kw => text.includes(kw)) || adviceKeywordsEn.some(kw => text.toLowerCase().includes(kw));
@@ -1160,9 +1119,6 @@ async function rescheduleWithGemini(currentSchedule, reason) {
 // 9b. Deterministic Schedule Helpers
 // ──────────────────────────────────────────────
 
-/**
- * Parse time string "HH:MM AM/PM" to total minutes from midnight.
- */
 function timeToMinutes(timeStr) {
   if (!timeStr) return null;
   const match = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
@@ -1175,9 +1131,6 @@ function timeToMinutes(timeStr) {
   return hours * 60 + minutes;
 }
 
-/**
- * Convert minutes from midnight back to "HH:MM AM/PM" string.
- */
 function minutesToTime(totalMinutes) {
   const h = Math.floor(totalMinutes / 60);
   const m = totalMinutes % 60;
@@ -1186,25 +1139,17 @@ function minutesToTime(totalMinutes) {
   return `${String(displayH).padStart(2, '0')}:${String(m).padStart(2, '0')} ${ampm}`;
 }
 
-/**
- * Get current time in minutes from midnight.
- */
 function getCurrentMinutes() {
   const now = new Date();
   return now.getHours() * 60 + now.getMinutes();
 }
 
-/**
- * Check if schedule has any gaps between events that could be merged.
- * Returns an array of gap objects with recommendations.
- */
 function findGapsInSchedule(schedule) {
   const todayName = getTodayDayName();
   const todayEvents = schedule[todayName] || [];
   
   if (todayEvents.length < 2) return [];
   
-  // Sort events by start time
   const sorted = [...todayEvents]
     .map((e, idx) => ({ ...e, originalIndex: idx }))
     .sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
@@ -1220,12 +1165,10 @@ function findGapsInSchedule(schedule) {
     
     if (currentEnd === null || nextStart === null) continue;
     
-    // Only consider events that haven't passed yet
     if (currentEnd < currentMin) continue;
     
     const gapMinutes = nextStart - currentEnd;
     
-    // If there's a gap (e.g., 15+ minutes) that could be eliminated
     if (gapMinutes >= 15) {
       gaps.push({
         gapMinutes,
@@ -1240,13 +1183,9 @@ function findGapsInSchedule(schedule) {
   return gaps;
 }
 
-/**
- * Shift all upcoming events on "Today" forward by delayMinutes.
- * Returns the modified schedule and a summary.
- */
 function shiftScheduleForward(schedule, delayMinutes) {
   const todayName = getTodayDayName();
-  const newSchedule = JSON.parse(JSON.stringify(schedule)); // deep clone
+  const newSchedule = JSON.parse(JSON.stringify(schedule));
   const todayEvents = newSchedule[todayName] || [];
   
   if (todayEvents.length === 0) {
@@ -1255,12 +1194,10 @@ function shiftScheduleForward(schedule, delayMinutes) {
   
   const currentMin = getCurrentMinutes();
   
-  // Sort events by start time
   const sorted = todayEvents
     .map((e, idx) => ({ ...e, originalIndex: idx }))
     .sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
   
-  // Find the first event that hasn't ended yet
   let shiftStartIndex = -1;
   for (let i = 0; i < sorted.length; i++) {
     const eventEnd = timeToMinutes(sorted[i].endTime);
@@ -1274,7 +1211,6 @@ function shiftScheduleForward(schedule, delayMinutes) {
     return { newSchedule, summary: 'כל האירועים להיום כבר עברו.' };
   }
   
-  // Shift all events from shiftStartIndex onward by delayMinutes
   let accumulatedDelay = delayMinutes;
   for (let i = shiftStartIndex; i < sorted.length; i++) {
     const event = sorted[i];
@@ -1289,10 +1225,8 @@ function shiftScheduleForward(schedule, delayMinutes) {
     event.endTime = minutesToTime(newEnd);
   }
   
-  // Write back sorted events into the schedule array (preserving order)
   newSchedule[todayName] = sorted.sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
   
-  // Sync Today
   syncTodayWithCurrentDay(newSchedule);
   
   const delayDisplay = delayMinutes >= 60 
@@ -1305,13 +1239,9 @@ function shiftScheduleForward(schedule, delayMinutes) {
   };
 }
 
-/**
- * Merge gaps in today's schedule by removing the free time between events.
- * Returns the modified schedule, merged gaps info, and a summary.
- */
 function mergeGaps(schedule) {
   const todayName = getTodayDayName();
-  const newSchedule = JSON.parse(JSON.stringify(schedule)); // deep clone
+  const newSchedule = JSON.parse(JSON.stringify(schedule));
   const todayEvents = newSchedule[todayName] || [];
   
   if (todayEvents.length < 2) {
@@ -1325,22 +1255,18 @@ function mergeGaps(schedule) {
     return { newSchedule, gaps: [], summary: 'לא נמצאו הפסקות למיזוג בין האירועים.' };
   }
   
-  // Sort events by start time
   const sorted = todayEvents
     .map((e, idx) => ({ ...e, originalIndex: idx }))
     .sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
   
-  // Merge: for each gap, shift all subsequent events backward by the gap duration
   let totalMerged = 0;
   for (const gap of gaps) {
     const gapStart = timeToMinutes(gap.startTime);
     if (gapStart === null || gapStart < currentMin) continue;
     
-    // Find the event that starts right after this gap and shift everything after it
     for (let i = 0; i < sorted.length; i++) {
       const eventStart = timeToMinutes(sorted[i].startTime);
       if (eventStart !== null && eventStart >= gapStart + gap.gapMinutes) {
-        // Shift this and all subsequent events back by gapMinutes
         for (let j = i; j < sorted.length; j++) {
           const oldStart = timeToMinutes(sorted[j].startTime);
           const oldEnd = timeToMinutes(sorted[j].endTime);
@@ -1358,10 +1284,8 @@ function mergeGaps(schedule) {
     return { newSchedule, gaps, summary: 'לא ניתן למזג הפסקות כרגע.' };
   }
   
-  // Write back sorted events
   newSchedule[todayName] = sorted.sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
   
-  // Sync Today
   syncTodayWithCurrentDay(newSchedule);
   
   return {
@@ -1377,8 +1301,6 @@ function mergeGaps(schedule) {
 // 6. Auth routes
 // ──────────────────────────────────────────────
 
-// Google OAuth scopes — minimal: only 'profile' and 'email'.
-// No calendar, offline, or openid scopes to keep OAuth consent simple.
 const OAUTH_SCOPES = process.env.OAUTH_SCOPES
   ? process.env.OAUTH_SCOPES.split(',').map(s => s.trim())
   : ['profile', 'email'];
@@ -1398,9 +1320,6 @@ app.get('/api/auth/google',
 app.get('/api/auth/google/callback',
   passport.authenticate('google', { failureRedirect: '/' }),
   (req, res) => {
-    // Redirect to the main dashboard with auth=success to auto-login the user
-    // Note: this redirects to the Dashboard (main schedule view), NOT to the Booking page.
-    // The Booking page is only accessed via a shared link (?book=... parameter).
     const baseUrl = process.env.FRONTEND_URL || CLIENT_URL;
     res.redirect(`${baseUrl}/?auth=success`);
   }
@@ -1408,9 +1327,7 @@ app.get('/api/auth/google/callback',
 
 app.get('/api/auth/me', (req, res) => {
   if (req.isAuthenticated && req.isAuthenticated()) {
-    // req.user from deserialize is minimal. The full user is in the session.
     const sessionUser = req.session.passport?.user;
-    // Don't send the accessToken to the client, but confirm it exists.
     const userForClient = sessionUser ? { ...sessionUser, hasToken: !!sessionUser.accessToken } : null;
     res.json({ user: userForClient });
   } else {
@@ -1432,11 +1349,6 @@ app.post('/api/auth/logout', (req, res) => {
 // 7. Booking invitation endpoint
 // ──────────────────────────────────────────────
 
-/**
- * Send a booking invitation to another CalendAI user by email or name.
- * This is a simple endpoint that adds the booking to the recipient's schedule
- * if they exist in the system.
- */
 app.post('/api/booking/send-invitation', async (req, res) => {
   try {
     const { recipient, bookingId, shareLink, day, slots, duration } = req.body;
@@ -1444,8 +1356,6 @@ app.post('/api/booking/send-invitation', async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    // For now, accept the invitation gracefully (store in a pending invitations list)
-    // In a full implementation, you'd look up the user by email and add the event
     const invitationsDir = path.join(DATA_DIR, 'invitations');
     if (!fs.existsSync(invitationsDir)) {
       fs.mkdirSync(invitationsDir, { recursive: true });
@@ -1476,10 +1386,6 @@ app.post('/api/booking/send-invitation', async (req, res) => {
 // 8. Slot availability check endpoint
 // ──────────────────────────────────────────────
 
-/**
- * Check if a specific time slot is available on a given day.
- * Returns { available: true } if the slot is free, { available: false } if busy.
- */
 app.post('/api/schedule/check-slot', (req, res) => {
   try {
     const { day, startTime, endTime } = req.body;
@@ -1491,7 +1397,6 @@ app.post('/api/schedule/check-slot', (req, res) => {
     const schedule = getUserSchedule(userId);
     const dayEvents = schedule[day] || [];
 
-    // Check if the slot overlaps with any existing event
     function parseToMinutes(timeStr) {
       if (!timeStr) return null;
       const match = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
@@ -1514,7 +1419,6 @@ app.post('/api/schedule/check-slot', (req, res) => {
       const exStart = parseToMinutes(event.startTime);
       const exEnd = parseToMinutes(event.endTime);
       if (exStart === null || exEnd === null) continue;
-      // Check overlap: new event starts before existing ends AND ends after existing starts
       if (newStart < exEnd && newEnd > exStart) {
         return res.json({ available: false, conflictingEvent: event });
       }
@@ -1531,9 +1435,6 @@ app.post('/api/schedule/check-slot', (req, res) => {
 // 8. Conflict detection helper
 // ──────────────────────────────────────────────
 
-/**
- * Parse a time string like "06:00 PM" into total minutes from midnight.
- */
 function parseTimeToMinutes(timeStr) {
   if (!timeStr) return null;
   const match = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
@@ -1546,9 +1447,6 @@ function parseTimeToMinutes(timeStr) {
   return hours * 60 + minutes;
 }
 
-/**
- * Convert "HH:MM" (24h) string to total minutes from midnight.
- */
 function parseTimeToMinutes24(timeStr) {
   if (!timeStr) return null;
   const parts = timeStr.split(':');
@@ -1559,21 +1457,12 @@ function parseTimeToMinutes24(timeStr) {
   return hours * 60 + minutes;
 }
 
-/**
- * Check if a new event conflicts with existing events on the same day.
- * Returns conflicts array with suggested alternative free slots.
- * @param {Object} newEvent - The event to check
- * @param {Array} existingEvents - Existing events on the same day
- * @param {Object} [options] - Optional location settings
- * @param {string} [options.dayStart="06:00"] - Day start time in 24h format
- * @param {string} [options.dayEnd="23:00"] - Day end time in 24h format
- */
 function detectConflicts(newEvent, existingEvents, options = {}) {
   const newStart = parseTimeToMinutes(newEvent.startTime);
   const newEnd = parseTimeToMinutes(newEvent.endTime);
   
-  const dayStart = options.dayStart ? parseTimeToMinutes24(options.dayStart) : 6 * 60; // 06:00
-  const dayEnd = options.dayEnd ? parseTimeToMinutes24(options.dayEnd) : 23 * 60; // 23:00
+  const dayStart = options.dayStart ? parseTimeToMinutes24(options.dayStart) : 6 * 60;
+  const dayEnd = options.dayEnd ? parseTimeToMinutes24(options.dayEnd) : 23 * 60;
   if (newStart === null || newEnd === null) return { hasConflict: false, conflicts: [], suggestions: [] };
 
   const conflicts = [];
@@ -1582,7 +1471,6 @@ function detectConflicts(newEvent, existingEvents, options = {}) {
     const exEnd = parseTimeToMinutes(existing.endTime);
     if (exStart === null || exEnd === null) continue;
 
-    // Check overlap: new event starts before existing ends AND ends after existing starts
     if (newStart < exEnd && newEnd > exStart) {
       conflicts.push({
         title: existing.title,
@@ -1592,7 +1480,6 @@ function detectConflicts(newEvent, existingEvents, options = {}) {
     }
   }
 
-  // Find free slots on the same day (using location-aware day bounds)
   const suggestions = [];
   if (conflicts.length > 0) {
     const busySlots = existingEvents
@@ -1625,7 +1512,6 @@ function detectConflicts(newEvent, existingEvents, options = {}) {
       cursor = Math.max(cursor, slot.end);
     }
 
-    // If no slot found before busy slots, try after the last one
     if (suggestions.length === 0 && cursor + duration <= dayEnd) {
       const hours = Math.floor(cursor / 60);
       const mins = cursor % 60;
@@ -1653,16 +1539,13 @@ function detectConflicts(newEvent, existingEvents, options = {}) {
 // 8. Schedule routes
 // ──────────────────────────────────────────────
 
-// Helper: get today's day name (e.g. "Saturday")
 function getTodayDayName() {
   const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   return dayNames[new Date().getDay()];
 }
 
-// Helper: sync "Today" with the current day of the week
 function syncTodayWithCurrentDay(schedule) {
   const todayName = getTodayDayName();
-  // "Today" shows events from the current day of the week
   schedule['Today'] = [...(schedule[todayName] || [])];
   return schedule;
 }
@@ -1671,19 +1554,14 @@ function syncTodayWithCurrentDay(schedule) {
 // 8b. Find Free Slots
 // ──────────────────────────────────────────────
 
-/**
- * Find all free time slots for a given day within location bounds.
- * Returns an array of time ranges that are free.
- */
 function findFreeSlotsForDay(schedule, dayName, locationId) {
   const dayEvents = schedule[dayName] || [];
   const locData = LOCATIONS.find(loc => loc.id === (locationId || DEFAULT_LOCATION_ID));
-  const dayStart = locData ? parseTimeToMinutes24(locData.defaultDayStart) : 6 * 60; // 06:00
-  const dayEnd = locData ? parseTimeToMinutes24(locData.defaultDayEnd) : 23 * 60; // 23:00
+  const dayStart = locData ? parseTimeToMinutes24(locData.defaultDayStart) : 6 * 60;
+  const dayEnd = locData ? parseTimeToMinutes24(locData.defaultDayEnd) : 23 * 60;
   
   if (dayStart === null || dayEnd === null) return [];
   
-  // Get all busy slots sorted by start time
   const busySlots = dayEvents
     .map(e => ({
       start: timeToMinutes(e.startTime),
@@ -1698,7 +1576,7 @@ function findFreeSlotsForDay(schedule, dayName, locationId) {
   for (const slot of busySlots) {
     if (cursor < slot.start) {
       const gapMinutes = slot.start - cursor;
-      if (gapMinutes >= 15) { // Only show slots of 15+ minutes
+      if (gapMinutes >= 15) {
         freeSlots.push({
           startTime: minutesToTime(cursor),
           endTime: minutesToTime(slot.start),
@@ -1709,7 +1587,6 @@ function findFreeSlotsForDay(schedule, dayName, locationId) {
     cursor = Math.max(cursor, slot.end);
   }
   
-  // Check after the last event
   if (cursor < dayEnd) {
     const gapMinutes = dayEnd - cursor;
     if (gapMinutes >= 15) {
@@ -1724,7 +1601,6 @@ function findFreeSlotsForDay(schedule, dayName, locationId) {
   return freeSlots;
 }
 
-// GET /api/schedule/free-slots?day=Monday&duration=30&location=jerusalem
 app.get('/api/schedule/free-slots', (req, res) => {
   try {
     const userId = getUserId(req);
@@ -1734,12 +1610,10 @@ app.get('/api/schedule/free-slots', (req, res) => {
     const durationMinutes = parseInt(req.query.duration) || 30;
     const locationId = req.query.location || DEFAULT_LOCATION_ID;
     
-    // If "Today" was requested, resolve to actual day
     const actualDay = day === 'Today' ? getTodayDayName() : day;
     
     const allFreeSlots = findFreeSlotsForDay(schedule, actualDay, locationId);
     
-    // Filter slots that can accommodate the requested duration
     const suitableSlots = allFreeSlots.filter(slot => slot.durationMinutes >= durationMinutes);
     
     res.json({
@@ -1754,7 +1628,6 @@ app.get('/api/schedule/free-slots', (req, res) => {
   }
 });
 
-// POST /api/schedule/add-to-free-slot – add an event to a specific free slot
 app.post('/api/schedule/add-to-free-slot', (req, res) => {
   try {
     const { day, startTime, endTime, title, recurrence, location } = req.body;
@@ -1784,7 +1657,6 @@ app.post('/api/schedule/add-to-free-slot', (req, res) => {
       schedule['Today'].push(newEvent);
     }
     
-    // Sync Today
     syncTodayWithCurrentDay(schedule);
     saveSchedulesNow();
     
@@ -1795,7 +1667,6 @@ app.post('/api/schedule/add-to-free-slot', (req, res) => {
   }
 });
 
-// PUT /api/schedule/event – update a specific event
 app.put('/api/schedule/event', (req, res) => {
   const { day, index, updates } = req.body;
   if (!day || index === undefined || !updates) {
@@ -1825,7 +1696,6 @@ app.put('/api/schedule/event', (req, res) => {
 // 8c. Original parse-schedule route (unchanged)
 // ──────────────────────────────────────────────
 
-// POST /api/parse-schedule – parse text and ADD to user's schedule
 app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
 
   const { text, recurrence, location } = req.body;
@@ -1839,7 +1709,6 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
     const schedule = getUserSchedule(userId);
     const todayName = getTodayDayName();
 
-    // Resolve location-based day bounds for conflict detection
     const locationId = location || DEFAULT_LOCATION_ID;
     const locData = LOCATIONS.find(loc => loc.id === locationId);
     const locationOptions = locData ? {
@@ -1851,27 +1720,28 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
     const conflictWarnings = [];
 
     for (const event of parsedEvents) {
-      let day = event.day || todayName; // Default to today if day is missing
+      let day = event.day || todayName;
       if (day === 'Today') {
         day = todayName;
       }
 
-      // Determine recurrence: if event has isSleep=true, force recurrence to "daily"
-      // Otherwise use the event's recurrence if provided, else fall back to the request's recurrence or 'weekly'
       let eventRecurrence = event.recurrence || recurrence || 'weekly';
       if (event.isSleep) {
         eventRecurrence = 'daily';
       }
 
+      // Auto-set createdMonth for yearly events so they only repeat in the correct month
+      const createdMonth = new Date().getMonth();
+
       const eventWithRecurrence = {
         ...event,
-        day: day, // Ensure day is the actual day name
+        day: day,
         recurrence: eventRecurrence,
-        location: locationId // Store the location with the event
+        location: locationId,
+        ...(eventRecurrence === 'yearly' && { createdMonth })
       };
 
       if (schedule[day]) {
-        // --- START: Conflict Detection (location-aware) ---
         const { hasConflict, conflicts, suggestions } = detectConflicts(eventWithRecurrence, schedule[day], locationOptions);
         if (hasConflict) {
           conflictWarnings.push({
@@ -1881,17 +1751,14 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
             suggestions: suggestions
           });
         }
-        // --- END: Conflict Detection ---
         schedule[day].push(eventWithRecurrence);
         addedEvents.push(eventWithRecurrence);
       } else {
-        // Unknown day -> fallback to Today
         schedule['Today'].push(eventWithRecurrence);
         addedEvents.push({ ...eventWithRecurrence, day: 'Today' });
       }
     }
 
-    // Sync "Today" with current day's events after all additions
     syncTodayWithCurrentDay(schedule);
 
     saveSchedulesNow();
@@ -1920,7 +1787,6 @@ app.post('/api/add-to-google-calendar', async (req, res) => {
     return res.status(400).json({ error: 'Invalid event data provided.' });
   }
 
-  // Resolve timezone from location
   const locationId = location || DEFAULT_LOCATION_ID;
   const locData = LOCATIONS.find(loc => loc.id === locationId);
   const timeZone = locData ? locData.timezone : 'Asia/Jerusalem';
@@ -1931,7 +1797,6 @@ app.post('/api/add-to-google-calendar', async (req, res) => {
 
   const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
-  // Simple date calculation for the next occurrence of the event's day
   const dayMap = { Sunday: 0, Monday: 1, Tuesday: 2, Wednesday: 3, Thursday: 4, Friday: 5, Saturday: 6 };
   const targetDay = dayMap[event.day];
   if (targetDay === undefined) {
@@ -1950,14 +1815,43 @@ app.post('/api/add-to-google-calendar', async (req, res) => {
   const startDateTime = new Date(eventDate.setHours(startIsPM && startHour !== 12 ? startHour + 12 : startHour, startMinute, 0, 0));
   const endDateTime = new Date(eventDate.setHours(endIsPM && endHour !== 12 ? endHour + 12 : endHour, endMinute, 0, 0));
 
+  // Build RRULE for recurring events
+  let recurrenceRule = null;
+  if (event.recurrence) {
+    switch (event.recurrence) {
+      case 'daily':
+        recurrenceRule = 'RRULE:FREQ=DAILY';
+        break;
+      case 'weekly':
+        recurrenceRule = 'RRULE:FREQ=WEEKLY';
+        break;
+      case 'monthly':
+        recurrenceRule = 'RRULE:FREQ=MONTHLY';
+        break;
+      case 'yearly':
+        recurrenceRule = 'RRULE:FREQ=YEARLY';
+        break;
+      case 'forever':
+        recurrenceRule = 'RRULE:FREQ=DAILY';
+        break;
+    }
+  }
+
   try {
+    const requestBody = {
+      summary: event.title,
+      start: { dateTime: startDateTime.toISOString(), timeZone },
+      end: { dateTime: endDateTime.toISOString(), timeZone },
+    };
+    
+    // Attach RRULE to recurring events
+    if (recurrenceRule) {
+      requestBody.recurrence = [recurrenceRule];
+    }
+    
     const gcalEvent = await calendar.events.insert({
       calendarId: 'primary',
-      requestBody: {
-        summary: event.title,
-        start: { dateTime: startDateTime.toISOString(), timeZone },
-        end: { dateTime: endDateTime.toISOString(), timeZone },
-      },
+      requestBody,
     });
     res.json({ ok: true, message: 'Event added to Google Calendar!', link: gcalEvent.data.htmlLink });
   } catch (error) {
@@ -1992,7 +1886,6 @@ app.post('/api/reschedule', aiLimiter, async (req, res) => {
   }
 });
 
-// POST /api/reschedule/shift – deterministic: shift all today's events forward by delayMinutes
 app.post('/api/reschedule/shift', (req, res) => {
   const { delayMinutes } = req.body;
   if (!delayMinutes || delayMinutes < 1) {
@@ -2017,7 +1910,6 @@ app.post('/api/reschedule/shift', (req, res) => {
   }
 });
 
-// POST /api/reschedule/merge-gaps – deterministic: merge gaps between today's events
 app.post('/api/reschedule/merge-gaps', (req, res) => {
   try {
     const userId = getUserId(req);
@@ -2041,7 +1933,6 @@ app.post('/api/reschedule/merge-gaps', (req, res) => {
   }
 });
 
-// GET /api/reschedule/gaps – check for gaps in today's schedule without modifying
 app.get('/api/reschedule/gaps', (req, res) => {
   try {
     const userId = getUserId(req);
@@ -2059,7 +1950,6 @@ app.get('/api/reschedule/gaps', (req, res) => {
   }
 });
 
-// PUT /api/schedule – replace the entire schedule for the user (used by Undo)
 app.put('/api/schedule', (req, res) => {
   const { schedule } = req.body;
   if (!schedule) {
@@ -2071,16 +1961,13 @@ app.put('/api/schedule', (req, res) => {
   res.json({ ok: true, message: 'Schedule restored.' });
 });
 
-// GET /api/schedule – get the current user's full schedule
 app.get('/api/schedule', (req, res) => {
   const userId = getUserId(req);
   const schedule = getUserSchedule(userId);
-  // Sync "Today" with the current day of the week before returning
   syncTodayWithCurrentDay(schedule);
   res.json({ schedule });
 });
 
-// GET /api/schedule/expanded – get expanded events for a specific month or year
 app.get('/api/schedule/expanded', (req, res) => {
   const userId = getUserId(req);
   const schedule = getUserSchedule(userId);
@@ -2093,19 +1980,16 @@ app.get('/api/schedule/expanded', (req, res) => {
     return res.json({ events: allEvents, year, view: 'year' });
   }
   
-  // Default: month view
   const month = parseInt(req.query.month) !== undefined ? parseInt(req.query.month) : new Date().getMonth();
   const monthEvents = [];
-  const expandedDailyKeys = new Set(); // Track already-expanded daily events by unique key
+  const expandedDailyKeys = new Set();
   
   for (const dayKey of Object.keys(schedule)) {
-    // Skip "Today" key to avoid duplicate expansion — "Today" mirrors the actual day's events
     if (dayKey === 'Today') continue;
     const dayEvents = schedule[dayKey] || [];
     for (const event of dayEvents) {
       let expanded;
       if (event.recurrence === 'daily') {
-        // Deduplicate: if we've already expanded this daily event (same title/time), skip it
         const dailyKey = getDailyEventKey(event);
         if (expandedDailyKeys.has(dailyKey)) continue;
         expandedDailyKeys.add(dailyKey);
@@ -2120,7 +2004,6 @@ app.get('/api/schedule/expanded', (req, res) => {
   res.json({ events: monthEvents, year, month, view: 'month' });
 });
 
-// DELETE /api/schedule/clear – clear all events for the user
 app.delete('/api/schedule/clear', (req, res) => {
   const userId = getUserId(req);
   userSchedules.set(userId, getDefaultSchedule());
@@ -2128,7 +2011,6 @@ app.delete('/api/schedule/clear', (req, res) => {
   res.json({ ok: true, message: 'Schedule cleared.' });
 });
 
-// DELETE /api/schedule/event – remove a specific event by index
 app.delete('/api/schedule/event', (req, res) => {
   const { day, index } = req.body;
   if (!day || index === undefined) {
@@ -2167,10 +2049,8 @@ app.post('/api/booking/ai-find-slot', aiLimiter, async (req, res) => {
     const actualDay = day === 'Today' ? todayName : day;
     const dayEvents = schedule[actualDay] || [];
 
-    // Find free slots for the requested day
     const freeSlots = findFreeSlotsForDay(schedule, actualDay, DEFAULT_LOCATION_ID);
 
-    // If no AI available, return deterministic free slots
     if (!ai) {
       const suitableSlots = freeSlots.filter(s => s.durationMinutes >= durationMinutes);
       return res.json({
@@ -2223,7 +2103,6 @@ app.post('/api/booking/ai-find-slot', aiLimiter, async (req, res) => {
     const raw = response.text || '{}';
     const parsed = JSON.parse(raw);
 
-    // Fallback to deterministic free slots if AI response is malformed
     if (!parsed.hasSuggestion === undefined && !parsed.freeSlots) {
       const suitableSlots = freeSlots.filter(s => s.durationMinutes >= durationMinutes);
       return res.json({
@@ -2245,7 +2124,6 @@ app.post('/api/booking/ai-find-slot', aiLimiter, async (req, res) => {
 
   } catch (error) {
     console.error('AI booking finder failed:', error);
-    // Fallback: return deterministic free slots
     try {
       const userId = getUserId(req);
       const schedule = getUserSchedule(userId);
@@ -2269,10 +2147,132 @@ app.post('/api/booking/ai-find-slot', aiLimiter, async (req, res) => {
 });
 
 // ──────────────────────────────────────────────
+// 9d. Expiration & Extension Notification
+// ──────────────────────────────────────────────
+
+/**
+ * GET /api/schedule/expiring
+ * Find events that are expiring within the next 30 days.
+ * For yearly events: check if the current month is the event's createdMonth
+ * (meaning the event is at its "anniversary" and about to "expire").
+ */
+app.get('/api/schedule/expiring', (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const schedule = getUserSchedule(userId);
+    const now = new Date();
+    const currentMonth = now.getMonth();
+    
+    const expiringEvents = [];
+    const processedKeys = new Set();
+    
+    for (const dayKey of Object.keys(schedule)) {
+      if (dayKey === 'Today') continue;
+      const dayEvents = schedule[dayKey] || [];
+      
+      for (let i = 0; i < dayEvents.length; i++) {
+        const event = dayEvents[i];
+        
+        if (!event.recurrence || event.recurrence === 'once') continue;
+        
+        const key = `${event.title}|${event.startTime}|${event.day}|${event.recurrence}|${dayKey}`;
+        if (processedKeys.has(key)) continue;
+        processedKeys.add(key);
+        
+        // Check yearly events: they "expire" when the current month is the createdMonth
+        if (event.recurrence === 'yearly') {
+          if (event.createdMonth !== undefined && event.createdMonth === currentMonth) {
+            expiringEvents.push({
+              ...event,
+              dayKey,
+              index: i,
+              expiryType: 'yearly',
+              expiresInDays: 30,
+              message: 'האירוע השנתי עומד להסתיים. האם ברצונך להאריך אותו לשנה נוספת?'
+            });
+          }
+        }
+        
+        // Check events with endDate (future-proofing)
+        if (event.endDate) {
+          const endDate = new Date(event.endDate);
+          const diffDays = Math.ceil((endDate - now) / (1000 * 60 * 60 * 24));
+          if (diffDays >= 0 && diffDays <= 30) {
+            expiringEvents.push({
+              ...event,
+              dayKey,
+              index: i,
+              expiryType: 'endDate',
+              expiresInDays: diffDays,
+              message: `האירוע "${event.title}" עומד להסתיים בעוד ${diffDays} ימים. האם ברצונך להאריכו?`
+            });
+          }
+        }
+      }
+    }
+    
+    res.json({ 
+      expiringEvents, 
+      hasExpiring: expiringEvents.length > 0,
+      total: expiringEvents.length
+    });
+  } catch (error) {
+    console.error('Failed to check expiring events:', error);
+    res.status(500).json({ error: 'Failed to check expiring events.' });
+  }
+});
+
+/**
+ * POST /api/schedule/extend-event
+ * Extend a yearly event by updating its createdMonth to the current month
+ * (effectively renewing it for another year).
+ */
+app.post('/api/schedule/extend-event', (req, res) => {
+  try {
+    const { dayKey, index } = req.body;
+    if (!dayKey || index === undefined) {
+      return res.status(400).json({ error: 'dayKey and index are required.' });
+    }
+    
+    const userId = getUserId(req);
+    const schedule = getUserSchedule(userId);
+    
+    if (!schedule[dayKey] || !schedule[dayKey][index]) {
+      return res.status(404).json({ error: 'Event not found.' });
+    }
+    
+    const event = schedule[dayKey][index];
+    const now = new Date();
+    const currentMonth = now.getMonth();
+    
+    // Update the createdMonth to the current month (extends for another year)
+    const nextYear = now.getFullYear() + 1;
+    
+    schedule[dayKey][index] = {
+      ...event,
+      createdMonth: currentMonth,
+      extendedAt: now.toISOString(),
+      extendedUntil: `${nextYear}`
+    };
+    
+    syncTodayWithCurrentDay(schedule);
+    saveSchedulesNow();
+    
+    res.json({ 
+      ok: true, 
+      message: 'האירוע הוארך לשנה נוספת בהצלחה!',
+      event: schedule[dayKey][index]
+    });
+  } catch (error) {
+    console.error('Failed to extend event:', error);
+    res.status(500).json({ error: 'Failed to extend event.' });
+  }
+});
+
+// ──────────────────────────────────────────────
 // 10. Locations API
 // ──────────────────────────────────────────────
 
-// GET /api/locations – get all available locations
 app.get('/api/locations', (_req, res) => {
   const locationsList = LOCATIONS.map(loc => ({
     id: loc.id,
@@ -2286,7 +2286,6 @@ app.get('/api/locations', (_req, res) => {
   res.json({ locations: locationsList });
 });
 
-// GET /api/locations/:id/slots – get available time slots for a location
 app.get('/api/locations/:id/slots', (req, res) => {
   const location = LOCATIONS.find(loc => loc.id === req.params.id);
   if (!location) {

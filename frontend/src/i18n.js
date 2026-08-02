@@ -34,6 +34,9 @@ const translations = {
     recurrenceMonthly: "חודשי",
     recurrenceYearly: "שנתי",
     recurrenceForever: "לכל החיים",
+    recurrenceEndLabel: "תוקף/סיום",
+    recurrenceNeverEnds: "ללא סוף",
+    recurrenceEndsOnDate: "מסתיים בתאריך...",
 
     // Reminder
     reminderNone: "ללא תזכורת",
@@ -286,7 +289,25 @@ const translations = {
 
     // Guest Usage Limit
     guestLimitTitle: 'אוהב את CalendAI? 🚀',
-    guestLimitDesc: 'הגעת ל-5 פעולות ניסיון בחינם. התחבר בקליק עם גוגל כדי לשמור את הלו"ז שלך ולמנוע אובדן נתונים!',
+    guestLimitDesc: 'הגעת ל-10 פעולות ניסיון בחינם. התחבר עם Google כדי לשמור את כל הנתונים שלך!',
+
+    // Expiration & Extension Notification
+    expiringTitle: 'הודעה על אירוע שמסתיים',
+    expiringDesc: 'הפעולה "{eventTitle}" עומדת להסתיים בקרוב. האם ברצונך להאריך אותה לשנה נוספת?',
+    extendOneYear: 'הארך לשנה נוספת',
+    extendSuccess: 'האירוע הוארך לשנה נוספת בהצלחה!',
+    extendLater: 'אולי מאוחר יותר',
+    expiringDaysLeft: 'נשארו {days} ימים',
+
+    // Booking UI Redesign
+    bookingShowOnlyFree: 'הצג רק לוז פנוי',
+    bookingShowAllSlots: 'הצג את כל המשבצות',
+    bookingSlotBusyLabel: 'תפוס',
+    bookingViralTitle: 'רוצה גם? הצטרף ל-CalendAI ותתחיל להוציא את המקסימום מהזמן שלך! 🚀',
+    bookingViralButton: 'התחל בחינם',
+    bookingDayGridLabel: 'בחר יום:',
+    bookingSlotsLabel: 'משבצות זמינות:',
+    bookingNoFreeSlots: 'אין משבצות פנויות ליום זה',
 
     // Smart Auth
     loginRequired: 'עליך להתחבר כדי לבצע פעולה זו',
@@ -368,6 +389,9 @@ const translations = {
     recurrenceMonthly: "Monthly",
     recurrenceYearly: "Yearly",
     recurrenceForever: "Forever",
+    recurrenceEndLabel: "Ends",
+    recurrenceNeverEnds: "Never Ends",
+    recurrenceEndsOnDate: "Ends on date...",
 
     // Reminder
     reminderNone: "No reminder",
@@ -623,7 +647,25 @@ const translations = {
 
     // Guest Usage Limit
     guestLimitTitle: 'Love CalendAI? 🚀',
-    guestLimitDesc: 'You\'ve reached 5 free trial actions. Log in with Google in one click to save your schedule and prevent data loss!',
+    guestLimitDesc: 'You\'ve reached 10 free trial actions. Log in with Google to save all your data!',
+
+    // Expiration & Extension Notification
+    expiringTitle: 'Expiring Event Alert',
+    expiringDesc: 'The "{eventTitle}" event is about to expire. Would you like to extend it for another year?',
+    extendOneYear: 'Extend for Another Year',
+    extendSuccess: 'Event extended for another year successfully!',
+    extendLater: 'Maybe Later',
+    expiringDaysLeft: '{days} days left',
+
+    // Booking UI Redesign
+    bookingShowOnlyFree: 'Show Only Free Slots',
+    bookingShowAllSlots: 'Show All Slots',
+    bookingSlotBusyLabel: 'Busy',
+    bookingViralTitle: 'Want too? Join CalendAI and start getting the most out of your time! 🚀',
+    bookingViralButton: 'Start Free',
+    bookingDayGridLabel: 'Select a day:',
+    bookingSlotsLabel: 'Available slots:',
+    bookingNoFreeSlots: 'No free slots for this day',
 
     // Smart Auth
     loginRequired: 'You need to log in to perform this action',
