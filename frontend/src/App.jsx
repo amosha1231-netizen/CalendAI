@@ -7,6 +7,7 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import SidebarDrawer from "./components/SidebarDrawer";
 import MeetingWizard from "./components/MeetingWizard";
 import GuestBookingView from "./components/GuestBookingView";
+import Booking from "./components/Booking";
 import translations from "./i18n";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
@@ -1034,6 +1035,16 @@ function App() {
     return dayEvents.filter(e => e.location === locationFilter);
   };
 
+  // ── Force currentView to 'dashboard' if the URL does NOT have ?book=true or ?book=1 ──
+  // This prevents any background fetch/effect from accidentally switching to booking view
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const hasBook = params.get('book') === 'true' || params.get('book') === '1';
+    if (!hasBook && currentView !== 'dashboard') {
+      setCurrentView('dashboard');
+    }
+  }, [currentView]);
+
   // If a dynamic booking ID is in the URL, show the guest booking view
   if (guestBookingId) {
     return (
@@ -1051,6 +1062,22 @@ function App() {
   }
 
   if (showPrivacy) return <Privacy onBack={() => setShowPrivacy(false)} />;
+
+  // Booking View: ONLY when ?book=true or ?book=1 is explicitly in the URL
+  if (currentView === 'booking') {
+    return (
+      <Booking
+        schedule={schedule}
+        lang={lang}
+        t={t}
+        onClose={() => {
+          window.history.replaceState({}, document.title, window.location.pathname);
+          setCurrentView('dashboard');
+        }}
+        onBookingConfirm={handleBookingConfirm}
+      />
+    );
+  }
 
   const isRTL = lang === 'he';
   const SUGGESTION_CHIPS = t.suggestionChips;
