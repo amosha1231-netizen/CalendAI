@@ -4,6 +4,7 @@ const dotenv = require('dotenv');
 const session = require('express-session');
 const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
+const jwt = require('jsonwebtoken');
 const { GoogleGenAI } = require('@google/genai');
 const { google } = require('googleapis');
 const fs = require('fs');
@@ -1343,6 +1344,56 @@ app.post('/api/auth/logout', (req, res) => {
       res.clearCookie('connect.sid').json({ ok: true });
     });
   });
+});
+
+// ── JWT Token Endpoints (persistent auth across server restarts) ──
+const JWT_SECRET = process.env.JWT_SECRET || 'calendai-jwt-secret-change-in-production';
+
+/**
+ * POST /api/auth/token
+ * Exchange the current session for a JWT token.
+ * The frontend stores this token in localStorage and sends it as
+ * Authorization: Bearer <token> for subsequent requests.
+ */
+app.post('/api/auth/token', (req, res) => {
+  if (!req.isAuthenticated || !req.isAuthenticated()) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  }
+  const sessionUser = req.session?.passport?.user;
+  if (!sessionUser) {
+    return res.status(401).json({ error: 'No user in session' });
+  }
+  const token = jwt.sign(
+    {
+      id: sessionUser.id || sessionUser.googleId,
+      googleId: sessionUser.googleId,
+      displayName: sessionUser.displayName,
+      email: sessionUser.email,
+      photo: sessionUser.photo
+    },
+    JWT_SECRET,
+    { expiresIn: '90d' }
+  );
+  res.json({ token, user: sessionUser });
+});
+
+/**
+ * GET /api/auth/verify
+ * Verify a JWT token from the Authorization header.
+ * Returns the user data if valid, or 401 if invalid/expired.
+ */
+app.get('/api/auth/verify', (req, res) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'No token provided' });
+  }
+  const token = authHeader.split(' ')[1];
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    res.json({ user: decoded });
+  } catch (err) {
+    res.status(401).json({ error: 'Invalid or expired token' });
+  }
 });
 
 // ──────────────────────────────────────────────

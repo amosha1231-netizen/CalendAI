@@ -409,20 +409,29 @@ function App() {
     };
   }, []);
 
+  // ── JWT Token Management ──
+  // Store/retrieve JWT from localStorage for persistent auth across server restarts
+  const getJwtToken = () => {
+    try { return localStorage.getItem('calendai-jwt'); } catch { return null; }
+  };
+  const setJwtToken = (token) => {
+    try { localStorage.setItem('calendai-jwt', token); } catch (e) {}
+  };
+  const clearJwtToken = () => {
+    try { localStorage.removeItem('calendai-jwt'); } catch (e) {}
+  };
+
   // Detect login=success from Google OAuth redirect
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('login') === 'success' || params.get('auth') === 'success') {
-      // 1. Immediately clear the URL parameters (removes both ?auth=success and any ?book=)
+      // 1. Immediately clear the URL parameters
       window.history.replaceState({}, document.title, window.location.pathname);
-      // 2. Force view to dashboard (prevents any race condition with booking view)
+      // 2. Force view to dashboard
       setCurrentView('dashboard');
-      // 3. Mark as logged-in in localStorage so the UI stays on Dashboard
-      //    even if the Render server is still waking up.
-      try {
-        localStorage.setItem('calendai-isLoggedIn', 'true');
-      } catch (e) {}
-      // 4. Fetch user data from backend with retry (Render server may be waking up)
+      // 3. Mark as logged-in in localStorage
+      try { localStorage.setItem('calendai-isLoggedIn', 'true'); } catch (e) {}
+      // 4. Fetch user data from backend with retry, then exchange session for JWT
       const fetchUserWithRetry = (attempt = 0) => {
         fetch(`${API_BASE}/api/auth/me`, { credentials: "include" })
           .then(res => res.json())
@@ -431,21 +440,26 @@ function App() {
               setUser(data.user);
               setShowLoginPrompt(false);
               setShowGuestLimitModal(false);
-              // 5. Save user data to localStorage for persistence
               try {
                 localStorage.setItem('calendai-user', JSON.stringify(data.user));
                 localStorage.setItem('calendai-isLoggedIn', 'true');
               } catch (e) {}
-              // 6. Sync guest temp data to backend
+              // Exchange session for JWT token (persists across server restarts)
+              fetch(`${API_BASE}/api/auth/token`, { method: 'POST', credentials: "include" })
+                .then(r => r.json())
+                .then(jwtData => {
+                  if (jwtData.token) {
+                    setJwtToken(jwtData.token);
+                  }
+                })
+                .catch(() => {});
               syncGuestDataToBackend();
             } else if (attempt < 3) {
-              // Retry after 2s, 4s, 8s if the server is still waking up
               setTimeout(() => fetchUserWithRetry(attempt + 1), 2000 * (attempt + 1));
             }
           })
           .catch(() => {
             if (attempt < 3) {
-              // Retry on network errors too (server waking up)
               setTimeout(() => fetchUserWithRetry(attempt + 1), 2000 * (attempt + 1));
             }
           });
@@ -453,17 +467,41 @@ function App() {
       fetchUserWithRetry();
     }
   }, [syncGuestDataToBackend]);
-  // On mount: if localStorage says we were logged in, also try to restore the user
+
+  // On mount: restore user from JWT token (persistent across server restarts)
   useEffect(() => {
     let cancelled = false;
     const tryRestoreUser = async () => {
+      const token = getJwtToken();
+      if (!token) {
+        // No JWT, try session-based restore as fallback
+        try {
+          if (localStorage.getItem('calendai-isLoggedIn') === 'true') {
+            const res = await fetch(`${API_BASE}/api/auth/me`, { credentials: "include" });
+            const data = await res.json();
+            if (data.user && !cancelled) setUser(data.user);
+          }
+        } catch (e) {}
+        return;
+      }
+      // Verify JWT token with backend
       try {
-        if (localStorage.getItem('calendai-isLoggedIn') === 'true') {
-          const res = await fetch(`${API_BASE}/api/auth/me`, { credentials: "include" });
-          const data = await res.json();
-          if (data.user && !cancelled) setUser(data.user);
+        const res = await fetch(`${API_BASE}/api/auth/verify`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        const data = await res.json();
+        if (data.user && !cancelled) {
+          setUser(data.user);
+          try { localStorage.setItem('calendai-isLoggedIn', 'true'); } catch (e) {}
+        } else {
+          // Token expired, clear it
+          clearJwtToken();
+          try { localStorage.removeItem('calendai-isLoggedIn'); } catch (e) {}
         }
-      } catch (e) {}
+      } catch (e) {
+        // Server might be waking up - keep the dashboard view, don't fall back
+        // The JWT is still valid, just the server is down
+      }
     };
     tryRestoreUser();
     return () => { cancelled = true; };
