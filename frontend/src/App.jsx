@@ -5,7 +5,6 @@ import LocationSelector from "./components/LocationSelector";
 import Privacy from "./components/Privacy";
 import ErrorBoundary from "./components/ErrorBoundary";
 import SidebarDrawer from "./components/SidebarDrawer";
-import Booking from "./components/Booking";
 import translations from "./i18n";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
@@ -1379,22 +1378,6 @@ function App() {
         <p>{t.footerVersion} {typeof __BUILD_TIME__ !== 'undefined' ? __BUILD_TIME__ : t.footerLocal}</p>
         <button onClick={() => setShowPrivacy(true)} className="mt-2 inline-flex items-center gap-1 text-slate-400 hover:text-slate-600 transition"><Shield className="w-3 h-3" /> {t.footerPrivacy}</button>
       </footer>
-
-      {/* Booking Component (shown when ?book= parameter is present) */}
-      {isBookingOpen && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-            <Booking
-              schedule={schedule}
-              lang={lang}
-              t={t}
-              user={user}
-              onClose={() => setIsBookingOpen(false)}
-              onConfirm={handleBookingConfirm}
-            />
-          </div>
-        </div>
-      )}
 
       {/* Share Booking Link Modal */}
       {showShareModal && (
