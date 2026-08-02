@@ -146,8 +146,7 @@ function App() {
   const [showGuestLimitModal, setShowGuestLimitModal] = useState(false);
 
   // ── View State ──
-  // 'landing'   = unauthenticated user (no ?auth=success, no localStorage flag)
-  // 'dashboard' = logged-in user (or ?auth=success in URL, or localStorage flag)
+  // 'dashboard' = default for ALL users (guests can try the app, up to 10 actions)
   // 'booking'   = ONLY if ?book=true is explicitly in the URL
   const [currentView, setCurrentView] = useState(() => {
     const params = new URLSearchParams(window.location.search);
@@ -158,17 +157,11 @@ function App() {
       return 'dashboard';
     }
     // 2. Only show booking if ?book=true is explicitly present
-    if (params.get('book') === 'true') {
+    if (params.get('book') === 'true' || params.get('book') === '1') {
       return 'booking';
     }
-    // 3. If localStorage says logged-in, show dashboard
-    try {
-      if (localStorage.getItem('calendai-isLoggedIn') === 'true') {
-        return 'dashboard';
-      }
-    } catch (e) {}
-    // 4. Default: show the landing page (no redirect to Google)
-    return 'landing';
+    // 3. Default: show dashboard for everyone (guests can try the app freely)
+    return 'dashboard';
   });
   const [authLoading, setAuthLoading] = useState(() => {
     // Only show loading if we think we're logged in but don't have user yet
@@ -1008,49 +1001,6 @@ function App() {
 
   const isRTL = lang === 'he';
   const SUGGESTION_CHIPS = t.suggestionChips;
-
-  // LANDING VIEW: shown when user is not logged in and no ?book=true param
-  // No automatic redirect to Google - user must click the button.
-  if (currentView === 'landing') {
-    return (
-      <>
-        {!splashDone && (
-          <div className={`splash-screen${splashFading ? ' fade-out' : ''}`} dir="ltr">
-            <div className="splash-logo-container">
-              <div className="splash-logo-ring" />
-              <div className="splash-logo-ring" />
-              <CalendarCheck className="splash-logo-icon" />
-            </div>
-            <h1 className="splash-title">CalendAI</h1>
-            <p className="splash-subtitle">{t.splashSubtitle}</p>
-            <div className="splash-dots">
-              <div className="splash-dot" />
-              <div className="splash-dot" />
-              <div className="splash-dot" />
-            </div>
-            <span className="splash-version">{t.splashVersion}</span>
-          </div>
-        )}
-        <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 flex items-center justify-center p-4">
-          <div className="max-w-md w-full text-center">
-            <div className="mb-8">
-              <div className="flex items-center justify-center gap-3 mb-4">
-                <Calendar className="w-12 h-12 text-blue-600" />
-                <h1 className="text-4xl font-bold text-slate-900">CalendAI</h1>
-              </div>
-              <p className="text-lg text-slate-600" dir={isRTL ? 'rtl' : 'ltr'}>{t.tagline}</p>
-            </div>
-            <button onClick={handleLogin}
-              className="flex items-center justify-center gap-3 bg-white border-2 border-slate-200 text-slate-700 px-8 py-4 rounded-2xl hover:bg-slate-50 hover:border-blue-300 hover:shadow-lg transition-all duration-200 text-lg font-medium w-full shadow-sm">
-              <LogIn className="w-6 h-6" />
-              {t.loginWithGoogle}
-            </button>
-            <p className="mt-6 text-sm text-slate-400">{t.splashVersion}</p>
-          </div>
-        </div>
-      </>
-    );
-  }
 
   return (
     <>
