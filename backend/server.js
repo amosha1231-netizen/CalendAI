@@ -1319,7 +1319,7 @@ app.get('/api/auth/google',
 );
 
 app.get('/api/auth/google/callback',
-  passport.authenticate('google', { failureRedirect: '/' }),
+  passport.authenticate('google', { failureRedirect: '/?auth=failed' }),
   (req, res) => {
     if (req.session) {
       delete req.session.returnTo;
