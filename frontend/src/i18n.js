@@ -289,6 +289,7 @@ const translations = {
 
     // Wizard / Meeting Coordinator
     wizardTitle: 'תיאום פגישה חדשה!',
+    wizardShort: 'תיאום',
     wizardStep1Title: 'אורך ונושא הפגישה',
     wizardStep1Desc: 'בחר אורך פגישה וכותרת',
     wizardDuration: 'אורך הפגישה:',
@@ -366,6 +367,7 @@ const translations = {
 
     // Smart Auth
     loginRequired: 'עליך להתחבר כדי לבצע פעולה זו',
+    loginShort: 'התחבר',
     loginToSave: 'התחבר כדי לשמור',
     loginToSaveDesc: 'כדי לשמור אירועים בלוח השנה, עליך להתחבר קודם',
 
@@ -702,6 +704,7 @@ const translations = {
 
     // Wizard / Meeting Coordinator
     wizardTitle: 'New Meeting Schedule!',
+    wizardShort: 'Schedule',
     wizardStep1Title: 'Duration & Subject',
     wizardStep1Desc: 'Choose meeting duration and title',
     wizardDuration: 'Meeting Duration:',
@@ -779,6 +782,7 @@ const translations = {
 
     // Smart Auth
     loginRequired: 'You need to log in to perform this action',
+    loginShort: 'Login',
     loginToSave: 'Login to save',
     loginToSaveDesc: 'To save events to your calendar, please log in first',
 

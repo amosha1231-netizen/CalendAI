@@ -619,10 +619,33 @@ async function parseWithGemini(text) {
     4. **Common Sense Decisions**: Explain any gaps, rest periods, or reasonable defaults you applied.
 
     ─────────────────────────────────────────────
-    STEP 2: MULTI-EVENT PERCEPTION
+    STEP 2: MULTI-EVENT PARSING (CRITICAL — NEW)
     ─────────────────────────────────────────────
-    You MUST detect and handle the following patterns intelligently:
+    You MUST detect when the user's text contains MULTIPLE separate tasks or items and return an ARRAY of separate events, never a single combined event.
 
+    **Multi-task detection**: If the text contains multiple tasks separated by commas, "ו" (and), "אז" (then), "אחרי" (after), or similar conjunctions — parse EACH task as a SEPARATE event. Examples:
+    - "רבע שעה לאוכל, חצי שעה עם הכלב, 20 דקות אימון" → 3 separate events
+    - "אוכל חצי שעה ואז כלב חצי שעה ואימון 20 דקות" → 3 separate events
+    - "take dog for 30 min, then eat for 15 min, then workout 20 min" → 3 separate events
+
+    **Duration calculation (CRITICAL)**: Parse Hebrew duration expressions accurately:
+    - "רבע שעה" = 15 minutes
+    - "חצי שעה" = 30 minutes
+    - "X דקות" = X minutes (e.g., "20 דקות" = 20 minutes)
+    - "שעה" = 60 minutes
+    - "שעתיים" = 120 minutes
+    - English equivalents: "quarter hour" = 15, "half hour" = 30, "X minutes" = X, "an hour" = 60, "X hours" = X*60
+
+    **Sequential scheduling based on current time (CRITICAL — NEW)**:
+    1. If NO explicit start time is mentioned, use the **CURRENT TIME** as the starting point.
+    2. Schedule the FIRST event starting at the current time.
+    3. Schedule the SECOND event immediately after the first event ends, and so on sequentially.
+    4. CRITICAL: Every event MUST have distinct startTime and endTime values. It is FORBIDDEN to return startTime equal to endTime.
+    5. Example: If current time is 14:30 and user says "רבע שעה לאוכל, חצי שעה עם הכלב" →
+       - Event 1: "אוכל" 14:30-14:45
+       - Event 2: "עם הכלב" 14:45-15:15
+
+    You MUST also detect and handle the following patterns intelligently:
     A. **Quantities**: If the user says "3 אימונים" / "3 workouts", "פעמיים" / "twice", "4 פגישות" / "4 meetings" → produce an array of that many events, distributed sensibly across available days.
     B. **Total Hours**: If the user says "ללמוד 6 שעות השבוע" / "study 6 hours this week" → break it into multiple sessions spread across the week.
     C. **Multiple People/Items**: "פגישות עם דני ויוסי" / "meetings with Danny and Yossi" → create separate events.
@@ -631,8 +654,9 @@ async function parseWithGemini(text) {
     For distribution, use COMMON SENSE:
     - Spread activities evenly across the week (not all on the same day).
     - Morning activities = 06:00-12:00. Afternoon = 12:00-17:00. Evening = 17:00-22:00.
-    - Leave at least 15-30 minute breaks between activities.
+    - Leave at least 5-15 minute gaps between activities.
     - Don't schedule anything after 23:00 or before 06:00 unless explicitly requested.
+    - ALWAYS compute unique startTime and endTime for each event. NEVER assign the same time to two different events.
 
     ─────────────────────────────────────────────
     STEP 3: COMMON SENSE RESOLUTION
