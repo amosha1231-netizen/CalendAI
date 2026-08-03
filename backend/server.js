@@ -1947,15 +1947,16 @@ app.post('/api/add-to-google-calendar', async (req, res) => {
 // POST /api/reschedule
 app.post('/api/reschedule', aiLimiter, async (req, res) => {
 
-  const { reason } = req.body;
-  if (!reason || !reason.trim()) {
-    return res.status(400).json({ error: 'Reason is required.' });
+  const { reason, customText } = req.body;
+  const effectiveReason = reason || customText || '';
+  if (!effectiveReason.trim()) {
+    return res.status(400).json({ error: 'Reason or customText is required.' });
   }
 
   try {
     const userId = getUserId(req);
     const currentSchedule = getUserSchedule(userId);
-    const result = await rescheduleWithGemini(currentSchedule, reason);
+    const result = await rescheduleWithGemini(currentSchedule, effectiveReason);
 
     userSchedules.set(userId, result.newSchedule);
     saveSchedulesNow();
@@ -1965,8 +1966,30 @@ app.post('/api/reschedule', aiLimiter, async (req, res) => {
       newSchedule: result.newSchedule
     });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Failed to reschedule.' });
+    console.error('Gemini reschedule failed, using fallback:', error.message);
+    // Fallback: extract delay minutes from text and use mathematical shift
+    try {
+      const userId = getUserId(req);
+      const currentSchedule = getUserSchedule(userId);
+
+      // Try to extract delay minutes from the reason text
+      const delayMatch = effectiveReason.match(/(\d+)\s*(דקות|דקה|minutes|minute|min)/i);
+      const delayMinutes = delayMatch ? parseInt(delayMatch[1], 10) : 30;
+
+      const result = shiftScheduleForward(currentSchedule, delayMinutes);
+
+      userSchedules.set(userId, result.newSchedule);
+      saveSchedulesNow();
+
+      res.json({
+        summary: result.summary,
+        newSchedule: result.newSchedule,
+        fallback: true
+      });
+    } catch (fallbackError) {
+      console.error('Fallback also failed:', fallbackError.message);
+      res.status(500).json({ error: 'Failed to reschedule. Please try again.' });
+    }
   }
 });
 

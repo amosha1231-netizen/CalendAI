@@ -107,6 +107,10 @@ function App() {
   const [gapsResult, setGapsResult] = useState(null);
   const [rescheduleMode, setRescheduleMode] = useState(null);
   const [selectedGaps, setSelectedGaps] = useState([]);
+  const [rescheduleCustomText, setRescheduleCustomText] = useState("");
+  const [rescheduleCustomLoading, setRescheduleCustomLoading] = useState(false);
+  const [rescheduleQuickAction, setRescheduleQuickAction] = useState(null);
+  const [rescheduleQuickActionLoading, setRescheduleQuickActionLoading] = useState(false);
 
   const [isFreeSlotsOpen, setIsFreeSlotsOpen] = useState(false);
   const [freeSlotsData, setFreeSlotsData] = useState(null);
@@ -1120,40 +1124,40 @@ function App() {
       )}
 
       {/* Header */}
-      <header className="max-w-6xl mx-auto mb-4 sm:mb-8 flex items-center justify-between border-b pb-3 sm:pb-4 gap-2">
-        <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-shrink">
+      <header className="max-w-6xl mx-auto mb-4 sm:mb-8 flex items-center justify-between border-b pb-3 sm:pb-4 gap-1 sm:gap-2">
+        <div className="flex items-center gap-1 sm:gap-3 min-w-0 flex-shrink">
           {/* Hamburger Menu Button */}
           <button onClick={() => setIsSidebarOpen(true)}
-            className="flex items-center justify-center w-9 h-9 rounded-lg hover:bg-slate-100 transition text-slate-600 shrink-0">
-            <Menu className="w-5 h-5" />
+            className="flex items-center justify-center w-8 h-8 sm:w-9 sm:h-9 rounded-lg hover:bg-slate-100 transition text-slate-600 shrink-0">
+            <Menu className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
-          <Calendar className="w-6 h-6 sm:w-8 sm:h-8 text-blue-600 shrink-0" />
+          <Calendar className="w-5 h-5 sm:w-8 sm:h-8 text-blue-600 shrink-0" />
           <div className="min-w-0">
-            <span className="text-[10px] text-slate-400 tracking-widest mb-0.5 block">{t.besod}</span>
-            <h1 className="text-lg sm:text-2xl font-bold text-slate-900 leading-tight truncate">CalendAI</h1>
-            <p className="text-xs sm:text-sm text-indigo-500/80 font-medium leading-snug truncate">{t.tagline}</p>
+            <span className="text-[8px] sm:text-[10px] text-slate-400 tracking-widest mb-0.5 block">{t.besod}</span>
+            <h1 className="text-sm sm:text-2xl font-bold text-slate-900 leading-tight truncate">CalendAI</h1>
+            <p className="text-[10px] sm:text-sm text-indigo-500/80 font-medium leading-snug truncate hidden sm:block">{t.tagline}</p>
           </div>
         </div>
-        <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
+        <div className="flex items-center gap-1 sm:gap-3 shrink-0">
           {/* Meeting Wizard Button */}
           <button onClick={() => setShowWizard(true)}
-            className="flex items-center gap-1 bg-gradient-to-r from-blue-500 to-indigo-600 border border-blue-400 text-white px-2 sm:px-4 py-1.5 sm:py-2 rounded-lg hover:from-blue-600 hover:to-indigo-700 transition text-xs sm:text-sm font-medium shadow-sm whitespace-nowrap">
-            <Calendar className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> <span className="hidden sm:inline">{t.wizardTitle}</span><span className="sm:hidden">{t.wizardShort}</span>
+            className="flex items-center gap-1 bg-gradient-to-r from-blue-500 to-indigo-600 border border-blue-400 text-white px-1.5 sm:px-4 py-1 sm:py-2 rounded-lg hover:from-blue-600 hover:to-indigo-700 transition text-[11px] sm:text-sm font-medium shadow-sm whitespace-nowrap">
+            <Calendar className="w-3 h-3 sm:w-4 sm:h-4" /> <span className="hidden sm:inline">{t.wizardTitle}</span><span className="sm:hidden">{t.wizardShort}</span>
           </button>
           {/* Language Toggle Button */}
           <button onClick={toggleLanguage}
-            className="flex items-center gap-1 bg-white border border-slate-300 text-slate-700 px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg hover:bg-slate-50 transition text-xs sm:text-sm font-medium whitespace-nowrap">
+            className="flex items-center gap-1 bg-white border border-slate-300 text-slate-700 px-1.5 sm:px-3 py-1 sm:py-2 rounded-lg hover:bg-slate-50 transition text-[11px] sm:text-sm font-medium whitespace-nowrap">
             {t.languageLabel}
           </button>
           {user ? (
             <div className="flex items-center gap-1 sm:gap-3">
-              {user.photo ? <img src={user.photo} alt="" className="w-7 h-7 sm:w-8 sm:h-8 rounded-full shrink-0" /> : <User className="w-5 h-5 sm:w-6 sm:h-6 text-slate-500 shrink-0" />}
+              {user.photo ? <img src={user.photo} alt="" className="w-6 h-6 sm:w-8 sm:h-8 rounded-full shrink-0" /> : <User className="w-4 h-4 sm:w-6 sm:h-6 text-slate-500 shrink-0" />}
               <span className="hidden sm:inline text-sm text-slate-700 truncate max-w-[100px]">{user.displayName || user.email}</span>
-              <button onClick={handleLogout} className="flex items-center gap-1 text-xs sm:text-sm text-red-500 hover:text-red-700 transition shrink-0"><LogOut className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> <span className="hidden sm:inline">{t.logout}</span></button>
+              <button onClick={handleLogout} className="flex items-center gap-1 text-[11px] sm:text-sm text-red-500 hover:text-red-700 transition shrink-0"><LogOut className="w-3 h-3 sm:w-4 sm:h-4" /> <span className="hidden sm:inline">{t.logout}</span></button>
             </div>
           ) : (
-            <button onClick={handleLogin} className="flex items-center gap-1 sm:gap-2 bg-white border border-slate-300 text-slate-700 px-2 sm:px-4 py-1.5 sm:py-2 rounded-lg hover:bg-slate-50 transition text-xs sm:text-sm whitespace-nowrap">
-              <LogIn className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> <span className="hidden sm:inline">{t.loginWithGoogle}</span><span className="sm:hidden">{t.loginShort}</span>
+            <button onClick={handleLogin} className="flex items-center gap-1 sm:gap-2 bg-white border border-slate-300 text-slate-700 px-1.5 sm:px-4 py-1 sm:py-2 rounded-lg hover:bg-slate-50 transition text-[11px] sm:text-sm whitespace-nowrap">
+              <LogIn className="w-3 h-3 sm:w-4 sm:h-4" /> <span className="hidden sm:inline">{t.loginWithGoogle}</span><span className="sm:hidden">{t.loginShort}</span>
             </button>
           )}
         </div>
@@ -1371,6 +1375,70 @@ function App() {
                       className="w-full text-right p-3 bg-slate-50 rounded-lg border border-slate-200 hover:bg-indigo-50 hover:border-indigo-300 transition">{item.label}</button>
                   ))}
                 </div>
+
+                {/* Quick Actions */}
+                <div className="mt-4 pt-3 border-t border-slate-200">
+                  <p className="text-xs font-semibold text-slate-500 mb-2">{t.rescheduleQuickActions}</p>
+                  <div className="flex flex-col gap-2">
+                    <button onClick={async () => {
+                      setRescheduleQuickActionLoading(true);
+                      try {
+                        const res = await fetch(`${API_BASE}/api/reschedule/merge-gaps`, {
+                          method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include"
+                        });
+                        const data = await res.json();
+                        if (res.ok) {
+                          setReschedulePreview(data);
+                          setRescheduleStep("preview");
+                        } else {
+                          setRescheduleError(data.error || "Failed");
+                        }
+                      } catch (err) { setRescheduleError(err.message); }
+                      finally { setRescheduleQuickActionLoading(false); }
+                    }} disabled={rescheduleQuickActionLoading}
+                      className="w-full text-right p-3 bg-amber-50 rounded-lg border border-amber-200 hover:bg-amber-100 transition disabled:opacity-50">
+                      <div className="font-medium text-amber-800 text-sm">{t.rescheduleMergeGaps}</div>
+                    </button>
+                    <button onClick={() => handleReschedule(t.delayTomorrow)}
+                      disabled={rescheduleQuickActionLoading}
+                      className="w-full text-right p-3 bg-sky-50 rounded-lg border border-sky-200 hover:bg-sky-100 transition disabled:opacity-50">
+                      <div className="font-medium text-sky-800 text-sm">{t.rescheduleMovePending}</div>
+                    </button>
+                    <button onClick={() => handleReschedule(t.rescheduleAddBreak)}
+                      disabled={rescheduleQuickActionLoading}
+                      className="w-full text-right p-3 bg-emerald-50 rounded-lg border border-emerald-200 hover:bg-emerald-100 transition disabled:opacity-50">
+                      <div className="font-medium text-emerald-800 text-sm">{t.rescheduleAddBreak}</div>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Free text input */}
+                <div className="mt-4 pt-3 border-t border-slate-200">
+                  <p className="text-xs font-semibold text-slate-500 mb-2">{t.rescheduleFreeText}</p>
+                  <div className="flex gap-2">
+                    <input type="text" value={rescheduleCustomText} onChange={e => setRescheduleCustomText(e.target.value)}
+                      placeholder={t.rescheduleCustomPlaceholder}
+                      className="flex-1 px-3 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' && rescheduleCustomText.trim()) {
+                          setRescheduleCustomLoading(true);
+                          handleReschedule(rescheduleCustomText.trim());
+                          setRescheduleCustomLoading(false);
+                        }
+                      }}
+                    />
+                    <button onClick={async () => {
+                      if (!rescheduleCustomText.trim()) return;
+                      setRescheduleCustomLoading(true);
+                      await handleReschedule(rescheduleCustomText.trim());
+                      setRescheduleCustomLoading(false);
+                    }} disabled={rescheduleCustomLoading || !rescheduleCustomText.trim()}
+                      className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition disabled:bg-indigo-400 shrink-0">
+                      {rescheduleCustomLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : t.rescheduleCustomSubmit}
+                    </button>
+                  </div>
+                </div>
+
                 {rescheduleError && <div className="flex items-center gap-2 text-red-600 text-sm mt-4 bg-red-50 p-3 rounded-lg border border-red-200"><AlertCircle className="w-4 h-4" /><span>{rescheduleError}</span></div>}
               </div>
             )}

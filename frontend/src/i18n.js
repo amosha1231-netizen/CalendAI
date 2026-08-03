@@ -112,6 +112,15 @@ const translations = {
     delay1hour: 'אני באיחור של שעה',
     delayTomorrow: 'דחה משימות שלא בוצעו למחר',
     aiOrganizing: 'העוזר החכם מארגן את הלו"ז...',
+    rescheduleCustomLabel: 'או תאר מה קרה:',
+    rescheduleCustomPlaceholder: 'למשל: נתקעתי בפקק 20 דקות',
+    rescheduleCustomSubmit: 'עדכן לו"ז חכם',
+    rescheduleMergeGaps: 'דחוס רווחים מתים בין פגישות',
+    rescheduleMovePending: 'העבר משימות שלא בוצעו למחר בבוקר',
+    rescheduleAddBreak: 'הוסף 10 דקות הפסקה בין אירועים',
+    rescheduleQuickActions: 'פעולות מהירות:',
+    rescheduleFreeText: 'או תאר מה קרה:',
+    rescheduleUpdating: 'מעדכן לו"ז חכם...',
 
     // Free Slots Modal
     freeSlotsTitle: 'חלונות פנויים',
@@ -524,6 +533,15 @@ const translations = {
     delay1hour: 'I\'m 1 hour late',
     delayTomorrow: 'Postpone unfinished tasks to tomorrow',
     aiOrganizing: 'The smart assistant is reorganizing your schedule...',
+    rescheduleCustomLabel: 'Or describe what happened:',
+    rescheduleCustomPlaceholder: 'e.g., I got stuck in traffic for 20 min',
+    rescheduleCustomSubmit: 'Update smart schedule',
+    rescheduleMergeGaps: 'Compress dead gaps between meetings',
+    rescheduleMovePending: 'Move unfinished tasks to tomorrow morning',
+    rescheduleAddBreak: 'Add 10 min breaks between events',
+    rescheduleQuickActions: 'Quick actions:',
+    rescheduleFreeText: 'Or describe what happened:',
+    rescheduleUpdating: 'Updating smart schedule...',
 
     // Free Slots Modal
     freeSlotsTitle: 'Free Slots',
