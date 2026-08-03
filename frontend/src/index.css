@@ -280,13 +280,6 @@
   overflow: hidden;
 }
 
-[dir="rtl"] .sidebar-drawer {
-  right: auto;
-  left: 0;
-  transform: translateX(-100%);
-  box-shadow: 4px 0 24px rgba(0, 0, 0, 0.15);
-}
-
 .sidebar-drawer.open {
   transform: translateX(0);
 }

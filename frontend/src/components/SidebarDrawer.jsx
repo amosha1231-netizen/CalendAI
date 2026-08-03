@@ -225,20 +225,6 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, t, user
           </button>
         </div>
 
-        {/* Share Booking Link Button - Prominent in Sidebar */}
-        <div className="sidebar-share-section">
-          <button
-            onClick={() => {
-              onClose();
-              if (onOpenShareModal) onOpenShareModal();
-            }}
-            className="sidebar-share-btn"
-          >
-            <Share2 className="w-5 h-5" />
-            <span>{t.shareBookingLink}</span>
-          </button>
-        </div>
-
         {/* Navigation Tabs */}
         <div className="sidebar-nav">
           <button

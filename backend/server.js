@@ -5,6 +5,8 @@ const session = require('express-session');
 const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
+const mongoose = require('mongoose');
 const { GoogleGenAI } = require('@google/genai');
 const { google } = require('googleapis');
 const fs = require('fs');
@@ -17,7 +19,43 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 // ──────────────────────────────────────────────
-// Persistent file-based storage
+// MongoDB Connection
+// ──────────────────────────────────────────────
+const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/calendai';
+
+mongoose.connect(MONGO_URI)
+  .then(() => console.log('MongoDB connected'))
+  .catch(err => console.error('MongoDB connection error:', err.message));
+
+// ──────────────────────────────────────────────
+// User Schema (MongoDB)
+// ──────────────────────────────────────────────
+const userSchema = new mongoose.Schema({
+  googleId: { type: String, sparse: true },
+  email: { type: String, required: true, unique: true, lowercase: true },
+  password: { type: String },
+  displayName: { type: String },
+  photo: { type: String },
+  schedule: {
+    type: mongoose.Schema.Types.Mixed,
+    default: {
+      Sunday: [],
+      Monday: [],
+      Tuesday: [],
+      Wednesday: [],
+      Thursday: [],
+      Friday: [],
+      Saturday: [],
+      Today: []
+    }
+  },
+  createdAt: { type: Date, default: Date.now }
+});
+
+const User = mongoose.model('User', userSchema);
+
+// ──────────────────────────────────────────────
+// Persistent file-based storage (fallback for anonymous users)
 // ──────────────────────────────────────────────
 const DATA_DIR = path.join(__dirname, 'data');
 const SCHEDULES_FILE = path.join(DATA_DIR, 'schedules.json');
@@ -116,15 +154,30 @@ if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET &&
     clientID: GOOGLE_CLIENT_ID,
     clientSecret: GOOGLE_CLIENT_SECRET,
     callbackURL: process.env.GOOGLE_CALLBACK_URL || `${BACKEND_URL}/api/auth/google/callback`
-  }, (accessToken, refreshToken, profile, done) => {
-    const user = {
-      id: profile.id,
-      googleId: profile.id,
-      displayName: profile.displayName,
-      email: profile.emails?.[0]?.value || '',
-      photo: profile.photos?.[0]?.value || ''
-    };
-    return done(null, { ...user, accessToken });
+  }, async (accessToken, refreshToken, profile, done) => {
+    try {
+      // Find or create user in MongoDB
+      let user = await User.findOne({ googleId: profile.id });
+      if (!user) {
+        user = await User.findOne({ email: profile.emails?.[0]?.value || '' });
+        if (user) {
+          user.googleId = profile.id;
+          if (!user.displayName) user.displayName = profile.displayName;
+          if (!user.photo) user.photo = profile.photos?.[0]?.value || '';
+          await user.save();
+        } else {
+          user = await User.create({
+            googleId: profile.id,
+            displayName: profile.displayName,
+            email: profile.emails?.[0]?.value || '',
+            photo: profile.photos?.[0]?.value || ''
+          });
+        }
+      }
+      return done(null, { ...user.toObject(), accessToken });
+    } catch (err) {
+      return done(err, null);
+    }
   }));
 
   passport.serializeUser((user, done) => {
@@ -144,7 +197,7 @@ const LOCATIONS = LOCATIONS_DATA.locations;
 const DEFAULT_LOCATION_ID = 'jerusalem';
 
 // ──────────────────────────────────────────────
-// 4. Persistent schedule storage per user (file-backed)
+// 4. Persistent schedule storage per user (file-backed for anonymous, MongoDB for logged-in)
 // ──────────────────────────────────────────────
 let userSchedules = loadSchedules();
 
@@ -168,7 +221,7 @@ function getDefaultSchedule() {
 function getUserId(req) {
   if (req.isAuthenticated && req.isAuthenticated()) {
     const fullUser = req.session?.passport?.user;
-    return fullUser?.id || fullUser?.googleId || 'anonymous';
+    return fullUser?._id || fullUser?.id || fullUser?.googleId || 'anonymous';
   }
   return 'anonymous';
 }
@@ -179,6 +232,19 @@ function getUserSchedule(userId) {
     saveSchedulesNow();
   }
   return userSchedules.get(userId);
+}
+
+// ──────────────────────────────────────────────
+// Helper: Save schedule to MongoDB for logged-in users
+// ──────────────────────────────────────────────
+async function saveScheduleToMongo(userId, schedule) {
+  try {
+    if (mongoose.Types.ObjectId.isValid(userId)) {
+      await User.findByIdAndUpdate(userId, { schedule });
+    }
+  } catch (err) {
+    console.error('Failed to save schedule to MongoDB:', err.message);
+  }
 }
 
 // ──────────────────────────────────────────────
@@ -1379,6 +1445,116 @@ app.post('/api/auth/logout', (req, res) => {
   });
 });
 
+// ── Email/Password Auth Endpoints ──
+
+/**
+ * POST /api/auth/register
+ * Register a new user with email and password.
+ */
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const { email, password, name } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required.' });
+    }
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+    }
+
+    // Check if user already exists
+    const existingUser = await User.findOne({ email: email.toLowerCase() });
+    if (existingUser) {
+      return res.status(409).json({ error: 'An account with this email already exists.' });
+    }
+
+    // Hash password and create user
+    const hashedPassword = await bcrypt.hash(password, 12);
+    const user = await User.create({
+      email: email.toLowerCase(),
+      password: hashedPassword,
+      displayName: name || email.split('@')[0]
+    });
+
+    // Generate JWT token
+    const token = jwt.sign(
+      {
+        id: user._id.toString(),
+        email: user.email,
+        displayName: user.displayName
+      },
+      JWT_SECRET,
+      { expiresIn: '90d' }
+    );
+
+    res.status(201).json({
+      ok: true,
+      token,
+      user: {
+        id: user._id,
+        email: user.email,
+        displayName: user.displayName
+      }
+    });
+  } catch (err) {
+    console.error('Registration error:', err);
+    res.status(500).json({ error: 'Registration failed.' });
+  }
+});
+
+/**
+ * POST /api/auth/login
+ * Login with email and password.
+ */
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required.' });
+    }
+
+    // Find user by email
+    const user = await User.findOne({ email: email.toLowerCase() });
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid email or password.' });
+    }
+
+    // Check if user has a password (might be Google-only account)
+    if (!user.password) {
+      return res.status(401).json({ error: 'This account uses Google login. Please sign in with Google.' });
+    }
+
+    // Verify password
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(401).json({ error: 'Invalid email or password.' });
+    }
+
+    // Generate JWT token
+    const token = jwt.sign(
+      {
+        id: user._id.toString(),
+        email: user.email,
+        displayName: user.displayName
+      },
+      JWT_SECRET,
+      { expiresIn: '90d' }
+    );
+
+    res.json({
+      ok: true,
+      token,
+      user: {
+        id: user._id,
+        email: user.email,
+        displayName: user.displayName
+      }
+    });
+  } catch (err) {
+    console.error('Login error:', err);
+    res.status(500).json({ error: 'Login failed.' });
+  }
+});
+
 // ── JWT Token Endpoints (persistent auth across server restarts) ──
 const JWT_SECRET = process.env.JWT_SECRET || 'calendai-jwt-secret-change-in-production';
 
@@ -1712,7 +1888,7 @@ app.get('/api/schedule/free-slots', (req, res) => {
   }
 });
 
-app.post('/api/schedule/add-to-free-slot', (req, res) => {
+app.post('/api/schedule/add-to-free-slot', async (req, res) => {
   try {
     const { day, startTime, endTime, title, recurrence, location } = req.body;
     if (!day || !startTime || !endTime || !title) {
@@ -1744,6 +1920,11 @@ app.post('/api/schedule/add-to-free-slot', (req, res) => {
     syncTodayWithCurrentDay(schedule);
     saveSchedulesNow();
     
+    // Save to MongoDB for logged-in users
+    if (mongoose.Types.ObjectId.isValid(userId)) {
+      await saveScheduleToMongo(userId, schedule);
+    }
+    
     res.json({ ok: true, event: newEvent });
   } catch (error) {
     console.error('Failed to add event to free slot:', error);
@@ -1751,7 +1932,7 @@ app.post('/api/schedule/add-to-free-slot', (req, res) => {
   }
 });
 
-app.put('/api/schedule/event', (req, res) => {
+app.put('/api/schedule/event', async (req, res) => {
   const { day, index, updates } = req.body;
   if (!day || index === undefined || !updates) {
     return res.status(400).json({ error: 'day, index, and updates are required.' });
@@ -1766,6 +1947,12 @@ app.put('/api/schedule/event', (req, res) => {
       schedule[actualDay][index] = { ...schedule[actualDay][index], ...updates };
       syncTodayWithCurrentDay(schedule);
       saveSchedulesNow();
+      
+      // Save to MongoDB for logged-in users
+      if (mongoose.Types.ObjectId.isValid(userId)) {
+        await saveScheduleToMongo(userId, schedule);
+      }
+      
       res.json({ ok: true, event: schedule[actualDay][index] });
     } else {
       res.status(404).json({ error: 'Event not found.' });
@@ -1846,6 +2033,11 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
     syncTodayWithCurrentDay(schedule);
 
     saveSchedulesNow();
+    
+    // Save to MongoDB for logged-in users
+    if (mongoose.Types.ObjectId.isValid(userId)) {
+      await saveScheduleToMongo(userId, schedule);
+    }
 
     res.json({ 
       events: addedEvents,
@@ -1960,6 +2152,11 @@ app.post('/api/reschedule', aiLimiter, async (req, res) => {
 
     userSchedules.set(userId, result.newSchedule);
     saveSchedulesNow();
+    
+    // Save to MongoDB for logged-in users
+    if (mongoose.Types.ObjectId.isValid(userId)) {
+      await saveScheduleToMongo(userId, result.newSchedule);
+    }
 
     res.json({
       summary: result.summary,
@@ -1980,6 +2177,11 @@ app.post('/api/reschedule', aiLimiter, async (req, res) => {
 
       userSchedules.set(userId, result.newSchedule);
       saveSchedulesNow();
+      
+      // Save to MongoDB for logged-in users
+      if (mongoose.Types.ObjectId.isValid(userId)) {
+        await saveScheduleToMongo(userId, result.newSchedule);
+      }
 
       res.json({
         summary: result.summary,
@@ -1993,7 +2195,7 @@ app.post('/api/reschedule', aiLimiter, async (req, res) => {
   }
 });
 
-app.post('/api/reschedule/shift', (req, res) => {
+app.post('/api/reschedule/shift', async (req, res) => {
   const { delayMinutes } = req.body;
   if (!delayMinutes || delayMinutes < 1) {
     return res.status(400).json({ error: 'delayMinutes is required and must be positive.' });
@@ -2006,6 +2208,11 @@ app.post('/api/reschedule/shift', (req, res) => {
 
     userSchedules.set(userId, result.newSchedule);
     saveSchedulesNow();
+    
+    // Save to MongoDB for logged-in users
+    if (mongoose.Types.ObjectId.isValid(userId)) {
+      await saveScheduleToMongo(userId, result.newSchedule);
+    }
 
     res.json({
       summary: result.summary,
@@ -2017,7 +2224,7 @@ app.post('/api/reschedule/shift', (req, res) => {
   }
 });
 
-app.post('/api/reschedule/merge-gaps', (req, res) => {
+app.post('/api/reschedule/merge-gaps', async (req, res) => {
   try {
     const userId = getUserId(req);
     const currentSchedule = getUserSchedule(userId);
@@ -2026,6 +2233,11 @@ app.post('/api/reschedule/merge-gaps', (req, res) => {
     if (result.totalMergedMinutes > 0) {
       userSchedules.set(userId, result.newSchedule);
       saveSchedulesNow();
+      
+      // Save to MongoDB for logged-in users
+      if (mongoose.Types.ObjectId.isValid(userId)) {
+        await saveScheduleToMongo(userId, result.newSchedule);
+      }
     }
 
     res.json({
@@ -2057,7 +2269,7 @@ app.get('/api/reschedule/gaps', (req, res) => {
   }
 });
 
-app.put('/api/schedule', (req, res) => {
+app.put('/api/schedule', async (req, res) => {
   const { schedule } = req.body;
   if (!schedule) {
     return res.status(400).json({ error: 'schedule is required.' });
@@ -2065,11 +2277,33 @@ app.put('/api/schedule', (req, res) => {
   const userId = getUserId(req);
   userSchedules.set(userId, schedule);
   saveSchedulesNow();
+  
+  // Save to MongoDB for logged-in users
+  if (mongoose.Types.ObjectId.isValid(userId)) {
+    await saveScheduleToMongo(userId, schedule);
+  }
+  
   res.json({ ok: true, message: 'Schedule restored.' });
 });
 
-app.get('/api/schedule', (req, res) => {
+app.get('/api/schedule', async (req, res) => {
   const userId = getUserId(req);
+  
+  // For logged-in users, try to load schedule from MongoDB first
+  if (mongoose.Types.ObjectId.isValid(userId)) {
+    try {
+      const user = await User.findById(userId);
+      if (user && user.schedule) {
+        // Update the in-memory cache with MongoDB data
+        userSchedules.set(userId, user.schedule);
+        syncTodayWithCurrentDay(user.schedule);
+        return res.json({ schedule: user.schedule });
+      }
+    } catch (err) {
+      console.error('Failed to load schedule from MongoDB:', err.message);
+    }
+  }
+  
   const schedule = getUserSchedule(userId);
   syncTodayWithCurrentDay(schedule);
   res.json({ schedule });
@@ -2111,14 +2345,20 @@ app.get('/api/schedule/expanded', (req, res) => {
   res.json({ events: monthEvents, year, month, view: 'month' });
 });
 
-app.delete('/api/schedule/clear', (req, res) => {
+app.delete('/api/schedule/clear', async (req, res) => {
   const userId = getUserId(req);
   userSchedules.set(userId, getDefaultSchedule());
   saveSchedulesNow();
+  
+  // Save to MongoDB for logged-in users
+  if (mongoose.Types.ObjectId.isValid(userId)) {
+    await saveScheduleToMongo(userId, getDefaultSchedule());
+  }
+  
   res.json({ ok: true, message: 'Schedule cleared.' });
 });
 
-app.delete('/api/schedule/event', (req, res) => {
+app.delete('/api/schedule/event', async (req, res) => {
   const { day, index } = req.body;
   if (!day || index === undefined) {
     return res.status(400).json({ error: 'day and index are required.' });
@@ -2128,6 +2368,12 @@ app.delete('/api/schedule/event', (req, res) => {
   if (schedule[day] && schedule[day][index]) {
     schedule[day].splice(index, 1);
     saveSchedulesNow();
+    
+    // Save to MongoDB for logged-in users
+    if (mongoose.Types.ObjectId.isValid(userId)) {
+      await saveScheduleToMongo(userId, schedule);
+    }
+    
     res.json({ ok: true });
   } else {
     res.status(404).json({ error: 'Event not found.' });
@@ -2421,6 +2667,11 @@ app.post('/api/booking/:id/confirm', async (req, res) => {
 
     syncTodayWithCurrentDay(hostSchedule);
     saveSchedulesNow();
+    
+    // Save to MongoDB for logged-in users
+    if (mongoose.Types.ObjectId.isValid(booking.hostId)) {
+      await saveScheduleToMongo(booking.hostId, hostSchedule);
+    }
 
     res.json({
       ok: true,
@@ -2515,7 +2766,7 @@ app.get('/api/schedule/expiring', (req, res) => {
  * Extend a yearly event by updating its createdMonth to the current month
  * (effectively renewing it for another year).
  */
-app.post('/api/schedule/extend-event', (req, res) => {
+app.post('/api/schedule/extend-event', async (req, res) => {
   try {
     const { dayKey, index } = req.body;
     if (!dayKey || index === undefined) {
@@ -2545,6 +2796,11 @@ app.post('/api/schedule/extend-event', (req, res) => {
     
     syncTodayWithCurrentDay(schedule);
     saveSchedulesNow();
+    
+    // Save to MongoDB for logged-in users
+    if (mongoose.Types.ObjectId.isValid(userId)) {
+      await saveScheduleToMongo(userId, schedule);
+    }
     
     res.json({ 
       ok: true, 

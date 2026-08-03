@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Menu, Share2, Download, Eye, ExternalLink, Copy } from "lucide-react";
+import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Menu, Share2, Download, Eye, ExternalLink, Copy, Mail } from "lucide-react";
 import MonthlyCalendar from "./components/MonthlyCalendar";
 import LocationSelector from "./components/LocationSelector";
 import Privacy from "./components/Privacy";
@@ -203,6 +203,15 @@ function App() {
   // Smart Auth: show login prompt for save operations
   const [showLoginPrompt, setShowLoginPrompt] = useState(false);
   const [pendingAction, setPendingAction] = useState(null);
+
+  // Email/Password Auth State
+  const [showEmailAuth, setShowEmailAuth] = useState(false);
+  const [authMode, setAuthMode] = useState('login'); // 'login' or 'register'
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authName, setAuthName] = useState('');
+  const [emailAuthLoading, setEmailAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState('');
 
   // Share Booking Link State
   const [showShareModal, setShowShareModal] = useState(false);
@@ -1736,9 +1745,124 @@ function App() {
               className="w-full px-4 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition shadow-lg flex items-center justify-center gap-2">
               <LogIn className="w-4 h-4" /> {t.loginWithGoogle}
             </button>
+            <button onClick={() => { setShowGuestLimitModal(false); setShowEmailAuth(true); setAuthMode('login'); }}
+              className="w-full mt-2 px-4 py-3 bg-white border border-slate-300 text-slate-700 rounded-xl font-medium hover:bg-slate-50 transition shadow-sm flex items-center justify-center gap-2">
+              <Mail className="w-4 h-4" /> {lang === 'he' ? 'התחבר עם אימייל' : 'Login with Email'}
+            </button>
             <button onClick={() => setShowGuestLimitModal(false)} className="w-full mt-3 text-sm text-slate-400 hover:text-slate-600 py-2 transition">
               {t.cancel}
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Email/Password Auth Modal ── */}
+      {showEmailAuth && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-[9999]" onClick={() => setShowEmailAuth(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-slate-800">
+                {authMode === 'login' ? (lang === 'he' ? 'התחברות' : 'Login') : (lang === 'he' ? 'הרשמה' : 'Register')}
+              </h3>
+              <button onClick={() => setShowEmailAuth(false)} className="p-1 rounded-full hover:bg-slate-100">
+                <X className="w-5 h-5 text-slate-500" />
+              </button>
+            </div>
+
+            {authError && (
+              <div className="flex items-center gap-2 text-red-600 text-sm mb-4 bg-red-50 p-3 rounded-lg border border-red-200">
+                <AlertCircle className="w-4 h-4" /><span>{authError}</span>
+              </div>
+            )}
+
+            <div className="space-y-4">
+              {authMode === 'register' && (
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">{lang === 'he' ? 'שם' : 'Name'}</label>
+                  <input type="text" value={authName} onChange={e => setAuthName(e.target.value)}
+                    className="w-full px-3 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder={lang === 'he' ? 'הכנס שם' : 'Enter name'} />
+                </div>
+              )}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">{lang === 'he' ? 'אימייל' : 'Email'}</label>
+                <input type="email" value={authEmail} onChange={e => setAuthEmail(e.target.value)}
+                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="email@example.com" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">{lang === 'he' ? 'סיסמה' : 'Password'}</label>
+                <input type="password" value={authPassword} onChange={e => setAuthPassword(e.target.value)}
+                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="••••••" />
+              </div>
+
+              <button onClick={async () => {
+                setEmailAuthLoading(true);
+                setAuthError('');
+                try {
+                  const endpoint = authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
+                  const body = authMode === 'login'
+                    ? { email: authEmail, password: authPassword }
+                    : { email: authEmail, password: authPassword, name: authName };
+                  
+                  const res = await fetch(`${API_BASE}${endpoint}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                  });
+                  const data = await res.json();
+                  
+                  if (!res.ok) {
+                    throw new Error(data.error || 'Authentication failed');
+                  }
+
+                  // Save JWT token and user
+                  setJwtToken(data.token);
+                  setUser(data.user);
+                  try {
+                    localStorage.setItem('calendai-isLoggedIn', 'true');
+                    localStorage.setItem('calendai-user', JSON.stringify(data.user));
+                  } catch (e) {}
+                  
+                  setShowEmailAuth(false);
+                  setShowLoginPrompt(false);
+                  setShowGuestLimitModal(false);
+                  setAuthEmail('');
+                  setAuthPassword('');
+                  setAuthName('');
+                  setSuccess(lang === 'he' ? 'התחברת בהצלחה!' : 'Logged in successfully!');
+                } catch (err) {
+                  setAuthError(err.message);
+                } finally {
+                  setEmailAuthLoading(false);
+                }
+              }} disabled={emailAuthLoading || !authEmail || !authPassword}
+                className="w-full px-4 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition shadow-lg disabled:bg-blue-400 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+                {emailAuthLoading ? <><Loader2 className="w-4 h-4 animate-spin" /> {lang === 'he' ? 'מתחבר...' : 'Loading...'}</> : (authMode === 'login' ? (lang === 'he' ? 'התחבר' : 'Login') : (lang === 'he' ? 'הירשם' : 'Register'))}
+              </button>
+
+              <div className="text-center mt-2">
+                <button onClick={() => {
+                  setAuthMode(authMode === 'login' ? 'register' : 'login');
+                  setAuthError('');
+                }} className="text-sm text-blue-600 hover:text-blue-800">
+                  {authMode === 'login'
+                    ? (lang === 'he' ? 'אין לך חשבון? הירשם' : 'Don\'t have an account? Register')
+                    : (lang === 'he' ? 'יש לך חשבון? התחבר' : 'Already have an account? Login')}
+                </button>
+              </div>
+
+              <div className="relative my-4">
+                <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-200" /></div>
+                <div className="relative flex justify-center text-xs"><span className="bg-white px-2 text-slate-400">{lang === 'he' ? 'או' : 'or'}</span></div>
+              </div>
+
+              <button onClick={() => { setShowEmailAuth(false); handleLogin(); }}
+                className="w-full px-4 py-3 bg-white border border-slate-300 text-slate-700 rounded-xl font-medium hover:bg-slate-50 transition shadow-sm flex items-center justify-center gap-2">
+                <LogIn className="w-4 h-4" /> {t.loginWithGoogle}
+              </button>
+            </div>
           </div>
         </div>
       )}
