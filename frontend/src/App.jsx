@@ -156,11 +156,10 @@ function App() {
   // 'booking'   = ONLY if ?book=true or ?book=dyn_xxx is explicitly in the URL
   // 'guest-booking' = when a dynamic booking ID is in the URL
   const [currentView, setCurrentView] = useState(() => {
+    if (typeof window === 'undefined') return 'dashboard';
     const params = new URLSearchParams(window.location.search);
-    // 1. If auth=success is in URL, force dashboard and save flag
+    // 1. If auth=success is in URL, force dashboard (no side-effects here)
     if (params.get('login') === 'success' || params.get('auth') === 'success') {
-      try { localStorage.setItem('calendai-isLoggedIn', 'true'); } catch (e) {}
-      window.history.replaceState({}, document.title, window.location.pathname);
       return 'dashboard';
     }
     // 2. Only show booking if ?book=true is explicitly present
@@ -430,30 +429,17 @@ function App() {
     try { localStorage.removeItem('calendai-jwt'); } catch (e) {}
   };
 
-  // ── Block Booking for logged-in users & clean URL on auth redirect ──
+  // ── Unified OAuth Redirect Handler ──
+  // Detects login=success or auth=success in URL, saves flag, cleans URL, then fetches user
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const isAuthRedirect = params.get('login') === 'success' || params.get('auth') === 'success';
-    
-    if (isAuthRedirect) {
-      // ניקוי מוחלט של כל הפרמטרים בשורת הכתובת
-      window.history.replaceState({}, document.title, window.location.pathname);
-      setCurrentView('dashboard');
-      try { localStorage.setItem('calendai-isLoggedIn', 'true'); } catch (e) {}
-    }
-  }, []);
 
-  // Detect login=success from Google OAuth redirect
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('login') === 'success' || params.get('auth') === 'success') {
-      // 1. Immediately clear the URL parameters
-      window.history.replaceState({}, document.title, window.location.pathname);
-      // 2. Force view to dashboard
-      setCurrentView('dashboard');
-      // 3. Mark as logged-in in localStorage
+    if (isAuthRedirect) {
       try { localStorage.setItem('calendai-isLoggedIn', 'true'); } catch (e) {}
-      // 4. Fetch user data from backend with retry, then exchange session for JWT
+      setCurrentView('dashboard');
+      window.history.replaceState({}, document.title, window.location.pathname);
+
       const fetchUserWithRetry = (attempt = 0) => {
         fetch(`${API_BASE}/api/auth/me`, { credentials: "include" })
           .then(res => res.json())
@@ -466,23 +452,20 @@ function App() {
                 localStorage.setItem('calendai-user', JSON.stringify(data.user));
                 localStorage.setItem('calendai-isLoggedIn', 'true');
               } catch (e) {}
-              // Exchange session for JWT token (persists across server restarts)
               fetch(`${API_BASE}/api/auth/token`, { method: 'POST', credentials: "include" })
                 .then(r => r.json())
                 .then(jwtData => {
-                  if (jwtData.token) {
-                    setJwtToken(jwtData.token);
-                  }
+                  if (jwtData.token) setJwtToken(jwtData.token);
                 })
                 .catch(() => {});
               syncGuestDataToBackend();
             } else if (attempt < 3) {
-              setTimeout(() => fetchUserWithRetry(attempt + 1), 2000 * (attempt + 1));
+              setTimeout(() => fetchUserWithRetry(attempt + 1), 1500 * (attempt + 1));
             }
           })
           .catch(() => {
             if (attempt < 3) {
-              setTimeout(() => fetchUserWithRetry(attempt + 1), 2000 * (attempt + 1));
+              setTimeout(() => fetchUserWithRetry(attempt + 1), 1500 * (attempt + 1));
             }
           });
       };
@@ -1048,17 +1031,17 @@ function App() {
     return dayEvents.filter(e => e.location === locationFilter);
   };
 
-  // ── Force currentView to 'dashboard' for ALL users unless ?book=true or ?book=1 is explicitly in the URL ──
+  // ── Force currentView to 'dashboard' when user is logged in and no explicit ?book=true/?book=1 ──
   // This prevents any background fetch/effect from accidentally switching to booking view
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const hasExplicitBook = params.get('book') === 'true' || params.get('book') === '1';
+    const isLoggedIn = !!user || localStorage.getItem('calendai-isLoggedIn') === 'true';
 
-    // If no explicit ?book=1 in the URL right now, everyone (guests and logged-in) stays on dashboard
-    if (!hasExplicitBook && currentView !== 'dashboard') {
+    if (isLoggedIn && currentView === 'booking' && !hasExplicitBook) {
       setCurrentView('dashboard');
     }
-  }, [currentView]);
+  }, [currentView, user]);
 
   // If a dynamic booking ID is in the URL, show the guest booking view
   if (guestBookingId) {
