@@ -217,7 +217,7 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, t, user
       )}
 
       {/* Drawer */}
-      <div className={`sidebar-drawer ${isOpen ? 'open' : ''}`} dir={isRTL ? 'rtl' : 'ltr'}>
+      <div className={`sidebar-drawer ${isOpen ? 'open' : ''} w-full max-w-full box-border`} dir={isRTL ? 'rtl' : 'ltr'}>
         <div className="sidebar-header">
           <h2 className="sidebar-title">{t.sidebarTitle}</h2>
           <button onClick={onClose} className="sidebar-close-btn">
@@ -371,7 +371,7 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, t, user
                     setSettingsData(prev => ({ ...prev, lang: e.target.value }));
                     // Toggle language is handled by the parent's toggleLanguage
                   }}
-                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500"
+                  className="w-full max-w-full box-border px-3 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500"
                 >
                   <option value="he">עברית</option>
                   <option value="en">English</option>
@@ -384,7 +384,7 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, t, user
                   type="time"
                   value={settingsData.defaultStart}
                   onChange={(e) => setSettingsData(prev => ({ ...prev, defaultStart: e.target.value }))}
-                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500"
+                  className="w-full max-w-full box-border px-3 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500"
                 />
               </div>
 
@@ -394,7 +394,7 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, t, user
                   type="time"
                   value={settingsData.defaultEnd}
                   onChange={(e) => setSettingsData(prev => ({ ...prev, defaultEnd: e.target.value }))}
-                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500"
+                  className="w-full max-w-full box-border px-3 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500"
                 />
               </div>
 
@@ -412,7 +412,7 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, t, user
                     onChange={(e) => {
                       if (onLocationChange) onLocationChange(e.target.value);
                     }}
-                    className="w-full px-3 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500"
+                    className="w-full max-w-full box-border px-3 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="none">{t.noLocation}</option>
                     <option value="jerusalem">Jerusalem</option>
@@ -427,7 +427,7 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, t, user
                   <button
                     onClick={handleDetectLocation}
                     disabled={detectLoading}
-                    className="w-full flex items-center justify-center gap-2 px-3 py-2.5 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-lg hover:bg-indigo-100 transition text-sm font-medium disabled:opacity-60 disabled:cursor-not-allowed"
+                    className="w-full max-w-full box-border flex items-center justify-center gap-2 px-3 py-2.5 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-lg hover:bg-indigo-100 transition text-sm font-medium disabled:opacity-60 disabled:cursor-not-allowed"
                   >
                     {detectLoading ? (
                       <><Loader2 className="w-4 h-4 animate-spin" /> {t.detectLocationLoading || 'Detecting location...'}</>
@@ -455,7 +455,7 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, t, user
 
               <button
                 onClick={handleSettingsSave}
-                className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition text-sm"
+                className="w-full max-w-full box-border px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition text-sm"
               >
                 {settingsSaved ? `✓ ${t.settingsSaved}` : t.settingsSave}
               </button>
@@ -477,7 +477,7 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, t, user
               <button
                 onClick={handleInstallClick}
                 disabled={!installPrompt}
-                className={`px-6 py-3 rounded-xl font-bold text-sm shadow-lg transition ${
+                className={`w-full max-w-full box-border px-6 py-3 rounded-xl font-bold text-sm shadow-lg transition ${
                   installPrompt
                     ? 'bg-gradient-to-r from-blue-500 to-purple-600 text-white hover:shadow-xl cursor-pointer'
                     : 'bg-slate-200 text-slate-400 cursor-not-allowed'
