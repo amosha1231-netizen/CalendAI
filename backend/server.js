@@ -572,24 +572,83 @@ function fallbackParse(text) {
 
   let startHour = 9, startMinute = 0, endHour = 10, endMinute = 0;
 
-  const hebrewTime = parseHebrewTime(text);
-  if (hebrewTime) {
-    startHour = hebrewTime.startHour;
-    startMinute = hebrewTime.startMinute;
-    endHour = hebrewTime.endHour;
-    endMinute = hebrewTime.endMinute;
+  // ── RELATIVE TIME PARSING (CRITICAL FALLBACK) ──
+  // Handle "בעוד X דקות" / "עוד X דקות" / "in X minutes" / "in X min"
+  // Also handle "חצי שעה" / "half an hour" / "רבע שעה" / "quarter hour" / "X דקות" (duration-only)
+  const now = new Date();
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+
+  // Check for relative time phrases: "בעוד X דקות", "עוד X דקות", "in X minutes", "בעוד שעה", "עוד שעה"
+  const relativeTimeMatch = text.match(/(?:בעוד|עוד|in|after)\s*(?:(\d+)\s*דקות?|(\d+)\s*minutes?|שעה|an?\s*hour)/i);
+  // Check for duration-only phrases: "חצי שעה", "half hour", "רבע שעה", "quarter hour", "X דקות" (no explicit time)
+  const durationOnlyMatch = !relativeTimeMatch && text.match(/^(חצי\s*שעה|half\s* hour|רבע\s*שעה|quarter\s* hour|(\d+)\s*דקות|(\d+)\s*minutes?)/i);
+  // Check for "חצי שעה" / "half hour" as standalone duration
+  const halfHourMatch = !relativeTimeMatch && !durationOnlyMatch && text.match(/חצי\s*שעה|half\s*(\w*)?hour/i);
+  const quarterHourMatch = !relativeTimeMatch && !durationOnlyMatch && text.match(/רבע\s*שעה|quarter\s*(\w*)?hour/i);
+  const explicitMinutesMatch = !relativeTimeMatch && !durationOnlyMatch && text.match(/^(\d+)\s*(דקות|דקה|minutes?|min)/i);
+
+  if (relativeTimeMatch) {
+    // "בעוד X דקות" / "עוד X דקות" / "in X minutes" / "בעוד שעה" / "in an hour"
+    let delayMinutes = 0;
+    if (relativeTimeMatch[1]) {
+      delayMinutes = parseInt(relativeTimeMatch[1], 10);
+    } else if (relativeTimeMatch[2]) {
+      delayMinutes = parseInt(relativeTimeMatch[2], 10);
+    } else {
+      // "שעה" / "an hour" / "a hour"
+      delayMinutes = 60;
+    }
+
+    const startTotalMinutes = currentMinutes + delayMinutes;
+    const endTotalMinutes = startTotalMinutes + 60; // Default 1 hour duration
+
+    startHour = Math.floor((startTotalMinutes % 1440) / 60);
+    startMinute = startTotalMinutes % 60;
+    endHour = Math.floor((endTotalMinutes % 1440) / 60);
+    endMinute = endTotalMinutes % 60;
+  } else if (durationOnlyMatch || halfHourMatch || quarterHourMatch || explicitMinutesMatch) {
+    // Duration-only phrases: "חצי שעה" = 30 min, "רבע שעה" = 15 min, "X דקות" = X min
+    let durationMinutes = 60; // default
+    if (halfHourMatch || (durationOnlyMatch && durationOnlyMatch[0] && durationOnlyMatch[0].includes('חצי'))) {
+      durationMinutes = 30;
+    } else if (quarterHourMatch || (durationOnlyMatch && durationOnlyMatch[0] && durationOnlyMatch[0].includes('רבע'))) {
+      durationMinutes = 15;
+    } else if (durationOnlyMatch && durationOnlyMatch[2]) {
+      durationMinutes = parseInt(durationOnlyMatch[2], 10);
+    } else if (explicitMinutesMatch && explicitMinutesMatch[1]) {
+      durationMinutes = parseInt(explicitMinutesMatch[1], 10);
+    } else if (durationOnlyMatch && durationOnlyMatch[1]) {
+      durationMinutes = parseInt(durationOnlyMatch[1], 10);
+    }
+
+    const startTotalMinutes = currentMinutes;
+    const endTotalMinutes = startTotalMinutes + durationMinutes;
+
+    startHour = Math.floor((startTotalMinutes % 1440) / 60);
+    startMinute = startTotalMinutes % 60;
+    endHour = Math.floor((endTotalMinutes % 1440) / 60);
+    endMinute = endTotalMinutes % 60;
   } else {
-    const timeMatches = [...text.matchAll(/(\d{1,2})(?::(\d{2}))?/g)];
-    if (timeMatches.length >= 2) {
-      startHour = Number(timeMatches[0][1]);
-      startMinute = Number(timeMatches[0][2] || 0);
-      endHour = Number(timeMatches[1][1]);
-      endMinute = Number(timeMatches[1][2] || 0);
-    } else if (timeMatches.length === 1) {
-      startHour = Number(timeMatches[0][1]);
-      startMinute = Number(timeMatches[0][2] || 0);
-      endHour = startHour + 1;
-      endMinute = startMinute;
+    // Original fallback parsing logic (Hebrew time expressions, digital times)
+    const hebrewTime = parseHebrewTime(text);
+    if (hebrewTime) {
+      startHour = hebrewTime.startHour;
+      startMinute = hebrewTime.startMinute;
+      endHour = hebrewTime.endHour;
+      endMinute = hebrewTime.endMinute;
+    } else {
+      const timeMatches = [...text.matchAll(/(\d{1,2})(?::(\d{2}))?/g)];
+      if (timeMatches.length >= 2) {
+        startHour = Number(timeMatches[0][1]);
+        startMinute = Number(timeMatches[0][2] || 0);
+        endHour = Number(timeMatches[1][1]);
+        endMinute = Number(timeMatches[1][2] || 0);
+      } else if (timeMatches.length === 1) {
+        startHour = Number(timeMatches[0][1]);
+        startMinute = Number(timeMatches[0][2] || 0);
+        endHour = startHour + 1;
+        endMinute = startMinute;
+      }
     }
   }
 
@@ -1259,8 +1318,10 @@ function timeToMinutes(timeStr) {
 }
 
 function minutesToTime(totalMinutes) {
-  const h = Math.floor(totalMinutes / 60);
-  const m = totalMinutes % 60;
+  // Normalize to 0-1439 range for midnight-crossing events (e.g., 23:30 + 1h = 24:30 → 00:30)
+  const normalized = totalMinutes % 1440;
+  const h = Math.floor(normalized / 60);
+  const m = normalized % 60;
   const ampm = h >= 12 ? 'PM' : 'AM';
   const displayH = h > 12 ? h - 12 : (h === 0 ? 12 : h);
   return `${String(displayH).padStart(2, '0')}:${String(m).padStart(2, '0')} ${ampm}`;
@@ -1920,10 +1981,17 @@ function findFreeSlotsForDay(schedule, dayName, locationId) {
   const currentMin = getCurrentMinutes();
   
   const busySlots = dayEvents
-    .map(e => ({
-      start: timeToMinutes(e.startTime),
-      end: timeToMinutes(e.endTime)
-    }))
+    .map(e => {
+      let start = timeToMinutes(e.startTime);
+      let end = timeToMinutes(e.endTime);
+      if (start !== null && end !== null) {
+        // Handle midnight-crossing events (e.g., sleep 11:00 PM → 07:00 AM: end=420 < start=1380)
+        if (end <= start) {
+          end += 1440; // Add 24 hours to end time so it's on the "next day"
+        }
+      }
+      return { start, end };
+    })
     .filter(s => s.start !== null && s.end !== null)
     // For today, ignore busy slots that have completely passed
     .filter(s => !isToday || s.end > currentMin)

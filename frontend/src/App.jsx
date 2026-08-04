@@ -1429,10 +1429,10 @@ function App() {
                     <input type="text" value={rescheduleCustomText} onChange={e => setRescheduleCustomText(e.target.value)}
                       placeholder={t.rescheduleCustomPlaceholder}
                       className="flex-1 px-3 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                      onKeyDown={e => {
+                      onKeyDown={async e => {
                         if (e.key === 'Enter' && rescheduleCustomText.trim()) {
                           setRescheduleCustomLoading(true);
-                          handleReschedule(rescheduleCustomText.trim());
+                          await handleReschedule(rescheduleCustomText.trim());
                           setRescheduleCustomLoading(false);
                         }
                       }}
