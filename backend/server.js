@@ -820,6 +820,39 @@ async function parseWithGemini(text) {
     **CRITICAL REMINDER**: "quarter to X" / "רבע ל-X" = (X-1):45, NOT X:45. For example, "quarter to six" / "רבע לשישה" = 5:45, NOT 6:45. "quarter past X" / "X ורבע" = X:15. "half past X" / "X וחצי" = X:30.
 
     ─────────────────────────────────────────────
+    STEP 4b: RELATIVE TIME & EXPLICIT DURATION PARSING (CRITICAL — MUST FOLLOW EXACTLY)
+    ─────────────────────────────────────────────
+    **RELATIVE TIME PHRASES (CRITICAL)**:
+    When the text contains relative time phrases like "בעוד X דקות" / "עוד X דקות" / "בעוד שעה" / "עוד שעה" / "in X minutes" / "in an hour":
+    1. Calculate startTime PRECISELY from the CURRENT TIME provided in the CONTEXT above. Examples:
+       - If current time is 06:50 AM and text says "בעוד 5 דקות" / "in 5 minutes" → startTime = 06:55 AM.
+       - If current time is 06:50 AM and text says "בעוד 10 דקות" / "in 10 minutes" → startTime = 07:00 AM.
+       - If current time is 06:50 AM and text says "בעוד שעה" / "in an hour" → startTime = 07:50 AM.
+    2. ALWAYS use the current time as the reference point for relative phrases. NEVER fall back to a default time like 09:00 AM when a relative time phrase is present.
+    3. Round to the nearest minute — no seconds in the output.
+
+    **REMINDER SHORT DURATION (CRITICAL)**:
+    When the text includes reminder words like "תזכיר" / "התראה" / "פינג" / "remind":
+    1. Set isReminder: true.
+    2. Set a SHORT event duration of 5-10 minutes ONLY (NOT a full hour!).
+       - Example: Reminder at 06:55 AM → startTime "06:55 AM", endTime "07:00 AM" (5 minutes).
+       - Example: Reminder at 06:55 AM → endTime "07:05 AM" (10 minutes max).
+    3. The endTime MUST NOT be a full hour after the startTime for reminder events. NEVER use the 60-minute default for reminders.
+
+    **EXPLICIT DURATION RULE (CRITICAL — MUST NOT BE OVERRIDDEN BY THE 60-MINUTE DEFAULT)**:
+    When the text specifies an explicit duration, compute endTime EXACTLY = startTime + specified duration:
+    - "חצי שעה" / "half an hour" / "half hour" / "30 דקות" / "30 minutes" → duration = 30 minutes.
+      Example: startTime 09:30 AM → endTime = 10:00 AM (NOT 10:30 AM!).
+    - "רבע שעה" / "quarter hour" / "15 דקות" / "15 minutes" → duration = 15 minutes.
+      Example: startTime 09:30 AM → endTime = 09:45 AM.
+    - "שעתיים" / "2 hours" / "two hours" / "120 דקות" / "120 minutes" → duration = 120 minutes.
+      Example: startTime 09:00 AM → endTime = 11:00 AM.
+    - "שעה" / "an hour" / "60 דקות" / "60 minutes" → duration = 60 minutes.
+    - "שעה ורבע" / "an hour and a quarter" / "75 דקות" / "75 minutes" → duration = 75 minutes.
+    - "שעה וחצי" / "an hour and a half" / "90 דקות" / "90 minutes" → duration = 90 minutes.
+    - **NEVER apply the default 60-minute duration when the text explicitly states a duration.** The explicit duration ALWAYS wins.
+
+    ─────────────────────────────────────────────
     STEP 5: AM/PM SMART LOGIC (CRITICAL)
     ─────────────────────────────────────────────
     Apply the following AM/PM resolution rules STRICTLY:
@@ -1027,11 +1060,11 @@ async function parseWithGemini(text) {
     - "remind me to buy milk tomorrow at 9 AM"
     - "תזכיר לי בעוד שעה להתקשר לרופא"
 
-    When the user requests a REMINDER (any phrase containing "תזכיר" / "remind" / "תזכורת"):
+    When the user requests a REMINDER (any phrase containing "תזכיר" / "remind" / "תזכורת" / "התראה" / "פינג"):
     1. Set isReminder: true on the event.
     2. Set reminderTime to the ISO date/time string of when the alert should fire.
     3. The event title should describe what the reminder is about.
-    4. Set startTime and endTime to bracket the reminder time.
+    4. Set startTime and endTime to bracket the reminder time. **CRITICAL: Reminder events MUST have a SHORT duration of 5-10 minutes ONLY** (e.g., startTime "06:55 AM" → endTime "07:00 AM"). NEVER set a full hour for a reminder event.
     5. Set recurrence: "once" for one-time reminders.
     6. IMPORTANT: Do not confuse reminder events with regular schedule events.
 
@@ -1773,6 +1806,12 @@ function detectConflicts(newEvent, existingEvents, options = {}) {
   const dayEnd = options.dayEnd ? parseTimeToMinutes24(options.dayEnd) : 23 * 60;
   if (newStart === null || newEnd === null) return { hasConflict: false, conflicts: [], suggestions: [] };
 
+  // FUTURE-ONLY SUGGESTIONS (CRITICAL): For events scheduled TODAY, never suggest
+  // free hours that start in the past — only suggest windows from the current time onward.
+  const todayName = getTodayDayName();
+  const isToday = options.day === todayName || options.day === 'Today';
+  const currentMin = getCurrentMinutes();
+
   const conflicts = [];
   for (const existing of existingEvents) {
     const exStart = parseTimeToMinutes(existing.startTime);
@@ -1796,11 +1835,15 @@ function detectConflicts(newEvent, existingEvents, options = {}) {
         end: parseTimeToMinutes(e.endTime)
       }))
       .filter(s => s.start !== null && s.end !== null)
+      // For today, ignore busy slots that have completely passed
+      .filter(s => !isToday || s.end > currentMin)
       .sort((a, b) => a.start - b.start);
 
     const duration = newEnd - newStart;
 
-    let cursor = dayStart;
+    // For today, start searching for free hours from the CURRENT time onward —
+    // never propose windows that begin in the past.
+    let cursor = isToday ? Math.max(dayStart, currentMin) : dayStart;
     for (const slot of busySlots) {
       if (cursor + duration <= slot.start) {
         const hours = Math.floor(cursor / 60);
@@ -1820,7 +1863,7 @@ function detectConflicts(newEvent, existingEvents, options = {}) {
       cursor = Math.max(cursor, slot.end);
     }
 
-    if (suggestions.length === 0 && cursor + duration <= dayEnd) {
+    if (suggestions.length === 0 && cursor + duration <= dayEnd && (!isToday || cursor >= currentMin)) {
       const hours = Math.floor(cursor / 60);
       const mins = cursor % 60;
       const endHours = Math.floor((cursor + duration) / 60);
@@ -1870,16 +1913,25 @@ function findFreeSlotsForDay(schedule, dayName, locationId) {
   
   if (dayStart === null || dayEnd === null) return [];
   
+  // FUTURE-ONLY SLOTS (CRITICAL): For today, never offer free windows in the past —
+  // only suggest slots from the current time onward.
+  const todayName = getTodayDayName();
+  const isToday = dayName === todayName || dayName === 'Today';
+  const currentMin = getCurrentMinutes();
+  
   const busySlots = dayEvents
     .map(e => ({
       start: timeToMinutes(e.startTime),
       end: timeToMinutes(e.endTime)
     }))
     .filter(s => s.start !== null && s.end !== null)
+    // For today, ignore busy slots that have completely passed
+    .filter(s => !isToday || s.end > currentMin)
     .sort((a, b) => a.start - b.start);
   
   const freeSlots = [];
-  let cursor = dayStart;
+  // For today, start scanning from the current time — never from a past time
+  let cursor = isToday ? Math.max(dayStart, currentMin) : dayStart;
   
   for (const slot of busySlots) {
     if (cursor < slot.start) {
@@ -2061,7 +2113,7 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
       };
 
       if (schedule[day]) {
-        const { hasConflict, conflicts, suggestions } = detectConflicts(eventWithRecurrence, schedule[day], locationOptions);
+        const { hasConflict, conflicts, suggestions } = detectConflicts(eventWithRecurrence, schedule[day], { ...locationOptions, day });
         if (hasConflict) {
           conflictWarnings.push({
             day: day,
