@@ -133,6 +133,7 @@ function App() {
   const [selectedLocation, setSelectedLocation] = useState("jerusalem");
   const [locationFilter, setLocationFilter] = useState("all");
   const [user, setUser] = useState(null);
+  const [isPro, setIsPro] = useState(false);
 
   const intentRef = useRef(getInitialIntent());
 
@@ -462,6 +463,7 @@ function App() {
         const data = await res.json();
         if (data.user) {
           setUser(data.user);
+          setIsPro(data.user?.isPro === true || data.user?.isPro === 'true');
           setAuthStatus('authenticated');
           setCurrentView(intent.wantsBooking ? 'booking' : 'dashboard');
           syncGuestDataToBackend();
@@ -495,7 +497,10 @@ function App() {
           if (localStorage.getItem('calendai-isLoggedIn') === 'true') {
             const res = await fetch(`${API_BASE}/api/auth/me`, { credentials: "include" });
             const data = await res.json();
-            if (data.user && !cancelled) setUser(data.user);
+            if (data.user && !cancelled) {
+              setUser(data.user);
+              setIsPro(data.user?.isPro === true || data.user?.isPro === 'true');
+            }
           }
         } catch (e) {}
         return;
@@ -508,6 +513,7 @@ function App() {
         const data = await res.json();
         if (data.user && !cancelled) {
           setUser(data.user);
+          setIsPro(data.user?.isPro === true || data.user?.isPro === 'true');
           try { localStorage.setItem('calendai-isLoggedIn', 'true'); } catch (e) {}
         } else {
           // Token expired, clear it
@@ -822,6 +828,7 @@ function App() {
     try {
       await fetch(`${API_BASE}/api/auth/logout`, { method: "POST", credentials: "include" });
       setUser(null);
+      setIsPro(false);
       setSchedule({ Sunday: [], Monday: [], Tuesday: [], Wednesday: [], Thursday: [], Friday: [], Saturday: [], Today: [] });
       // Clear the logged-in flag from localStorage
       try {
@@ -1814,6 +1821,7 @@ function App() {
                   // Save JWT token and user
                   setJwtToken(data.token);
                   setUser(data.user);
+                  setIsPro(data.user?.isPro === true || data.user?.isPro === 'true');
                   try {
                     localStorage.setItem('calendai-isLoggedIn', 'true');
                     localStorage.setItem('calendai-user', JSON.stringify(data.user));
@@ -1879,6 +1887,7 @@ function App() {
         lang={lang}
         t={t}
         user={user}
+        isPro={isPro}
         onLogout={handleLogout}
         onOpenShareModal={() => setShowShareModal(true)}
         selectedLocation={profileLocation !== 'none' ? profileLocation : selectedLocation}

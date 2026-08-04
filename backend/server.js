@@ -12,6 +12,7 @@ const { google } = require('googleapis');
 const fs = require('fs');
 const path = require('path');
 const rateLimit = require('express-rate-limit');
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY || 'sk_test_placeholder');
 
 dotenv.config();
 
@@ -36,6 +37,8 @@ const userSchema = new mongoose.Schema({
   password: { type: String },
   displayName: { type: String },
   photo: { type: String },
+  isPro: { type: Boolean, default: false },
+  stripeCustomerId: { type: String },
   schedule: {
     type: mongoose.Schema.Types.Mixed,
     default: {
@@ -1430,10 +1433,50 @@ app.get('/api/auth/google/callback',
   }
 );
 
-app.get('/api/auth/me', (req, res) => {
+app.get('/api/auth/me', async (req, res) => {
   if (req.isAuthenticated && req.isAuthenticated()) {
     const sessionUser = req.session.passport?.user;
-    const userForClient = sessionUser ? { ...sessionUser, hasToken: !!sessionUser.accessToken } : null;
+    const userId = sessionUser?._id || sessionUser?.id || sessionUser?.googleId;
+    let freshUser = sessionUser;
+
+    // Fetch fresh user data from MongoDB so isPro reflects the latest state
+    if (userId) {
+      try {
+        const dbUser = await User.findById(userId).catch(() => null);
+        if (dbUser) {
+          freshUser = {
+            ...sessionUser,
+            _id: dbUser._id,
+            id: dbUser._id,
+            isPro: dbUser.isPro,
+            stripeCustomerId: dbUser.stripeCustomerId,
+            email: dbUser.email,
+            displayName: dbUser.displayName,
+            photo: dbUser.photo
+          };
+        } else if (mongoose.Types.ObjectId.isValid(userId) === false) {
+          // Maybe it's a googleId
+          const userByGoogle = await User.findOne({ googleId: userId }).catch(() => null);
+          if (userByGoogle) {
+            freshUser = {
+              ...sessionUser,
+              _id: userByGoogle._id,
+              id: userByGoogle._id,
+              googleId: userByGoogle.googleId,
+              isPro: userByGoogle.isPro,
+              stripeCustomerId: userByGoogle.stripeCustomerId,
+              email: userByGoogle.email,
+              displayName: userByGoogle.displayName,
+              photo: userByGoogle.photo
+            };
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch fresh user data:', err.message);
+      }
+    }
+
+    const userForClient = freshUser ? { ...freshUser, hasToken: !!sessionUser?.accessToken } : null;
     res.json({ user: userForClient });
   } else {
     res.json({ user: null });
@@ -2853,6 +2896,181 @@ app.get('/api/locations/:id/slots', (req, res) => {
     timeSlots: location.timeSlots
   });
 });
+
+// ──────────────────────────────────────────────
+// 10b. Stripe Payments (Pro Subscription)
+// ──────────────────────────────────────────────
+const PRO_PRICE_ID = process.env.STRIPE_PRO_PRICE_ID || 'price_monthly_pro_29'; // ₪29/month
+const PRO_PRICE_AMOUNT = 2900; // ₪29.00 in agorot (ILS cents)
+
+/**
+ * POST /api/payments/create-checkout-session
+ * Creates a Stripe Checkout Session for a monthly Pro subscription (₪29/month).
+ * Requires an authenticated user.
+ */
+app.post('/api/payments/create-checkout-session', async (req, res) => {
+  try {
+    if (!req.isAuthenticated || !req.isAuthenticated()) {
+      return res.status(401).json({ error: 'User not authenticated. Please log in first.' });
+    }
+
+    const sessionUser = req.session?.passport?.user;
+    const userId = sessionUser?._id || sessionUser?.id || sessionUser?.googleId;
+    if (!userId) {
+      return res.status(401).json({ error: 'User not authenticated. Please log in first.' });
+    }
+
+    // Find the user in MongoDB
+    const dbUser = await User.findById(userId).catch(() => null);
+
+    let stripeCustomerId = dbUser?.stripeCustomerId || null;
+
+    // Create a Stripe customer if we don't have one yet
+    if (!stripeCustomerId) {
+      try {
+        const customer = await stripe.customers.create({
+          email: sessionUser?.email || dbUser?.email,
+          name: sessionUser?.displayName || dbUser?.displayName,
+          metadata: {
+            userId: userId.toString(),
+            appUserId: userId.toString()
+          }
+        });
+        stripeCustomerId = customer.id;
+
+        // Save the Stripe customer ID to MongoDB
+        if (dbUser) {
+          await User.findByIdAndUpdate(dbUser._id, { stripeCustomerId });
+        }
+      } catch (customerErr) {
+        console.error('Failed to create Stripe customer:', customerErr.message);
+        // Continue without a customer ID - Stripe can still create the session
+      }
+    }
+
+    // Create the Checkout Session for a monthly subscription
+    const session = await stripe.checkout.sessions.create({
+      mode: 'subscription',
+      customer: stripeCustomerId || undefined,
+      line_items: [
+        {
+          price_data: {
+            currency: 'ils',
+            product_data: {
+              name: 'CalendAI Pro (חודשי)',
+              description: 'מנוי חודשי לתכונות Pro של CalendAI',
+              images: ['https://calendai.onrender.com/icon.svg']
+            },
+            unit_amount: PRO_PRICE_AMOUNT, // ₪29.00
+            recurring: { interval: 'month' }
+          },
+          quantity: 1
+        }
+      ],
+      metadata: {
+        userId: userId.toString()
+      },
+      success_url: `${CLIENT_URL}/?payment=success`,
+      cancel_url: `${CLIENT_URL}/?payment=cancelled`,
+      client_reference_id: userId.toString(),
+      allow_promotion_codes: true
+    });
+
+    res.json({ url: session.url, sessionId: session.id });
+  } catch (error) {
+    console.error('Failed to create Stripe Checkout Session:', error.message);
+    res.status(500).json({ error: 'Failed to create payment session. Please try again.' });
+  }
+});
+
+/**
+ * POST /api/payments/webhook
+ * Receives Stripe webhook events.
+ * On checkout.session.completed, marks the user as isPro: true in MongoDB.
+ */
+app.post('/api/payments/webhook',
+  express.raw({ type: 'application/json' }),
+  async (req, res) => {
+    const sig = req.headers['stripe-signature'];
+    const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
+
+    let event;
+
+    try {
+      // Verify the event signature if a webhook secret is configured
+      if (endpointSecret) {
+        event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
+      } else {
+        // Fallback: parse the raw body as JSON (NOT recommended for production)
+        event = JSON.parse(req.body.toString('utf-8'));
+      }
+    } catch (err) {
+      console.error('Webhook signature verification failed:', err.message);
+      return res.status(400).json({ error: `Webhook Error: ${err.message}` });
+    }
+
+    // Handle the checkout.session.completed event
+    if (event.type === 'checkout.session.completed') {
+      const checkoutSession = event.data.object;
+      const userId = checkoutSession.metadata?.userId || checkoutSession.client_reference_id;
+
+      if (!userId) {
+        console.warn('Webhook: No userId found in session metadata.');
+        return res.json({ received: true });
+      }
+
+      try {
+        // Update the user in MongoDB to isPro: true
+        const user = await User.findById(userId);
+        if (user) {
+          user.isPro = true;
+          if (checkoutSession.customer) {
+            user.stripeCustomerId = checkoutSession.customer;
+          }
+          await user.save();
+          console.log(`User ${userId} upgraded to Pro successfully.`);
+        } else {
+          // Maybe user is referenced by googleId instead of ObjectId
+          const userByGoogle = await User.findOne({ googleId: userId });
+          if (userByGoogle) {
+            userByGoogle.isPro = true;
+            if (checkoutSession.customer) {
+              userByGoogle.stripeCustomerId = checkoutSession.customer;
+            }
+            await userByGoogle.save();
+            console.log(`User ${userId} upgraded to Pro successfully (by googleId).`);
+          } else {
+            console.warn(`Webhook: User ${userId} not found in MongoDB.`);
+          }
+        }
+      } catch (dbErr) {
+        console.error('Webhook: Failed to update user in MongoDB:', dbErr.message);
+        return res.status(500).json({ error: 'Failed to update user.' });
+      }
+    }
+
+    // Handle subscription deletion / cancellation events
+    if (event.type === 'customer.subscription.deleted') {
+      const subscription = event.data.object;
+      const stripeCustomerId = subscription.customer;
+
+      try {
+        // Find the user by stripeCustomerId and downgrade to free
+        const user = await User.findOne({ stripeCustomerId });
+        if (user) {
+          user.isPro = false;
+          await user.save();
+          console.log(`User ${user._id} downgraded from Pro (subscription cancelled).`);
+        }
+      } catch (dbErr) {
+        console.error('Webhook: Failed to downgrade user:', dbErr.message);
+        return res.status(500).json({ error: 'Failed to update user.' });
+      }
+    }
+
+    res.json({ received: true });
+  }
+);
 
 // ──────────────────────────────────────────────
 // 11. Health & Fallback

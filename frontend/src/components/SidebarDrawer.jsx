@@ -114,7 +114,7 @@ function isStandalone() {
   return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
 }
 
-export default function SidebarDrawer({ isOpen, onClose, schedule, lang, t, user, onLogout, onOpenShareModal, selectedLocation, onLocationChange }) {
+export default function SidebarDrawer({ isOpen, onClose, schedule, lang, t, user, isPro, onUpgradeToPro, onLogout, onOpenShareModal, selectedLocation, onLocationChange }) {
   const [activeTab, setActiveTab] = useState('analytics');
   const [settingsData, setSettingsData] = useState({
     lang: lang,
@@ -128,6 +128,8 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, t, user
   const [detectedCity, setDetectedCity] = useState("");
   const [showIosGuide, setShowIosGuide] = useState(false);
   const [showIosNonSafariMsg, setShowIosNonSafariMsg] = useState(false);
+  const [upgradeLoading, setUpgradeLoading] = useState(false);
+  const [upgradeError, setUpgradeError] = useState("");
 
   useEffect(() => {
     window.addEventListener('beforeinstallprompt', (e) => {
@@ -440,9 +442,59 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, t, user
                   {t.proFeature5}
                 </li>
               </ul>
-              <div className="inline-block px-6 py-3 bg-gradient-to-r from-amber-400 to-orange-500 text-white rounded-xl font-bold text-sm shadow-lg">
-                {t.proComingSoon}
-              </div>
+
+              {/* Pro Status / Upgrade Button */}
+              {isPro ? (
+                <div className="inline-flex items-center gap-2 px-6 py-3 bg-green-100 text-green-700 border border-green-300 rounded-xl font-bold text-sm shadow-sm">
+                  <CheckCircle className="w-5 h-5 text-green-600" />
+                  {lang === 'he' ? 'אתה במנוי Pro פעיל ✨' : 'You have an active Pro subscription ✨'}
+                </div>
+              ) : (
+                <div>
+                  <button
+                    onClick={async () => {
+                      if (!user) {
+                        setUpgradeError(lang === 'he' ? 'עליך להתחבר תחילה כדי לשדרג ל-Pro.' : 'Please log in first to upgrade to Pro.');
+                        return;
+                      }
+                      setUpgradeLoading(true);
+                      setUpgradeError("");
+                      try {
+                        const res = await fetch('/api/payments/create-checkout-session', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          credentials: 'include'
+                        });
+                        const data = await res.json();
+                        if (!res.ok) throw new Error(data.error || 'Failed to create checkout session');
+                        if (data.url) {
+                          window.location.href = data.url;
+                        } else {
+                          throw new Error('No checkout URL returned');
+                        }
+                      } catch (err) {
+                        console.error('Upgrade failed:', err);
+                        setUpgradeError(err.message || (lang === 'he' ? 'השדרוג נכשל. נסה שוב מאוחר יותר.' : 'Upgrade failed. Please try again later.'));
+                      } finally {
+                        setUpgradeLoading(false);
+                      }
+                    }}
+                    disabled={upgradeLoading}
+                    className="w-full max-w-full box-border flex items-center justify-center gap-2 px-6 py-3 bg-gradient-to-r from-amber-400 to-orange-500 text-white rounded-xl font-bold text-sm shadow-lg hover:shadow-xl transition disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    {upgradeLoading ? (
+                      <><Loader2 className="w-5 h-5 animate-spin" /> {lang === 'he' ? 'מעבר לתשלום...' : 'Redirecting to payment...'}</>
+                    ) : (
+                      <><Zap className="w-5 h-5" /> {lang === 'he' ? 'שדרג עכשיו ל-Pro (₪29/חודש)' : 'Upgrade to Pro Now (₪29/month)'}</>
+                    )}
+                  </button>
+                  {upgradeError && (
+                    <div className="mt-3 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg p-2">
+                      {upgradeError}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
