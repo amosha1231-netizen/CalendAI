@@ -80,6 +80,16 @@ function isStandalone() {
   return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
 }
 
+function getInitialIntent() {
+  if (typeof window === 'undefined') return { isAuthCallback: false, authFailed: false, wantsBooking: false };
+  const params = new URLSearchParams(window.location.search);
+  return {
+    isAuthCallback: params.get('login') === 'success' || params.get('auth') === 'success',
+    authFailed: params.get('auth') === 'failed',
+    wantsBooking: params.get('book') === 'true' || params.get('book') === '1',
+  };
+}
+
 function App() {
   // Language state - load from localStorage or default to 'he'
   const [lang, setLang] = useState(() => {
@@ -124,6 +134,10 @@ function App() {
   const [locationFilter, setLocationFilter] = useState("all");
   const [user, setUser] = useState(null);
 
+  const intentRef = useRef(getInitialIntent());
+
+  const [authStatus, setAuthStatus] = useState('checking'); // 'checking' | 'authenticated' | 'guest'
+
   const [schedule, setSchedule] = useState({
     Sunday: [], Monday: [], Tuesday: [], Wednesday: [],
     Thursday: [], Friday: [], Saturday: [], Today: []
@@ -131,12 +145,6 @@ function App() {
   const scheduleHistoryRef = useRef([]);
 
   // Splash Screen State
-  const [isAuthenticating, setIsAuthenticating] = useState(() => {
-    if (typeof window === 'undefined') return false;
-    const params = new URLSearchParams(window.location.search);
-    return params.get('login') === 'success' || params.get('auth') === 'success';
-  });
-
   const [splashDone, setSplashDone] = useState(false);
   const [splashFading, setSplashFading] = useState(false);
   const splashStartRef = useRef(Date.now());
@@ -165,20 +173,7 @@ function App() {
   // 'dashboard' = default for ALL users (guests can try the app, up to 10 actions)
   // 'booking'   = ONLY if ?book=true or ?book=dyn_xxx is explicitly in the URL
   // 'guest-booking' = when a dynamic booking ID is in the URL
-  const [currentView, setCurrentView] = useState(() => {
-    if (typeof window === 'undefined') return 'dashboard';
-    const params = new URLSearchParams(window.location.search);
-    // 1. If auth=success is in URL, force dashboard (no side-effects here)
-    if (params.get('login') === 'success' || params.get('auth') === 'success') {
-      return 'dashboard';
-    }
-    // 2. Only show booking if ?book=true is explicitly present
-    if (params.get('book') === 'true' || params.get('book') === '1') {
-      return 'booking';
-    }
-    // 3. Default: show dashboard for everyone (guests can try the app freely)
-    return 'dashboard';
-  });
+  const [currentView, setCurrentView] = useState(() => intentRef.current.wantsBooking ? 'booking' : 'dashboard');
   const [guestBookingId, setGuestBookingId] = useState(() => {
     const params = new URLSearchParams(window.location.search);
     const bookParam = params.get('book');
@@ -448,52 +443,45 @@ function App() {
     try { localStorage.removeItem('calendai-jwt'); } catch (e) {}
   };
 
-  // ── Unified OAuth Redirect Handler ──
-  // Detects login=success or auth=success in URL, sets authenticating state, cleans URL, then fetches user
+  // ── Unified Auth State Machine ──
+  // Handles OAuth callback, auth failure, and initial auth check
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const isAuthRedirect = params.get('login') === 'success' || params.get('auth') === 'success';
-
-    if (isAuthRedirect) {
-      setIsAuthenticating(true);
-      try { localStorage.setItem('calendai-isLoggedIn', 'true'); } catch (e) {}
-      setCurrentView('dashboard');
+    const intent = intentRef.current;
+    if (intent.isAuthCallback || intent.authFailed) {
       window.history.replaceState({}, document.title, window.location.pathname);
-
-      const fetchUserWithRetry = (attempt = 0) => {
-        fetch(`${API_BASE}/api/auth/me`, { credentials: "include" })
-          .then(res => res.json())
-          .then(data => {
-            if (data.user) {
-              setUser(data.user);
-              setIsAuthenticating(false);
-              setShowLoginPrompt(false);
-              setShowGuestLimitModal(false);
-              try {
-                localStorage.setItem('calendai-user', JSON.stringify(data.user));
-                localStorage.setItem('calendai-isLoggedIn', 'true');
-              } catch (e) {}
-              fetch(`${API_BASE}/api/auth/token`, { method: 'POST', credentials: "include" })
-                .then(r => r.json())
-                .then(jwtData => {
-                  if (jwtData.token) setJwtToken(jwtData.token);
-                })
-                .catch(() => {});
-              syncGuestDataToBackend();
-            } else if (attempt < 3) {
-              setTimeout(() => fetchUserWithRetry(attempt + 1), 1500 * (attempt + 1));
-            }
-          })
-          .catch(() => {
-            if (attempt < 3) {
-              setTimeout(() => fetchUserWithRetry(attempt + 1), 1500 * (attempt + 1));
-            } else {
-              setIsAuthenticating(false);
-            }
-          });
-      };
-      fetchUserWithRetry();
     }
+    if (intent.authFailed) {
+      setAuthStatus('guest');
+      setCurrentView(intent.wantsBooking ? 'booking' : 'dashboard');
+      return;
+    }
+
+    const checkAuth = async (retries = 2) => {
+      try {
+        const res = await fetch(`${API_BASE}/api/auth/me`, { credentials: 'include' });
+        const data = await res.json();
+        if (data.user) {
+          setUser(data.user);
+          setAuthStatus('authenticated');
+          setCurrentView(intent.wantsBooking ? 'booking' : 'dashboard');
+          syncGuestDataToBackend();
+        } else if (retries > 0) {
+          setTimeout(() => checkAuth(retries - 1), 400);
+        } else {
+          setAuthStatus('guest');
+          setCurrentView(intent.wantsBooking ? 'booking' : 'dashboard');
+        }
+      } catch (e) {
+        if (retries > 0) {
+          setTimeout(() => checkAuth(retries - 1), 400);
+        } else {
+          setAuthStatus('guest');
+          setCurrentView(intent.wantsBooking ? 'booking' : 'dashboard');
+        }
+      }
+    };
+
+    checkAuth();
   }, [syncGuestDataToBackend]);
 
   // On mount: restore user from JWT token (persistent across server restarts)
@@ -703,12 +691,7 @@ function App() {
     return () => clearInterval(interval);
   }, [schedule, notificationPerm, lang]);
 
-  useEffect(() => {
-    fetch(`${API_BASE}/api/auth/me`, { credentials: "include" })
-      .then(res => res.json())
-      .then(data => { if (data.user) setUser(data.user); })
-      .catch(() => {});
-  }, []);
+  // (Auth state machine handles initial auth check via the useEffect above)
 
   const [isTransitioning, setIsTransitioning] = useState(false);
   const PLACEHOLDER_EXAMPLES = t.placeholderExamples;
@@ -1054,28 +1037,14 @@ function App() {
     return dayEvents.filter(e => e.location === locationFilter);
   };
 
-  // ── Force currentView to 'dashboard' when user is logged in and no explicit ?book=true/?book=1 ──
-  // This prevents any background fetch/effect from accidentally switching to booking view
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const hasExplicitBook = params.get('book') === 'true' || params.get('book') === '1';
-    const isLoggedIn = !!user || localStorage.getItem('calendai-isLoggedIn') === 'true';
-
-    if (isLoggedIn && currentView === 'booking' && !hasExplicitBook) {
-      setCurrentView('dashboard');
-    }
-  }, [currentView, user]);
-
-  // Authenticating Screen: show while processing OAuth redirect
-  if (isAuthenticating) {
+  // Authenticating Screen: show while verifying auth
+  if (authStatus === 'checking') {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4" dir="rtl">
         <div className="bg-white p-8 rounded-2xl shadow-xl border border-slate-100 flex flex-col items-center max-w-sm text-center">
-          <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mb-4">
-            <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
-          </div>
-          <h2 className="text-xl font-bold text-slate-800 mb-2">מתחבר לחשבון גוגל...</h2>
-          <p className="text-sm text-slate-500">אנא המתן רגע בזמן שאנו מאמתים את הפרטים שלך</p>
+          <Loader2 className="w-10 h-10 animate-spin text-blue-600 mb-4" />
+          <h2 className="text-lg font-bold text-slate-800 mb-1">מתחבר למערכת...</h2>
+          <p className="text-xs text-slate-500">מאמת את פרטי החשבון שלך</p>
         </div>
       </div>
     );

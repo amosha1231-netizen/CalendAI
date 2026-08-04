@@ -1411,9 +1411,6 @@ app.get('/api/auth/google',
 app.get('/api/auth/google/callback',
   passport.authenticate('google', { failureRedirect: '/?auth=failed' }),
   (req, res) => {
-    if (req.session) {
-      delete req.session.returnTo;
-    }
     let rawUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || 'https://calendai.onrender.com';
     try {
       const parsed = new URL(rawUrl);
@@ -1421,7 +1418,15 @@ app.get('/api/auth/google/callback',
     } catch (e) {
       rawUrl = rawUrl.split('?')[0].replace(/\/+$/, '');
     }
-    res.redirect(`${rawUrl}/?auth=success`);
+    const wantedBooking = req.session?.returnTo === 'booking';
+    if (req.session) {
+      delete req.session.returnTo;
+    }
+    const redirectUrl = wantedBooking
+      ? `${rawUrl}/?auth=success&book=1`
+      : `${rawUrl}/?auth=success`;
+
+    res.redirect(redirectUrl);
   }
 );
 
