@@ -131,6 +131,12 @@ function App() {
   const scheduleHistoryRef = useRef([]);
 
   // Splash Screen State
+  const [isAuthenticating, setIsAuthenticating] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    const params = new URLSearchParams(window.location.search);
+    return params.get('login') === 'success' || params.get('auth') === 'success';
+  });
+
   const [splashDone, setSplashDone] = useState(false);
   const [splashFading, setSplashFading] = useState(false);
   const splashStartRef = useRef(Date.now());
@@ -443,12 +449,13 @@ function App() {
   };
 
   // ── Unified OAuth Redirect Handler ──
-  // Detects login=success or auth=success in URL, saves flag, cleans URL, then fetches user
+  // Detects login=success or auth=success in URL, sets authenticating state, cleans URL, then fetches user
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const isAuthRedirect = params.get('login') === 'success' || params.get('auth') === 'success';
 
     if (isAuthRedirect) {
+      setIsAuthenticating(true);
       try { localStorage.setItem('calendai-isLoggedIn', 'true'); } catch (e) {}
       setCurrentView('dashboard');
       window.history.replaceState({}, document.title, window.location.pathname);
@@ -459,6 +466,7 @@ function App() {
           .then(data => {
             if (data.user) {
               setUser(data.user);
+              setIsAuthenticating(false);
               setShowLoginPrompt(false);
               setShowGuestLimitModal(false);
               try {
@@ -479,6 +487,8 @@ function App() {
           .catch(() => {
             if (attempt < 3) {
               setTimeout(() => fetchUserWithRetry(attempt + 1), 1500 * (attempt + 1));
+            } else {
+              setIsAuthenticating(false);
             }
           });
       };
@@ -1055,6 +1065,21 @@ function App() {
       setCurrentView('dashboard');
     }
   }, [currentView, user]);
+
+  // Authenticating Screen: show while processing OAuth redirect
+  if (isAuthenticating) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4" dir="rtl">
+        <div className="bg-white p-8 rounded-2xl shadow-xl border border-slate-100 flex flex-col items-center max-w-sm text-center">
+          <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mb-4">
+            <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+          </div>
+          <h2 className="text-xl font-bold text-slate-800 mb-2">מתחבר לחשבון גוגל...</h2>
+          <p className="text-sm text-slate-500">אנא המתן רגע בזמן שאנו מאמתים את הפרטים שלך</p>
+        </div>
+      </div>
+    );
+  }
 
   // If a dynamic booking ID is in the URL, show the guest booking view
   if (guestBookingId) {
