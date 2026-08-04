@@ -285,6 +285,9 @@ const translations = {
     pwaOpenInSafari: 'פתח ב-Safari',
     pwaOpenInSafariDesc: 'יש לפתוח דף זה בדפדפן Safari כדי להוסיף למסך הבית',
     pwaNotAvailable: '⚠️ לא זמין בדפדפן זה',
+    pwaInstalled: 'האפליקציה כבר מותקנת במסך הבית שלך! ✅',
+    pwaIosNonSafariTitle: 'פתח ב-Safari',
+    pwaIosNonSafariDesc: 'כדי להתקין באייפון, יש לפתוח את האתר בדפדפן Safari',
 
     // Rate limit
     rateLimit: 'יותר מדי בקשות. אנא נסה שוב בעוד דקה.',
@@ -712,6 +715,9 @@ const translations = {
     pwaOpenInSafari: 'Open in Safari',
     pwaOpenInSafariDesc: 'Please open this page in Safari to add to home screen',
     pwaNotAvailable: '⚠️ Not available in this browser',
+    pwaInstalled: 'The app is already installed on your home screen! ✅',
+    pwaIosNonSafariTitle: 'Open in Safari',
+    pwaIosNonSafariDesc: 'To install on iPhone, please open this site in Safari browser',
 
     // Profile Settings (Location moved to settings)
     profileTitle: 'Profile Settings',

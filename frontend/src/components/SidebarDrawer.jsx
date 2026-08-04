@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { X, BarChart3, Zap, Settings, Download, Moon, Sun, Target, Clock, Trophy, Activity, Share2, MapPin, Loader2 } from 'lucide-react';
+import { X, BarChart3, Zap, Settings, Download, Moon, Sun, Target, Clock, Trophy, Activity, Share2, MapPin, Loader2, ExternalLink, CheckCircle } from 'lucide-react';
 
 const CATEGORY_KEYWORDS = {
   sport: ['אימון', 'ריצה', 'שחייה', 'הליכה', 'ספורט', 'חדר כושר', 'יוגה', 'פילאטיס', 'רכיבה', 'טיפוס', 'workout', 'run', 'swim', 'walk', 'sport', 'gym', 'yoga', 'pilates', 'bike', 'climb'],
@@ -90,6 +90,30 @@ function computeAnalytics(schedule) {
   };
 }
 
+// Detect iOS Safari
+function isIosSafari() {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || navigator.vendor || window.opera;
+  const isIos = /iPhone|iPad|iPod/.test(ua);
+  const isSafari = /Safari/.test(ua) && !/Chrome|CriOS|FxiOS|OPiOS|mercury/.test(ua);
+  return isIos && isSafari;
+}
+
+// Detect iOS non-Safari browser (Chrome/Firefox on iPhone)
+function isIosNonSafari() {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || navigator.vendor || window.opera;
+  const isIos = /iPhone|iPad|iPod/.test(ua);
+  const isNotSafari = !(/Safari/.test(ua) && !/Chrome|CriOS|FxiOS|OPiOS|mercury/.test(ua));
+  return isIos && isNotSafari;
+}
+
+// Check if already in standalone mode (PWA installed)
+function isStandalone() {
+  if (typeof window === 'undefined') return false;
+  return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+}
+
 export default function SidebarDrawer({ isOpen, onClose, schedule, lang, t, user, onLogout, onOpenShareModal, selectedLocation, onLocationChange }) {
   const [activeTab, setActiveTab] = useState('analytics');
   const [settingsData, setSettingsData] = useState({
@@ -102,6 +126,8 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, t, user
   const [detectLoading, setDetectLoading] = useState(false);
   const [detectError, setDetectError] = useState("");
   const [detectedCity, setDetectedCity] = useState("");
+  const [showIosGuide, setShowIosGuide] = useState(false);
+  const [showIosNonSafariMsg, setShowIosNonSafariMsg] = useState(false);
 
   useEffect(() => {
     window.addEventListener('beforeinstallprompt', (e) => {
@@ -176,14 +202,38 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, t, user
   const analytics = useCallback(() => computeAnalytics(schedule), [schedule])();
   const isRTL = lang === 'he';
 
+  // Cross-browser PWA install handler
   const handleInstallClick = async () => {
+    // Scenario 1: Already installed (standalone mode)
+    if (isStandalone()) {
+      return; // Will show green indicator in the UI
+    }
+
+    // Scenario 2: Android Chrome - has installPrompt
     if (installPrompt) {
       installPrompt.prompt();
       const result = await installPrompt.userChoice;
       if (result.outcome === 'accepted') {
         setInstallPrompt(null);
       }
+      return;
     }
+
+    // Scenario 3: iOS Safari - show guide modal
+    if (isIosSafari()) {
+      setShowIosGuide(true);
+      return;
+    }
+
+    // Scenario 4: iOS non-Safari (Chrome/Firefox on iPhone)
+    if (isIosNonSafari()) {
+      setShowIosNonSafariMsg(true);
+      return;
+    }
+
+    // Scenario 5: Desktop or other browser without installPrompt
+    // Show iOS guide as fallback (the user can still manually add)
+    setShowIosGuide(true);
   };
 
   const handleSettingsSave = () => {
@@ -208,6 +258,47 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, t, user
     sleep: t.analyticsSleep,
     leisure: t.analyticsLeisure
   };
+
+  // Determine install button text and style
+  const getInstallButtonContent = () => {
+    if (isStandalone()) {
+      return {
+        text: lang === 'he' ? '✅ האפליקציה מותקנת!' : '✅ App is installed!',
+        style: 'bg-green-100 text-green-700 border border-green-300 cursor-default',
+        icon: CheckCircle
+      };
+    }
+    if (installPrompt) {
+      return {
+        text: lang === 'he' ? '📱 התקן עכשיו' : '📱 Install Now',
+        style: 'bg-gradient-to-r from-blue-500 to-purple-600 text-white hover:shadow-xl cursor-pointer',
+        icon: Download
+      };
+    }
+    if (isIosSafari()) {
+      return {
+        text: lang === 'he' ? '📱 הוסף למסך הבית' : '📱 Add to Home Screen',
+        style: 'bg-gradient-to-r from-blue-500 to-cyan-500 text-white hover:shadow-xl cursor-pointer',
+        icon: Download
+      };
+    }
+    if (isIosNonSafari()) {
+      return {
+        text: lang === 'he' ? '📱 הוראות התקנה' : '📱 Install Instructions',
+        style: 'bg-gradient-to-r from-amber-400 to-orange-500 text-white hover:shadow-xl cursor-pointer',
+        icon: ExternalLink
+      };
+    }
+    // Default desktop/other
+    return {
+      text: lang === 'he' ? '📱 הוסף למסך הבית' : '📱 Add to Home Screen',
+      style: 'bg-gradient-to-r from-blue-500 to-purple-600 text-white hover:shadow-xl cursor-pointer',
+      icon: Download
+    };
+  };
+
+  const installBtn = getInstallButtonContent();
+  const InstallIcon = installBtn.icon;
 
   return (
     <>
@@ -462,10 +553,10 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, t, user
             </div>
           )}
 
-          {/* Install Tab */}
+          {/* Install Tab - Always available, never disabled */}
           {activeTab === 'install' && (
             <div className="text-center py-6">
-              <div className="w-16 h-16 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
+              <div className={`w-16 h-16 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg`}>
                 <Download className="w-8 h-8 text-white" />
               </div>
               <h3 className="text-xl font-bold text-slate-800 mb-2">{t.sidebarInstall}</h3>
@@ -474,19 +565,36 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, t, user
                   ? 'הוסף את CalendAI למסך הבית שלך לגישה מהירה מכל מקום'
                   : 'Add CalendAI to your home screen for quick access from anywhere'}
               </p>
+
+              {/* Already installed indicator */}
+              {isStandalone() && (
+                <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg flex items-center gap-2 text-sm text-green-700">
+                  <CheckCircle className="w-5 h-5 text-green-500 shrink-0" />
+                  <span>{t.pwaInstalled || (lang === 'he' ? 'האפליקציה כבר מותקנת במסך הבית שלך! ✅' : 'The app is already installed on your home screen! ✅')}</span>
+                </div>
+              )}
+
+              {/* Install button - always clickable */}
               <button
                 onClick={handleInstallClick}
-                disabled={!installPrompt}
-                className={`w-full max-w-full box-border px-6 py-3 rounded-xl font-bold text-sm shadow-lg transition ${
-                  installPrompt
-                    ? 'bg-gradient-to-r from-blue-500 to-purple-600 text-white hover:shadow-xl cursor-pointer'
-                    : 'bg-slate-200 text-slate-400 cursor-not-allowed'
-                }`}
+                className={`w-full max-w-full box-border px-6 py-3 rounded-xl font-bold text-sm shadow-lg transition flex items-center justify-center gap-2 ${installBtn.style}`}
               >
-                {installPrompt
-                  ? (lang === 'he' ? '📱 התקן עכשיו' : '📱 Install Now')
-                  : (lang === 'he' ? '⚠️ לא זמין בדפדפן זה' : '⚠️ Not available in this browser')}
+                <InstallIcon className="w-5 h-5" />
+                {installBtn.text}
               </button>
+
+              {/* Browser detection info (subtle) */}
+              <p className="text-[10px] text-slate-400 mt-3">
+                {installPrompt
+                  ? (lang === 'he' ? 'זוהה: דפדפן תומך התקנה' : 'Detected: install-capable browser')
+                  : isIosSafari()
+                    ? (lang === 'he' ? 'זוהה: Safari באייפון/אייפד' : 'Detected: Safari on iPhone/iPad')
+                    : isIosNonSafari()
+                      ? (lang === 'he' ? 'זוהה: דפדפן iOS שאינו Safari' : 'Detected: non-Safari iOS browser')
+                      : isStandalone()
+                        ? (lang === 'he' ? 'האפליקציה פועלת במסך הבית' : 'App is running from home screen')
+                        : (lang === 'he' ? 'לחץ לקבלת הוראות התקנה ידניות' : 'Click for manual install instructions')}
+              </p>
             </div>
           )}
         </div>
@@ -512,6 +620,65 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, t, user
           </div>
         )}
       </div>
+
+      {/* iOS Safari Guide Modal */}
+      {showIosGuide && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[9999]" onClick={() => setShowIosGuide(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
+            <div className="text-center">
+              <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-cyan-500 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
+                <Download className="w-8 h-8 text-white" />
+              </div>
+              <h3 className="text-lg font-bold text-slate-800 mb-2">{t.pwaIosSafariTitle || (lang === 'he' ? 'הוסף למסך הבית' : 'Add to Home Screen')}</h3>
+              <p className="text-sm text-slate-500 mb-4">{t.pwaIosSafariDesc || (lang === 'he' ? 'בצע את השלבים הבאים כדי להוסיף את CalendAI למסך הבית:' : 'Follow these steps to add CalendAI to your home screen:')}</p>
+              <div className="bg-slate-50 rounded-lg p-4 space-y-3 mb-4" style={{ textAlign: isRTL ? 'right' : 'left' }}>
+                <div className="flex items-center gap-3 text-sm text-slate-700">
+                  <span className="w-8 h-8 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-xs font-bold shrink-0">1</span>
+                  <span>{t.pwaIosSafariStep1 || (lang === 'he' ? 'לחץ על כפתור השיתוף ⎘ (מלבן עם חץ למעלה)' : 'Tap the share button ⎘ (square with arrow pointing up)')}</span>
+                </div>
+                <div className="flex items-center gap-3 text-sm text-slate-700">
+                  <span className="w-8 h-8 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-xs font-bold shrink-0">2</span>
+                  <span>{t.pwaIosSafariStep2 || (lang === 'he' ? 'גלול מטה ובחר "הוסף למסך הבית" (Add to Home Screen)' : 'Scroll down and select "Add to Home Screen"')}</span>
+                </div>
+                <div className="flex items-center gap-3 text-sm text-slate-700">
+                  <span className="w-8 h-8 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-xs font-bold shrink-0">3</span>
+                  <span>{t.pwaIosSafariStep3 || (lang === 'he' ? 'לחץ על "הוסף" (Add) בפינה העליונה' : 'Tap "Add" at the top right corner')}</span>
+                </div>
+              </div>
+            </div>
+            <button onClick={() => setShowIosGuide(false)} className="w-full px-4 py-3 bg-blue-600 text-white rounded-xl font-bold text-sm shadow-lg hover:bg-blue-700 transition">
+              {t.cancel || (lang === 'he' ? 'הבנתי!' : 'Got it!')}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* iOS Non-Safari Message Modal */}
+      {showIosNonSafariMsg && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[9999]" onClick={() => setShowIosNonSafariMsg(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
+            <div className="text-center">
+              <div className="w-16 h-16 bg-gradient-to-br from-amber-400 to-orange-500 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
+                <ExternalLink className="w-8 h-8 text-white" />
+              </div>
+              <h3 className="text-lg font-bold text-slate-800 mb-2">{t.pwaIosNonSafariTitle || (lang === 'he' ? 'פתח ב-Safari' : 'Open in Safari')}</h3>
+              <p className="text-sm text-slate-500 mb-6">{t.pwaIosNonSafariDesc || (lang === 'he' ? 'כדי להתקין באייפון, יש לפתוח את האתר בדפדפן Safari' : 'To install on iPhone, please open this site in Safari browser')}</p>
+              <button
+                onClick={() => {
+                  const safariUrl = window.location.href;
+                  window.location.href = safariUrl;
+                }}
+                className="w-full px-4 py-3 bg-gradient-to-r from-amber-400 to-orange-500 text-white rounded-xl font-bold text-sm shadow-lg hover:shadow-xl transition"
+              >
+                {t.pwaOpenInSafari || (lang === 'he' ? 'פתח ב-Safari' : 'Open in Safari')}
+              </button>
+              <button onClick={() => setShowIosNonSafariMsg(false)} className="w-full mt-3 text-sm text-slate-400 hover:text-slate-600 py-2 transition">
+                {t.cancel || (lang === 'he' ? 'בטל' : 'Cancel')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
