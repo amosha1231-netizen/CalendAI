@@ -1053,7 +1053,7 @@ function App() {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4" dir="rtl">
         <div className="bg-white p-8 rounded-2xl shadow-xl border border-slate-100 flex flex-col items-center max-w-sm text-center">
-          <Loader2 className="w-10 h-10 animate-spin text-blue-600 mb-4" />
+          <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600 mb-4" />
           <h2 className="text-lg font-bold text-slate-800 mb-1">מתחבר למערכת...</h2>
           <p className="text-xs text-slate-500">מאמת את פרטי החשבון שלך</p>
         </div>
