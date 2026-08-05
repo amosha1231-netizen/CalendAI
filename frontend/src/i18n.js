@@ -147,6 +147,7 @@ const translations = {
     conflictOverlaps: 'חופף לאירועים:',
     conflictSuggestions: '🕒 שעות פנויות מומלצות:',
     conflictChangeTime: 'שנה שעה ל',
+    seeAllFreeSlots: 'ראה את כל החלונות הפנויים',
 
     // Success / Error
     successAdded: 'נוספו',
@@ -571,6 +572,7 @@ const translations = {
     conflictOverlaps: 'overlaps with events:',
     conflictSuggestions: '🕒 Recommended free slots:',
     conflictChangeTime: 'Change time to',
+    seeAllFreeSlots: 'See all free slots',
 
     // Success / Error
     successAdded: 'Added',
