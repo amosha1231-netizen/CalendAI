@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Menu, Share2, Download, Eye, ExternalLink, Copy, Mail } from "lucide-react";
+import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Menu, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff } from "lucide-react";
 import MonthlyCalendar from "./components/MonthlyCalendar";
 import LocationSelector from "./components/LocationSelector";
 import Privacy from "./components/Privacy";
@@ -107,6 +107,17 @@ function App() {
   const [success, setSuccess] = useState("");
   const [placeholderIndex, setPlaceholderIndex] = useState(0);
   const [conflicts, setConflicts] = useState([]);
+
+  // Voice-to-Text State (Web Speech API)
+  const [isListening, setIsListening] = useState(false);
+  const [speechSupported] = useState(() => {
+    try {
+      return typeof window !== 'undefined' && (!!window.SpeechRecognition || !!window.webkitSpeechRecognition);
+    } catch { return false; }
+  });
+  const recognitionRef = useRef(null);
+  const inputTextRef = useRef("");
+  inputTextRef.current = inputText;
 
   const [isRescheduleOpen, setIsRescheduleOpen] = useState(false);
   const [rescheduleLoading, setRescheduleLoading] = useState(false);
@@ -748,6 +759,58 @@ function App() {
     return () => clearTimeout(timer);
   }, [splashDone]);
 
+  // ── Voice-to-Text Handler (Web Speech API) ──
+  const handleToggleListening = useCallback(() => {
+    if (isListening) {
+      // Stop listening
+      if (recognitionRef.current) {
+        try { recognitionRef.current.stop(); } catch (e) {}
+      }
+      setIsListening(false);
+      return;
+    }
+
+    try {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) return;
+
+      const recognition = new SpeechRecognition();
+      recognitionRef.current = recognition;
+
+      // Support both Hebrew and English
+      recognition.lang = lang === 'he' ? 'he-IL' : 'en-US';
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.maxAlternatives = 1;
+
+      recognition.onstart = () => {
+        setIsListening(true);
+      };
+
+      recognition.onresult = (event) => {
+        const transcript = event.results[0][0].transcript;
+        // Append to existing text with a space if not empty
+        const currentText = inputTextRef.current;
+        const newText = currentText ? `${currentText} ${transcript}` : transcript;
+        setInputText(newText);
+      };
+
+      recognition.onerror = (event) => {
+        console.warn('Speech recognition error:', event.error);
+        setIsListening(false);
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+      };
+
+      recognition.start();
+    } catch (e) {
+      console.warn('Speech recognition failed:', e);
+      setIsListening(false);
+    }
+  }, [isListening, lang]);
+
   const handleUndo = async () => {
     if (scheduleHistoryRef.current.length === 0) return;
     const previousSchedule = scheduleHistoryRef.current.pop();
@@ -1195,6 +1258,21 @@ function App() {
                   ))}
                 </div>
               </div>
+            )}
+            {/* Voice-to-Text Microphone Button */}
+            {speechSupported && (
+              <button
+                onClick={handleToggleListening}
+                disabled={loading}
+                className={`absolute bottom-2 ${isRTL ? 'left-2' : 'right-2'} p-2 rounded-full transition shadow-sm z-10 ${
+                  isListening
+                    ? 'bg-red-500 text-white animate-pulse shadow-md ring-2 ring-red-300'
+                    : 'bg-white text-slate-500 border border-slate-300 hover:bg-slate-100 hover:text-blue-600'
+                } disabled:opacity-50 disabled:cursor-not-allowed`}
+                title={isListening ? (lang === 'he' ? 'מקשיב... לחץ להפסיק' : 'Listening... Click to stop') : (lang === 'he' ? 'הקלט קול' : 'Voice input')}
+              >
+                {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+              </button>
             )}
           </div>
 
