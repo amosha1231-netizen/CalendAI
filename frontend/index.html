@@ -15,7 +15,19 @@
     <link rel="apple-touch-icon" href="/icon.svg" />
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <!-- ── Instant Splash Screen (visible until React hydrates) ── -->
+      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;min-height:100dvh;background:linear-gradient(135deg,#1e3a5f 0%,#2563eb 50%,#7c3aed 100%);color:white;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;text-align:center;padding:2rem;box-sizing:border-box;">
+        <div style="width:48px;height:48px;border:4px solid rgba(255,255,255,0.2);border-top:4px solid #ffffff;border-radius:50%;animation:spinkf 0.8s linear infinite;margin-bottom:1.5rem;"></div>
+        <h1 style="font-size:2rem;font-weight:700;letter-spacing:0.05em;margin-bottom:0.5rem;background:linear-gradient(90deg,#fbbf24,#f59e0b);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">CalendAI</h1>
+        <p style="font-size:0.95rem;opacity:0.8;font-weight:400;">טוען...</p>
+        <div style="display:flex;gap:8px;margin-top:2rem;">
+          <div style="width:8px;height:8px;background:rgba(255,255,255,0.5);border-radius:50%;animation:pulse 1.4s ease-in-out infinite;"></div>
+          <div style="width:8px;height:8px;background:rgba(255,255,255,0.5);border-radius:50%;animation:pulse 1.4s ease-in-out infinite;animation-delay:0.2s;"></div>
+          <div style="width:8px;height:8px;background:rgba(255,255,255,0.5);border-radius:50%;animation:pulse 1.4s ease-in-out infinite;animation-delay:0.4s;"></div>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

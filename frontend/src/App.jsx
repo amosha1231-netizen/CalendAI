@@ -126,6 +126,7 @@ function App() {
   const [freeSlotsData, setFreeSlotsData] = useState(null);
   const [freeSlotsLoading, setFreeSlotsLoading] = useState(false);
   const [freeSlotsError, setFreeSlotsError] = useState("");
+  const [freeSlotsDay, setFreeSlotsDay] = useState("Today");
 
   const [editModalData, setEditModalData] = useState(null);
   const [editLoading, setEditLoading] = useState(false);
@@ -937,6 +938,10 @@ function App() {
     }
   };
 
+  const handleOpenFreeSlots = (day) => {
+    handleFindFreeSlots(day, 30);
+  };
+
   const handleFindFreeSlots = async (day, durationMinutes) => {
     setFreeSlotsLoading(true);
     setFreeSlotsError("");
@@ -1229,10 +1234,14 @@ function App() {
                     <div><p className="text-sm font-medium text-amber-800 mb-1">{t.conflictSuggestions}</p>
                       <div className="flex flex-wrap gap-2">{c.suggestions.map((s, i) => (
                         <button key={i} onClick={() => setInputText(`${t.conflictChangeTime} ${s.startTime}-${s.endTime} ${t.slotClickPrefix} ${c.day}`)}
-                          className="px-3 py-1.5 text-xs rounded-lg border border-amber-300 bg-white text-amber-800 hover:bg-amber-100 transition">{s.startTime} - {s.endTime}</button>
+                          className="px-3 py-1.5 text-xs rounded-lg border border-amber-300 bg-white text-amber-800 hover:bg-amber-100 transition">{s.label ? `${s.label}: ` : ''}{s.startTime} - {s.endTime}</button>
                       ))}</div>
                     </div>
                   )}
+                  <button onClick={() => { setFreeSlotsDay(c.day); handleOpenFreeSlots(c.day); }}
+                    className="mt-2 w-full text-center px-3 py-1.5 text-xs rounded-lg border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 transition flex items-center justify-center gap-1">
+                    <Sun className="w-3 h-3" /> {t.seeAllFreeSlots || 'ראה את כל החלונות הפנויים'}
+                  </button>
                 </div>
               ))}
             </div>

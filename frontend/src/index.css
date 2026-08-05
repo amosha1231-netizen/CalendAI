@@ -23,7 +23,15 @@
   animation: slide-in 0.3s ease-out;
 }
 
-/* Splash Screen */
+/* Splash Screen Preload Keyframes (used by index.html inline splash) */
+@keyframes spinkf {
+  to { transform: rotate(360deg); }
+}
+@keyframes pulse {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.3; }
+  40% { transform: scale(1); opacity: 1; }
+}
+
 @keyframes splash-fade-out {
   from {
     opacity: 1;

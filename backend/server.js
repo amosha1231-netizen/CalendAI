@@ -437,6 +437,20 @@ const hebrewNumbers = {
   'חמש': 5, 'חמישה': 5, 'וחמש': 5, 'וחמישה': 5
 };
 
+// Hebrew number words for durations (minutes)
+const hebrewDurationNumbers = {
+  'עשר': 10, 'עשרה': 10, 'ועשר': 10, 'ועשרה': 10,
+  'עשרים': 20, 'ועשרים': 20,
+  'שלושים': 30, 'ושלושים': 30,
+  'ארבעים': 40, 'וארבעים': 40,
+  'חמישים': 50, 'וחמישים': 50,
+  'ששים': 60, 'וששים': 60,
+  'שבעים': 70, 'ושבעים': 70,
+  'שמונים': 80, 'ושמונים': 80,
+  'תשעים': 90, 'ותשעים': 90,
+  'מאה': 100, 'ומאה': 100
+};
+
 function parseHebrewSingleTime(text) {
   const quarterToMatch = text.match(/רבע\s+ל(שתיים|שלוש|ארבע|חמש|שש|שבע|שמונה|תשע|עשר|אחת|אחד|שנים|ששה|שבעה|שמונה|תשעה|עשרה)/);
   if (quarterToMatch) {
@@ -579,13 +593,29 @@ function fallbackParse(text) {
   const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
   // Check for relative time phrases: "בעוד X דקות", "עוד X דקות", "in X minutes", "בעוד שעה", "עוד שעה"
+  // Helper function to extract Hebrew word-based duration in minutes
+  function getHebrewWordDuration(txt) {
+    const wordMatch = txt.match(/(עשרים|שלושים|ארבעים|חמישים|ששים|עשר|עשרה|עשרים|ועשרים|שלושים|ושלושים|ארבעים|וארבעים|חמישים|וחמישים)\s*(דקות|דקה)/i);
+    if (wordMatch) {
+      const word = wordMatch[1].toLowerCase();
+      if (hebrewDurationNumbers[word]) {
+        return hebrewDurationNumbers[word];
+      }
+    }
+    return null;
+  }
+
   const relativeTimeMatch = text.match(/(?:בעוד|עוד|in|after)\s*(?:(\d+)\s*דקות?|(\d+)\s*minutes?|שעה|an?\s*hour)/i);
+  // Also check for Hebrew word-based relative time
+  const relativeWordMatch = !relativeTimeMatch && text.match(/(?:בעוד|עוד|in|after)\s+(עשרים|שלושים|ארבעים|חמישים|ששים|עשר|עשרה|עשרים|ועשרים|שלושים|ושלושים|ארבעים|וארבעים|חמישים|וחמישים)\s*(דקות|דקה)/i);
   // Check for duration-only phrases: "חצי שעה", "half hour", "רבע שעה", "quarter hour", "X דקות" (no explicit time)
-  const durationOnlyMatch = !relativeTimeMatch && text.match(/^(חצי\s*שעה|half\s* hour|רבע\s*שעה|quarter\s* hour|(\d+)\s*דקות|(\d+)\s*minutes?)/i);
+  const durationOnlyMatch = !relativeTimeMatch && !relativeWordMatch && text.match(/^(חצי\s*שעה|half\s* hour|רבע\s*שעה|quarter\s* hour|(\d+)\s*דקות|(\d+)\s*minutes?)/i);
+  // Check for Hebrew word-based duration-only
+  const durationWordOnlyMatch = !relativeTimeMatch && !relativeWordMatch && !durationOnlyMatch && getHebrewWordDuration(text) !== null;
   // Check for "חצי שעה" / "half hour" as standalone duration
-  const halfHourMatch = !relativeTimeMatch && !durationOnlyMatch && text.match(/חצי\s*שעה|half\s*(\w*)?hour/i);
-  const quarterHourMatch = !relativeTimeMatch && !durationOnlyMatch && text.match(/רבע\s*שעה|quarter\s*(\w*)?hour/i);
-  const explicitMinutesMatch = !relativeTimeMatch && !durationOnlyMatch && text.match(/^(\d+)\s*(דקות|דקה|minutes?|min)/i);
+  const halfHourMatch = !relativeTimeMatch && !relativeWordMatch && !durationOnlyMatch && !durationWordOnlyMatch && text.match(/חצי\s*שעה|half\s*(\w*)?hour/i);
+  const quarterHourMatch = !relativeTimeMatch && !relativeWordMatch && !durationOnlyMatch && !durationWordOnlyMatch && text.match(/רבע\s*שעה|quarter\s*(\w*)?hour/i);
+  const explicitMinutesMatch = !relativeTimeMatch && !relativeWordMatch && !durationOnlyMatch && !durationWordOnlyMatch && text.match(/^(\d+)\s*(דקות|דקה|minutes?|min)/i);
 
   if (relativeTimeMatch) {
     // "בעוד X דקות" / "עוד X דקות" / "in X minutes" / "בעוד שעה" / "in an hour"
@@ -606,9 +636,21 @@ function fallbackParse(text) {
     startMinute = startTotalMinutes % 60;
     endHour = Math.floor((endTotalMinutes % 1440) / 60);
     endMinute = endTotalMinutes % 60;
-  } else if (durationOnlyMatch || halfHourMatch || quarterHourMatch || explicitMinutesMatch) {
+  } else if (relativeWordMatch) {
+    const word = relativeWordMatch[1].toLowerCase();
+    let delayMinutes = hebrewDurationNumbers[word] || 20;
+    const startTotalMinutes = currentMinutes + delayMinutes;
+    const endTotalMinutes = startTotalMinutes + 60;
+    startHour = Math.floor((startTotalMinutes % 1440) / 60);
+    startMinute = startTotalMinutes % 60;
+    endHour = Math.floor((endTotalMinutes % 1440) / 60);
+    endMinute = endTotalMinutes % 60;
+  } else if (durationOnlyMatch || halfHourMatch || quarterHourMatch || explicitMinutesMatch || durationWordOnlyMatch) {
     // Duration-only phrases: "חצי שעה" = 30 min, "רבע שעה" = 15 min, "X דקות" = X min
     let durationMinutes = 60; // default
+    if (durationWordOnlyMatch) {
+      durationMinutes = getHebrewWordDuration(text);
+    } else
     if (halfHourMatch || (durationOnlyMatch && durationOnlyMatch[0] && durationOnlyMatch[0].includes('חצי'))) {
       durationMinutes = 30;
     } else if (quarterHourMatch || (durationOnlyMatch && durationOnlyMatch[0] && durationOnlyMatch[0].includes('רבע'))) {
@@ -672,6 +714,14 @@ function fallbackParse(text) {
     .replace(/משעה\s+[א-ת]+\s*(?:וחצי|ורבע)?\s*(?:ועד|עד)\s*[א-ת]+\s*(?:וחצי|ורבע)?\s*/, '')
     .replace(/ב(שתיים|שלוש|ארבע|חמש|שש|שבע|שמונה|תשע|עשר|אחת)\s*(?:וחצי|ורבע)?\s*(?:בבוקר|בערב|בלילה)?\s*/, '')
     .replace(/^\d{1,2}:\d{2}\s*/, '')
+    // Remove ALL duration phrases from title (both Hebrew words and numbers)
+    .replace(/\b(עשרים|שלושים|ארבעים|חמישים|ששים|שבעים|שמונים|תשעים|מאה|עשר|עשרה|ועשרים|ושלושים|וארבעים|וחמישים|וששים|ושבעים|ושמונים|ותשעים|ומאה|ועשר|ועשרה)\s*(דקות|דקה)\s*/gi, '')
+    .replace(/\b(\d+)\s*(דקות|דקה|minutes?|min)\s*/gi, '')
+    .replace(/\b(חצי\s*שעה|רבע\s*שעה|half\s*hour|quarter\s*hour)\s*/gi, '')
+    .replace(/\b(שעה|שעתיים)\s*/gi, '')
+    .replace(/\b(בעוד|עוד|in|after)\s+(עשרים|שלושים|ארבעים|חמישים|ששים|עשר|עשרה|ועשרים|ושלושים|וארבעים|וחמישים)\s*(דקות|דקה)\s*/gi, '')
+    .replace(/\b(בעוד|עוד|in|after)\s+(\d+)\s*(דקות|דקה|minutes?|min)\s*/gi, '')
+    .replace(/\b(בעוד|עוד|in|after)\s+(שעה|an?\s*hour)\s*/gi, '')
     .replace(/[,!?;:]/g, '')
     .trim();
 
@@ -1902,40 +1952,72 @@ function detectConflicts(newEvent, existingEvents, options = {}) {
 
     const duration = newEnd - newStart;
 
-    // For today, start searching for free hours from the CURRENT time onward —
-    // never propose windows that begin in the past.
+    // ── Find the closest free slot BEFORE the requested time ──
+    let beforeSlot = null;
     let cursor = isToday ? Math.max(dayStart, currentMin) : dayStart;
     for (const slot of busySlots) {
+      if (slot.start >= newStart) break; // Stop once we pass the requested time
       if (cursor + duration <= slot.start) {
-        const hours = Math.floor(cursor / 60);
-        const mins = cursor % 60;
-        const endHours = Math.floor((cursor + duration) / 60);
-        const endMins = (cursor + duration) % 60;
-        const ampm = hours >= 12 ? 'PM' : 'AM';
-        const endAmpm = endHours >= 12 ? 'PM' : 'AM';
-        const displayH = hours > 12 ? hours - 12 : (hours === 0 ? 12 : hours);
-        const displayEndH = endHours > 12 ? endHours - 12 : (endHours === 0 ? 12 : endHours);
-        suggestions.push({
-          startTime: `${String(displayH).padStart(2, '0')}:${String(mins).padStart(2, '0')} ${ampm}`,
-          endTime: `${String(displayEndH).padStart(2, '0')}:${String(endMins).padStart(2, '0')} ${endAmpm}`
-        });
-        if (suggestions.length >= 2) break;
+        beforeSlot = cursor;
       }
       cursor = Math.max(cursor, slot.end);
     }
+    // Also check before the first busy slot
+    if (busySlots.length > 0 && busySlots[0].start >= newStart) {
+      // The requested time is before the first busy slot
+      // Check if there's room before the first busy slot
+      if (cursor + duration <= busySlots[0].start && cursor < newStart) {
+        beforeSlot = cursor;
+      }
+    }
+    // Check if there's room from cursor to the requested time
+    if (beforeSlot === null && cursor + duration <= newStart && cursor < newStart) {
+      beforeSlot = cursor;
+    }
 
-    if (suggestions.length === 0 && cursor + duration <= dayEnd && (!isToday || cursor >= currentMin)) {
-      const hours = Math.floor(cursor / 60);
-      const mins = cursor % 60;
-      const endHours = Math.floor((cursor + duration) / 60);
-      const endMins = (cursor + duration) % 60;
+    if (beforeSlot !== null) {
+      const hours = Math.floor(beforeSlot / 60);
+      const mins = beforeSlot % 60;
+      const endHours = Math.floor((beforeSlot + duration) / 60);
+      const endMins = (beforeSlot + duration) % 60;
       const ampm = hours >= 12 ? 'PM' : 'AM';
       const endAmpm = endHours >= 12 ? 'PM' : 'AM';
       const displayH = hours > 12 ? hours - 12 : (hours === 0 ? 12 : hours);
       const displayEndH = endHours > 12 ? endHours - 12 : (endHours === 0 ? 12 : endHours);
       suggestions.push({
         startTime: `${String(displayH).padStart(2, '0')}:${String(mins).padStart(2, '0')} ${ampm}`,
-        endTime: `${String(displayEndH).padStart(2, '0')}:${String(endMins).padStart(2, '0')} ${endAmpm}`
+        endTime: `${String(displayEndH).padStart(2, '0')}:${String(endMins).padStart(2, '0')} ${endAmpm}`,
+        label: 'לפני'
+      });
+    }
+
+    // ── Find the closest free slot AFTER the requested time ──
+    let afterSlot = null;
+    cursor = isToday ? Math.max(dayStart, currentMin) : dayStart;
+    for (const slot of busySlots) {
+      if (cursor + duration <= slot.start && cursor >= newEnd) {
+        afterSlot = cursor;
+        break;
+      }
+      cursor = Math.max(cursor, slot.end);
+    }
+    if (afterSlot === null && cursor + duration <= dayEnd && cursor >= newEnd && (!isToday || cursor >= currentMin)) {
+      afterSlot = cursor;
+    }
+
+    if (afterSlot !== null) {
+      const hours = Math.floor(afterSlot / 60);
+      const mins = afterSlot % 60;
+      const endHours = Math.floor((afterSlot + duration) / 60);
+      const endMins = (afterSlot + duration) % 60;
+      const ampm = hours >= 12 ? 'PM' : 'AM';
+      const endAmpm = endHours >= 12 ? 'PM' : 'AM';
+      const displayH = hours > 12 ? hours - 12 : (hours === 0 ? 12 : hours);
+      const displayEndH = endHours > 12 ? endHours - 12 : (endHours === 0 ? 12 : endHours);
+      suggestions.push({
+        startTime: `${String(displayH).padStart(2, '0')}:${String(mins).padStart(2, '0')} ${ampm}`,
+        endTime: `${String(displayEndH).padStart(2, '0')}:${String(endMins).padStart(2, '0')} ${endAmpm}`,
+        label: 'אחרי'
       });
     }
   }
@@ -2417,6 +2499,214 @@ app.post('/api/reschedule/merge-gaps', async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to merge gaps.' });
+  }
+});
+
+function addBreaksBetweenEvents(schedule) {
+  const todayName = getTodayDayName();
+  const newSchedule = JSON.parse(JSON.stringify(schedule));
+  const todayEvents = newSchedule[todayName] || [];
+  
+  if (todayEvents.length < 2) {
+    return { newSchedule, summary: 'אין מספיק אירועים להוספת הפסקות.' };
+  }
+  
+  const currentMin = getCurrentMinutes();
+  
+  const sorted = todayEvents
+    .map((e, idx) => ({ ...e, originalIndex: idx }))
+    .sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
+  
+  let shiftAccumulated = 0;
+  let breaksAdded = 0;
+  
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const current = sorted[i];
+    const next = sorted[i + 1];
+    
+    const currentEnd = timeToMinutes(current.endTime);
+    const nextStart = timeToMinutes(next.startTime);
+    
+    if (currentEnd === null || nextStart === null) continue;
+    
+    // Apply any accumulated shift from previous iterations
+    const adjustedCurrentEnd = currentEnd + shiftAccumulated;
+    const adjustedNextStart = nextStart + shiftAccumulated;
+    
+    // Only process future events
+    if (adjustedCurrentEnd < currentMin) continue;
+    
+    const gap = adjustedNextStart - adjustedCurrentEnd;
+    
+    if (gap < 10) {
+      // Need to push the next event forward to create a 10-minute break
+      const neededShift = 10 - gap;
+      shiftAccumulated += neededShift;
+      breaksAdded++;
+    }
+  }
+  
+  if (shiftAccumulated === 0) {
+    return { newSchedule, summary: 'כל האירועים כבר עם הפסקה של 10 דקות לפחות.' };
+  }
+  
+  // Apply the accumulated shift to all events from the first shifted one onward
+  let appliedShift = 0;
+  for (let i = 0; i < sorted.length; i++) {
+    const event = sorted[i];
+    const oldStart = timeToMinutes(event.startTime);
+    const oldEnd = timeToMinutes(event.endTime);
+    if (oldStart === null || oldEnd === null) continue;
+    
+    if (i > 0) {
+      const prevEnd = timeToMinutes(sorted[i - 1].endTime);
+      if (prevEnd !== null && oldStart < prevEnd + 10) {
+        // This event needs to be shifted
+        const gap = oldStart - prevEnd;
+        const neededShift = 10 - gap;
+        appliedShift += neededShift;
+      }
+    }
+    
+    if (appliedShift > 0) {
+      event.startTime = minutesToTime(oldStart + appliedShift);
+      event.endTime = minutesToTime(oldEnd + appliedShift);
+    }
+  }
+  
+  newSchedule[todayName] = sorted.sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
+  syncTodayWithCurrentDay(newSchedule);
+  
+  return {
+    newSchedule,
+    summary: `הוספתי ${breaksAdded} הפסקות של 10 דקות בין האירועים להיום.`,
+    breaksAdded
+  };
+}
+
+function postponeUncompletedToTomorrow(schedule) {
+  const todayName = getTodayDayName();
+  const newSchedule = JSON.parse(JSON.stringify(schedule));
+  const todayEvents = newSchedule[todayName] || [];
+  
+  if (todayEvents.length === 0) {
+    return { newSchedule, summary: 'אין אירועים להיום לדחות.' };
+  }
+  
+  const currentMin = getCurrentMinutes();
+  
+  // Find tomorrow's day name
+  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const todayIndex = dayNames.indexOf(todayName);
+  const tomorrowName = dayNames[(todayIndex + 1) % 7];
+  
+  // Find events that are past their start time or currently happening
+  const uncompletedEvents = todayEvents.filter(event => {
+    const eventStart = timeToMinutes(event.startTime);
+    return eventStart !== null && eventStart <= currentMin;
+  });
+  
+  if (uncompletedEvents.length === 0) {
+    return { newSchedule, summary: 'אין משימות שלא בוצעו לדחות למחר.' };
+  }
+  
+  // Remove uncompleted events from today
+  newSchedule[todayName] = todayEvents.filter(event => {
+    const eventStart = timeToMinutes(event.startTime);
+    return eventStart === null || eventStart > currentMin;
+  });
+  
+  // Schedule them tomorrow starting at 09:00 AM
+  let cursor = 9 * 60; // 09:00 AM
+  const tomorrowEvents = newSchedule[tomorrowName] || [];
+  
+  // Find the latest end time of existing tomorrow events
+  for (const ev of tomorrowEvents) {
+    const evEnd = timeToMinutes(ev.endTime);
+    if (evEnd !== null && evEnd > cursor) {
+      cursor = evEnd;
+    }
+  }
+  
+  const postponedEvents = [];
+  for (const event of uncompletedEvents) {
+    const duration = timeToMinutes(event.endTime) - timeToMinutes(event.startTime);
+    const eventDuration = duration > 0 ? duration : 60;
+    
+    const newStart = cursor;
+    const newEnd = cursor + eventDuration;
+    
+    const postponedEvent = {
+      ...event,
+      day: tomorrowName,
+      startTime: minutesToTime(newStart),
+      endTime: minutesToTime(newEnd)
+    };
+    
+    tomorrowEvents.push(postponedEvent);
+    postponedEvents.push(postponedEvent);
+    cursor = newEnd + 10; // Add 10 min gap between postponed events
+  }
+  
+  newSchedule[tomorrowName] = tomorrowEvents;
+  syncTodayWithCurrentDay(newSchedule);
+  
+  return {
+    newSchedule,
+    summary: `דחיתי ${postponedEvents.length} משימות שלא בוצעו למחר (${tomorrowName}) החל מ-09:00.`,
+    postponedCount: postponedEvents.length,
+    tomorrowName
+  };
+}
+
+app.post('/api/reschedule/add-breaks', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const currentSchedule = getUserSchedule(userId);
+    const result = addBreaksBetweenEvents(currentSchedule);
+
+    if (result.breaksAdded > 0) {
+      userSchedules.set(userId, result.newSchedule);
+      saveSchedulesNow();
+      if (mongoose.Types.ObjectId.isValid(userId)) {
+        await saveScheduleToMongo(userId, result.newSchedule);
+      }
+    }
+
+    res.json({
+      summary: result.summary,
+      newSchedule: result.breaksAdded > 0 ? result.newSchedule : currentSchedule,
+      breaksAdded: result.breaksAdded || 0
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to add breaks.' });
+  }
+});
+
+app.post('/api/reschedule/postpone-tomorrow', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const currentSchedule = getUserSchedule(userId);
+    const result = postponeUncompletedToTomorrow(currentSchedule);
+
+    if (result.postponedCount > 0) {
+      userSchedules.set(userId, result.newSchedule);
+      saveSchedulesNow();
+      if (mongoose.Types.ObjectId.isValid(userId)) {
+        await saveScheduleToMongo(userId, result.newSchedule);
+      }
+    }
+
+    res.json({
+      summary: result.summary,
+      newSchedule: result.postponedCount > 0 ? result.newSchedule : currentSchedule,
+      postponedCount: result.postponedCount || 0,
+      tomorrowName: result.tomorrowName
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to postpone tasks.' });
   }
 });
 
