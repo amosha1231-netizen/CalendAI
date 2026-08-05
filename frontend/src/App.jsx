@@ -731,8 +731,7 @@ function App() {
       const remaining = Math.max(0, SPLASH_MIN_DURATION - elapsed);
       const fadeTimer = setTimeout(() => {
         setSplashFading(true);
-        const doneTimer = setTimeout(() => setSplashDone(true), 600);
-        doneTimer._isSplashDone = true;
+        setTimeout(() => setSplashDone(true), 600);
       }, remaining);
       return () => clearTimeout(fadeTimer);
     }
