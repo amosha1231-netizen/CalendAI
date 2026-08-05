@@ -11,3 +11,23 @@ You are an expert full-stack developer acting as an autonomous agent. Your goal 
 3. FIX YOUR OWN ERRORS: If a command fails or a build breaks, read the error logs and fix the code automatically. Do not ask me what to do with a syntax error.
 4. VERIFY WORK: After making changes, always trigger a build or test to ensure you didn't break anything before declaring the task "Complete".
 5. CODE STYLE: Write clean, modular JavaScript/React code. Always handle errors properly in try/catch blocks.
+
+# CalendAI Context Memory Rules
+
+## AM/PM Rule
+שעות 1-7 ללא ציון "בבוקר" מתפרשות כ-PM. שעות 8-11 מתפרשות כ-AM.
+
+## Relative Time Rule
+"בעוד X דקות" מחושב תמיד מתוך השעה הנוכחית (Current Time).
+
+## Explicit Duration Rule
+"עשרים דקות" / "30 דקות" קובע בדיוק את ה-endTime ומנקה את המילים האלו מה-title של האירוע.
+
+## Sleep Events Rule
+"שינה בלילה" נפרס מ-23:00 עד 07:00 למחרת (חוצה חצות) עם recurrence: daily.
+
+## Auth State Machine Rule
+לעולם אין להניח ש-!user פירושו אורח בזמן שממתינים לתשובה מ-`/api/auth/me`. תמיד להמתין למצב authStatus סופי.
+
+## Conflict Suggestions Rule
+תמיד להציע בדיוק 2 חלונות פנויים בעתיד בלבד (אחד מוקדם יותר ואחד מאוחר יותר).

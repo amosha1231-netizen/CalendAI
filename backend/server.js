@@ -3483,6 +3483,138 @@ app.post('/api/payments/webhook',
 );
 
 // ──────────────────────────────────────────────
+// 10c. Time Analytics Endpoint (Pro-ready)
+// ──────────────────────────────────────────────
+
+/**
+ * GET /api/schedule/analytics
+ * Computes weekly time analytics: how many minutes/hours were spent this week
+ * in each category (work, workout, sleep, meetings, tasks) based on event titles.
+ * Returns a JSON object with the weekly statistics.
+ */
+app.get('/api/schedule/analytics', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const schedule = getUserSchedule(userId);
+    const todayName = getTodayDayName();
+
+    // Compute the start of the current week (Sunday)
+    const now = new Date();
+    const dayOfWeek = now.getDay(); // 0=Sunday, 1=Monday, ..., 6=Saturday
+    const weekStart = new Date(now);
+    weekStart.setDate(now.getDate() - dayOfWeek);
+    weekStart.setHours(0, 0, 0, 0);
+
+    // Category classification based on title keywords
+    function classifyEvent(title) {
+      const lower = (title || '').toLowerCase();
+      // Work-related
+      if (/עבודה|work|משרד|office|פרויקט|project|קוד|code|דדליין|deadline|לקוח|client|מייל|email|דוא"ל|שיחת עבודה|meeting|meet|פגישת עבודה|כנס|conference|שיעור|lesson|study|לימודים|קורס|course|הרצאה|lecture|תכנות|programming|פיתוח|development|מנהל|manager|boss|עמית|colleague|תדרוך|briefing|סקrum|scrum|standup/.test(lower)) {
+        return 'work';
+      }
+      // Workout / Sport
+      if (/אימון|workout|חדר כושר|gym|ריצה|run|running|יוגה|yoga|פילאטיס|pilates|שחייה|swim|swimming|כדורגל|football|כדורסל|basketball|טניס|tennis|רכיבה|cycling|bike|הליכה|walk|walking|ספורט|sport|מתח|pull.up|push.up|שכיבות|סקוואט|squat|crossfit|pilates|meditation|מדיטציה|פיתוח גוף|bodybuilding|מתיחות|stretching/.test(lower)) {
+        return 'workout';
+      }
+      // Sleep
+      if (/שינה|sleep|לילה|night|bedtime|bed/.test(lower)) {
+        return 'sleep';
+      }
+      // Meetings (general)
+      if (/פגישה|meeting|appointment|קבע|פגישת|שיחת|שיחה|zoom|שיחת זום|וידאו|video|call|phone|טלפון|ועידה|conference call|קבוצת|group|סשן|session|התייעצות|consultation|ייעוץ|coaching|אימון אישי|therapy|טיפול|פסיכולוג|psychologist|רופא|doctor|dentist|שיננית|hygienist|טיפול|treatment/.test(lower)) {
+        return 'meetings';
+      }
+      // Tasks / Errands
+      if (/קניות|shopping|סידורים|errands|משימה|task|todo|לעשות|do|לקנות|buy|לתקן|fix|לשלם|pay|חשבון|bill|בנק|bank|דואר|post|mail|סופר|supermarket|מכולת|grocery|בית מרקחת|pharmacy|ניקוי|clean|cleaning|כביסה|laundry|לבשל|cook|cooking|ארוחה|meal|לאכול|eat|אוכל|food|להכין|prepare|לסדר|organize|לארגן|arrange|להזמין|order|להחזיר|return|להשאיל|borrow|לתת|give|לקחת|take|להוציא|take.out|איסוף|pickup|drop.off/.test(lower)) {
+        return 'tasks';
+      }
+      return 'other';
+    }
+
+    // Helper: parse time string to minutes
+    function parseTimeToMin(timeStr) {
+      if (!timeStr) return 0;
+      const match = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+      if (!match) return 0;
+      let hours = parseInt(match[1], 10);
+      const minutes = parseInt(match[2], 10);
+      const meridiem = match[3].toUpperCase();
+      if (meridiem === 'PM' && hours !== 12) hours += 12;
+      if (meridiem === 'AM' && hours === 12) hours = 0;
+      return hours * 60 + minutes;
+    }
+
+    // Aggregate analytics
+    const categoryMinutes = {
+      work: 0,
+      workout: 0,
+      sleep: 0,
+      meetings: 0,
+      tasks: 0,
+      other: 0
+    };
+    const categoryCounts = {
+      work: 0,
+      workout: 0,
+      sleep: 0,
+      meetings: 0,
+      tasks: 0,
+      other: 0
+    };
+
+    // Process all events from all days
+    for (const dayKey of Object.keys(schedule)) {
+      if (dayKey === 'Today') continue;
+      const dayEvents = schedule[dayKey] || [];
+      for (const event of dayEvents) {
+        const category = classifyEvent(event.title);
+        const startMin = parseTimeToMin(event.startTime);
+        const endMin = parseTimeToMin(event.endTime);
+        let duration = 0;
+        if (endMin > startMin) {
+          duration = endMin - startMin;
+        } else if (endMin < startMin) {
+          // Midnight-crossing event (e.g., sleep 23:00 - 07:00)
+          duration = (24 * 60 - startMin) + endMin;
+        } else {
+          // Default 60 minutes if time parsing fails
+          duration = 60;
+        }
+
+        // For recurring events, multiply by the number of occurrences per week
+        let multiplier = 1;
+        if (event.recurrence === 'daily' || event.recurrence === 'forever') {
+          multiplier = 7; // Every day of the week
+        }
+        // Weekly events already appear once per week per day-key
+
+        categoryMinutes[category] += duration * multiplier;
+        categoryCounts[category] += 1 * multiplier;
+      }
+    }
+
+    // Convert to hours (rounded to 1 decimal)
+    const categoryHours = {};
+    for (const cat of Object.keys(categoryMinutes)) {
+      categoryHours[cat] = Math.round((categoryMinutes[cat] / 60) * 10) / 10;
+    }
+
+    res.json({
+      totalMinutes: Object.values(categoryMinutes).reduce((a, b) => a + b, 0),
+      totalHours: Math.round(Object.values(categoryMinutes).reduce((a, b) => a + b, 0) / 60 * 10) / 10,
+      categoryMinutes,
+      categoryHours,
+      categoryCounts,
+      weekStart: weekStart.toISOString(),
+      today: todayName
+    });
+  } catch (error) {
+    console.error('Failed to compute analytics:', error);
+    res.status(500).json({ error: 'Failed to compute schedule analytics.' });
+  }
+});
+
+// ──────────────────────────────────────────────
 // 11. Health & Fallback
 // ──────────────────────────────────────────────
 app.get('/api/health', (_req, res) => {
