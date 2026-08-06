@@ -8,6 +8,7 @@ import SidebarDrawer from "./components/SidebarDrawer";
 import MeetingWizard from "./components/MeetingWizard";
 import GuestBookingView from "./components/GuestBookingView";
 import Booking from "./components/Booking";
+import LuxuryLoader from "./components/LuxuryLoader";
 import translations from "./i18n";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
@@ -156,12 +157,6 @@ function App() {
     Thursday: [], Friday: [], Saturday: [], Today: []
   });
   const scheduleHistoryRef = useRef([]);
-
-  // Splash Screen State
-  const [splashDone, setSplashDone] = useState(false);
-  const [splashFading, setSplashFading] = useState(false);
-  const splashStartRef = useRef(Date.now());
-  const SPLASH_MIN_DURATION = 1800;
 
   // Notification / Reminder State
   const [notificationPerm, setNotificationPerm] = useState(Notification.permission);
@@ -342,13 +337,13 @@ function App() {
 
   // Smart PWA Banner: show after 60 seconds of active usage
   useEffect(() => {
-    if (splashDone && !isStandalone() && !pwaBannerDismissed) {
+    if (!isStandalone() && !pwaBannerDismissed) {
       const timer = setTimeout(() => {
         setShowPwaBanner(true);
       }, 60000);
       return () => clearTimeout(timer);
     }
-  }, [splashDone, pwaBannerDismissed]);
+  }, [pwaBannerDismissed]);
 
   const handleInstallClick = async () => {
     if (installPrompt) {
@@ -749,30 +744,6 @@ function App() {
 
   useEffect(() => { fetchSchedule(); }, [fetchSchedule]);
 
-  // Splash screen: fade out when schedule loads, but ensure minimum display duration
-  useEffect(() => {
-    const hasData = Object.values(schedule).some(arr => arr.length > 0);
-    if (hasData || user !== null) {
-      const elapsed = Date.now() - splashStartRef.current;
-      const remaining = Math.max(0, SPLASH_MIN_DURATION - elapsed);
-      const fadeTimer = setTimeout(() => {
-        setSplashFading(true);
-        setTimeout(() => setSplashDone(true), 600);
-      }, remaining);
-      return () => clearTimeout(fadeTimer);
-    }
-  }, [schedule, user]);
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (!splashDone) {
-        setSplashFading(true);
-        setTimeout(() => setSplashDone(true), 600);
-      }
-    }, SPLASH_MIN_DURATION + 1200);
-    return () => clearTimeout(timer);
-  }, [splashDone]);
-
   // ── Voice-to-Text Handler (Web Speech API) ──
   const handleToggleListening = useCallback(() => {
     if (isListening) {
@@ -1125,22 +1096,9 @@ function App() {
     return dayEvents.filter(e => e.location === locationFilter);
   };
 
-  // Authenticating Screen: show while verifying auth
+  // Authenticating Screen: show LuxuryLoader while verifying auth
   if (authStatus === 'checking') {
-    return (
-      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4" dir="rtl">
-        {/* Glassmorphism loading card */}
-        <div className="relative backdrop-blur-xl bg-white/30 rounded-3xl p-10 shadow-lg border border-white/40 flex flex-col items-center animate-pulse">
-          <CalendarCheck className="w-16 h-16 text-indigo-500 mb-4 drop-shadow-lg" />
-          <h1 className="text-3xl font-bold text-slate-800 tracking-tight">CalendAI</h1>
-          <p className="text-sm text-slate-400 mt-1">מתחבר למערכת...</p>
-        </div>
-        {/* Thin elegant loading bar */}
-        <div className="mt-8 w-48 h-1 bg-slate-200 rounded-full overflow-hidden shadow-inner">
-          <div className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full animate-loading-bar" />
-        </div>
-      </div>
-    );
+    return <LuxuryLoader />;
   }
 
   // If a dynamic booking ID is in the URL, show the guest booking view
@@ -1182,24 +1140,6 @@ function App() {
 
   return (
     <>
-      {/* Splash Screen */}
-      {!splashDone && (
-        <div className={`splash-screen${splashFading ? ' fade-out' : ''}`} dir="ltr">
-          <div className="splash-logo-container">
-            <div className="splash-logo-ring" />
-            <div className="splash-logo-ring" />
-            <CalendarCheck className="splash-logo-icon" />
-          </div>
-          <h1 className="splash-title">CalendAI</h1>
-          <p className="splash-subtitle">{t.splashSubtitle}</p>
-          <div className="splash-dots">
-            <div className="splash-dot" />
-            <div className="splash-dot" />
-            <div className="splash-dot" />
-          </div>
-          <span className="splash-version">{t.splashVersion}</span>
-        </div>
-      )}
       <div className={`min-h-screen bg-slate-50 p-4 sm:p-6 font-sans pb-20`} dir={isRTL ? 'rtl' : 'ltr'}>
       {/* Toast Notifications */}
       {toasts.length > 0 && (
