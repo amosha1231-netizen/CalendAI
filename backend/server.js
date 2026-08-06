@@ -1691,6 +1691,11 @@ app.get('/api/auth/google/callback',
 );
 
 app.get('/api/auth/me', async (req, res) => {
+  // Prevent caching of auth state - forces browser to always check with server
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+
   if (req.isAuthenticated && req.isAuthenticated()) {
     const sessionUser = req.session.passport?.user;
     const userId = sessionUser?._id || sessionUser?.id || sessionUser?.googleId;

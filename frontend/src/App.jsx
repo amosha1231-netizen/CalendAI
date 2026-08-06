@@ -466,7 +466,7 @@ function App() {
 
     const checkAuth = async (retries = 2) => {
       try {
-        const res = await fetch(`${API_BASE}/api/auth/me`, { credentials: 'include' });
+        const res = await fetch(`${API_BASE}/api/auth/me?t=${Date.now()}`, { cache: 'no-store', credentials: 'include' });
         const data = await res.json();
         if (data.user) {
           setUser(data.user);
@@ -516,7 +516,7 @@ function App() {
         // No JWT, try session-based restore as fallback
         try {
           if (localStorage.getItem('calendai-isLoggedIn') === 'true') {
-            const res = await fetch(`${API_BASE}/api/auth/me`, { credentials: "include" });
+            const res = await fetch(`${API_BASE}/api/auth/me?t=${Date.now()}`, { cache: 'no-store', credentials: "include" });
             const data = await res.json();
             if (data.user && !cancelled) {
               setUser(data.user);
