@@ -16,6 +16,18 @@ const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY || 'sk_test_place
 
 dotenv.config();
 
+// ── Startup Environment Checks ──
+console.log('=== CalendAI Startup Environment Check ===');
+console.log('GOOGLE_CLIENT_ID:', process.env.GOOGLE_CLIENT_ID ? '✅ SET' : '❌ MISSING');
+console.log('GOOGLE_CLIENT_SECRET:', process.env.GOOGLE_CLIENT_SECRET ? '✅ SET' : '❌ MISSING');
+console.log('MONGO_URI:', process.env.MONGO_URI ? '✅ SET' : '❌ MISSING (will use default)');
+console.log('GEMINI_API_KEY:', process.env.GEMINI_API_KEY ? '✅ SET' : '❌ MISSING');
+console.log('SESSION_SECRET:', process.env.SESSION_SECRET ? '✅ SET' : '❌ MISSING (will use default)');
+console.log('NODE_ENV:', process.env.NODE_ENV || 'not set');
+console.log('RENDER:', process.env.RENDER || 'not set');
+console.log('PORT:', process.env.PORT || 'not set (will use 5000)');
+console.log('========================================');
+
 const app = express();
 const PORT = process.env.PORT || 5000;
 
@@ -179,6 +191,13 @@ if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET &&
       }
       return done(null, { ...user.toObject(), accessToken });
     } catch (err) {
+      console.error('=== GOOGLE STRATEGY ERROR ===');
+      console.error('Error name:', err.name);
+      console.error('Error message:', err.message);
+      console.error('Stack trace:', err.stack);
+      console.error('Profile ID:', profile?.id);
+      console.error('Profile email:', profile?.emails?.[0]?.value);
+      console.error('==============================');
       return done(err, null);
     }
   }));
@@ -1556,24 +1575,71 @@ app.get('/api/auth/google',
 );
 
 app.get('/api/auth/google/callback',
-  passport.authenticate('google', { failureRedirect: '/?auth=failed' }),
+  (req, res, next) => {
+    passport.authenticate('google', {
+      failureRedirect: '/?auth=failed',
+      failWithError: true
+    }, (err, user, info) => {
+      if (err) {
+        console.error('=== GOOGLE CALLBACK AUTH ERROR ===');
+        console.error('Error name:', err.name);
+        console.error('Error message:', err.message);
+        console.error('Stack trace:', err.stack);
+        console.error('Info:', JSON.stringify(info || {}));
+        console.error('Query params:', JSON.stringify(req.query));
+        console.error('Session:', JSON.stringify(req.session?.id));
+        console.error('==================================');
+        return res.redirect('/?auth=error&reason=internal');
+      }
+      if (!user) {
+        console.error('=== GOOGLE CALLBACK: NO USER ===');
+        console.error('Info:', JSON.stringify(info || {}));
+        console.error('Query params:', JSON.stringify(req.query));
+        console.error('==================================');
+        return res.redirect('/?auth=failed');
+      }
+      req.logIn(user, (loginErr) => {
+        if (loginErr) {
+          console.error('=== GOOGLE CALLBACK LOGIN ERROR ===');
+          console.error('Error:', loginErr.message);
+          console.error('Stack:', loginErr.stack);
+          console.error('====================================');
+          return res.redirect('/?auth=error&reason=login');
+        }
+        next();
+      });
+    })(req, res, next);
+  },
   (req, res) => {
-    let rawUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || 'https://calendai.onrender.com';
     try {
-      const parsed = new URL(rawUrl);
-      rawUrl = parsed.origin;
-    } catch (e) {
-      rawUrl = rawUrl.split('?')[0].replace(/\/+$/, '');
-    }
-    const wantedBooking = req.session?.returnTo === 'booking';
-    if (req.session) {
-      delete req.session.returnTo;
-    }
-    const redirectUrl = wantedBooking
-      ? `${rawUrl}/?auth=success&book=1`
-      : `${rawUrl}/?auth=success`;
+      let rawUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || 'https://calendai.onrender.com';
+      try {
+        const parsed = new URL(rawUrl);
+        rawUrl = parsed.origin;
+      } catch (e) {
+        rawUrl = rawUrl.split('?')[0].replace(/\/+$/, '');
+      }
+      const wantedBooking = req.session?.returnTo === 'booking';
+      if (req.session) {
+        delete req.session.returnTo;
+      }
+      const redirectUrl = wantedBooking
+        ? `${rawUrl}/?auth=success&book=1`
+        : `${rawUrl}/?auth=success`;
 
-    res.redirect(redirectUrl);
+      console.log('=== GOOGLE CALLBACK SUCCESS ===');
+      console.log('User:', req.user?.displayName || req.user?.email || 'unknown');
+      console.log('Redirecting to:', redirectUrl);
+      console.log('===============================');
+
+      res.redirect(redirectUrl);
+    } catch (err) {
+      console.error('=== GOOGLE CALLBACK REDIRECT ERROR ===');
+      console.error('Error:', err.message);
+      console.error('Stack:', err.stack);
+      console.error('=======================================');
+      res.redirect('/?auth=error&reason=redirect');
+    }
   }
 );
 
