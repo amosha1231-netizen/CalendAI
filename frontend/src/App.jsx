@@ -478,6 +478,20 @@ function App() {
           setIsPro(data.user?.isPro === true || data.user?.isPro === 'true');
           setAuthStatus('authenticated');
           setCurrentView(intent.wantsBooking ? 'booking' : 'dashboard');
+          // Exchange session for a JWT token to persist login across server restarts
+          try {
+            const tokenRes = await fetch(`${API_BASE}/api/auth/token`, {
+              method: 'POST',
+              credentials: 'include'
+            });
+            const tokenData = await tokenRes.json();
+            if (tokenData.token) {
+              setJwtToken(tokenData.token);
+              try { localStorage.setItem('calendai-isLoggedIn', 'true'); } catch (e) {}
+            }
+          } catch (tokenErr) {
+            console.error('Failed to exchange session for JWT:', tokenErr);
+          }
           syncGuestDataToBackend();
         } else if (retries > 0) {
           setTimeout(() => checkAuth(retries - 1), 400);

@@ -34,7 +34,8 @@ const PORT = process.env.PORT || 5000;
 // ──────────────────────────────────────────────
 // MongoDB Connection
 // ──────────────────────────────────────────────
-const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/calendai';
+// Support both MONGODB_URI and MONGO_URI env variable names
+const MONGO_URI = process.env.MONGODB_URI || process.env.MONGO_URI || 'mongodb://localhost:27017/calendai';
 
 mongoose.connect(MONGO_URI)
   .then(() => console.log('MongoDB connected'))
@@ -120,8 +121,16 @@ const BACKEND_URL = process.env.BACKEND_URL || (isProduction ? 'https://calendai
 app.set('trust proxy', 1);
 
 const corsOrigin = process.env.FRONTEND_URL || process.env.CORS_ORIGIN;
+// CRITICAL: CORS origin must be explicit URLs, NOT wildcard '*', when using credentials: true
+const allowedOrigins = corsOrigin && corsOrigin !== '*'
+  ? corsOrigin.split(',')
+  : [
+      'http://localhost:5173',
+      'https://calendai.onrender.com',
+      'https://calendai-backend-dfmi.onrender.com'
+    ];
 app.use(cors({
-  origin: corsOrigin ? corsOrigin.split(',') : ['http://localhost:5173', 'https://calendai.onrender.com', 'https://calendai-backend-dfmi.onrender.com'],
+  origin: allowedOrigins,
   credentials: true
 }));
 app.use(express.json());
@@ -137,8 +146,8 @@ app.use(session({
   resave: false,
   saveUninitialized: false,
   cookie: {
-    secure: true,
-    sameSite: 'none',
+    secure: isProduction,
+    sameSite: isProduction ? 'none' : 'lax',
     httpOnly: true,
     maxAge: 24 * 60 * 60 * 1000
   }
@@ -204,11 +213,48 @@ if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET &&
   }));
 
   passport.serializeUser((user, done) => {
-    done(null, user);
+    // Store only the user ID in the session (minimal session size)
+    const userId = user._id || user.id || user.googleId;
+    done(null, userId ? userId.toString() : 'unknown');
   });
 
-  passport.deserializeUser((user, done) => {
-    done(null, user);
+  passport.deserializeUser(async (id, done) => {
+    try {
+      let userData = { id, googleId: id };
+      if (mongoose.Types.ObjectId.isValid(id)) {
+        const dbUser = await User.findById(id).lean().catch(() => null);
+        if (dbUser) {
+          userData = {
+            _id: dbUser._id,
+            id: dbUser._id,
+            googleId: dbUser.googleId,
+            email: dbUser.email,
+            displayName: dbUser.displayName,
+            photo: dbUser.photo,
+            isPro: dbUser.isPro,
+            stripeCustomerId: dbUser.stripeCustomerId
+          };
+        }
+      } else {
+        const dbUser = await User.findOne({ googleId: id }).lean().catch(() => null);
+        if (dbUser) {
+          userData = {
+            _id: dbUser._id,
+            id: dbUser._id,
+            googleId: dbUser.googleId,
+            email: dbUser.email,
+            displayName: dbUser.displayName,
+            photo: dbUser.photo,
+            isPro: dbUser.isPro,
+            stripeCustomerId: dbUser.stripeCustomerId
+          };
+        }
+      }
+      done(null, userData);
+    } catch (err) {
+      console.error('deserializeUser error:', err.message);
+      done(null, { id, googleId: id });
+    }
   });
 }
 
