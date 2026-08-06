@@ -117,12 +117,11 @@ const isProduction = process.env.NODE_ENV === 'production' || !!process.env.REND
 const CLIENT_URL = process.env.CLIENT_URL || (isProduction ? 'https://calendai.onrender.com' : 'http://localhost:5173');
 const BACKEND_URL = process.env.BACKEND_URL || (isProduction ? 'https://calendai.onrender.com' : 'http://localhost:5000');
 
-if (isProduction) {
-  app.set('trust proxy', 1);
-}
+app.set('trust proxy', 1);
 
+const corsOrigin = process.env.FRONTEND_URL || process.env.CORS_ORIGIN;
 app.use(cors({
-  origin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : ['http://localhost:5173', 'https://calendai.onrender.com', 'https://calendai-backend-dfmi.onrender.com'],
+  origin: corsOrigin ? corsOrigin.split(',') : ['http://localhost:5173', 'https://calendai.onrender.com', 'https://calendai-backend-dfmi.onrender.com'],
   credentials: true
 }));
 app.use(express.json());
@@ -138,8 +137,10 @@ app.use(session({
   resave: false,
   saveUninitialized: false,
   cookie: {
-    secure: isProduction,
-    sameSite: isProduction ? 'none' : 'lax'
+    secure: true,
+    sameSite: 'none',
+    httpOnly: true,
+    maxAge: 24 * 60 * 60 * 1000
   }
 }));
 
