@@ -23,6 +23,23 @@
   animation: slide-in 0.3s ease-out;
 }
 
+/* Loading bar animation for the auth checking screen */
+@keyframes loading-bar {
+  0% {
+    width: 0%;
+  }
+  50% {
+    width: 70%;
+  }
+  100% {
+    width: 100%;
+  }
+}
+
+.animate-loading-bar {
+  animation: loading-bar 1.6s ease-in-out infinite;
+}
+
 /* Splash Screen Preload Keyframes (used by index.html inline splash) */
 @keyframes spinkf {
   to { transform: rotate(360deg); }

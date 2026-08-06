@@ -1115,10 +1115,15 @@ function App() {
   if (authStatus === 'checking') {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4" dir="rtl">
-        <div className="bg-white p-8 rounded-2xl shadow-xl border border-slate-100 flex flex-col items-center max-w-sm text-center">
-          <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600 mb-4" />
-          <h2 className="text-lg font-bold text-slate-800 mb-1">מתחבר למערכת...</h2>
-          <p className="text-xs text-slate-500">מאמת את פרטי החשבון שלך</p>
+        {/* Glassmorphism loading card */}
+        <div className="relative backdrop-blur-xl bg-white/30 rounded-3xl p-10 shadow-lg border border-white/40 flex flex-col items-center animate-pulse">
+          <CalendarCheck className="w-16 h-16 text-indigo-500 mb-4 drop-shadow-lg" />
+          <h1 className="text-3xl font-bold text-slate-800 tracking-tight">CalendAI</h1>
+          <p className="text-sm text-slate-400 mt-1">מתחבר למערכת...</p>
+        </div>
+        {/* Thin elegant loading bar */}
+        <div className="mt-8 w-48 h-1 bg-slate-200 rounded-full overflow-hidden shadow-inner">
+          <div className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full animate-loading-bar" />
         </div>
       </div>
     );
