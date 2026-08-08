@@ -2337,13 +2337,13 @@ app.put('/api/schedule/event', async (req, res) => {
 
 app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
 
-  const { text, recurrence, location } = req.body;
+  const { text, recurrence, location, eventType, duration } = req.body;
   if (!text || !text.trim()) {
     return res.status(400).json({ error: 'Text input is required.' });
   }
 
   try {
-    const { events: parsedEvents, replyMessage } = await parseWithGemini(text);
+    const { events: parsedEvents, replyMessage } = await parseWithGemini(text, { eventType, duration });
     const userId = getUserId(req);
     const schedule = getUserSchedule(userId);
     const todayName = getTodayDayName();
@@ -2372,13 +2372,41 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
       // Auto-set createdMonth for yearly events so they only repeat in the correct month
       const createdMonth = new Date().getMonth();
 
+      // If eventType was specified from the frontend, override duration accordingly
+      const effectiveEventType = eventType || event.eventType || 'activity';
+      const effectiveDuration = effectiveEventType === 'notification' ? 0 : (duration || event.duration || 60);
+
       const eventWithRecurrence = {
         ...event,
         day: day,
         recurrence: eventRecurrence,
         location: locationId,
+        eventType: effectiveEventType,
+        duration: effectiveDuration,
         ...(eventRecurrence === 'yearly' && { createdMonth })
       };
+
+      // For notification type: override endTime to be 0 duration (same as startTime)
+      if (effectiveEventType === 'notification') {
+        eventWithRecurrence.endTime = eventWithRecurrence.startTime;
+        eventWithRecurrence.isReminder = true;
+      // For activity type: if a duration was specified from frontend, recalculate endTime
+      } else if (duration && duration > 0 && eventWithRecurrence.startTime) {
+        const startMatch = eventWithRecurrence.startTime.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+        if (startMatch) {
+          let sh = parseInt(startMatch[1], 10);
+          const sm = parseInt(startMatch[2], 10);
+          if (startMatch[3].toUpperCase() === 'PM' && sh !== 12) sh += 12;
+          if (startMatch[3].toUpperCase() === 'AM' && sh === 12) sh = 0;
+          const totalStartMinutes = sh * 60 + sm;
+          const totalEndMinutes = totalStartMinutes + duration;
+          const eh = Math.floor((totalEndMinutes % 1440) / 60);
+          const em = totalEndMinutes % 60;
+          const eAmpm = eh >= 12 ? 'PM' : 'AM';
+          const eDisplayH = eh > 12 ? eh - 12 : (eh === 0 ? 12 : eh);
+          eventWithRecurrence.endTime = `${String(eDisplayH).padStart(2, '0')}:${String(em).padStart(2, '0')} ${eAmpm}`;
+        }
+      }
 
       if (schedule[day]) {
         const { hasConflict, conflicts, suggestions } = detectConflicts(eventWithRecurrence, schedule[day], { ...locationOptions, day });

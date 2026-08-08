@@ -8,7 +8,6 @@ import SidebarDrawer from "./components/SidebarDrawer";
 import MeetingWizard from "./components/MeetingWizard";
 import GuestBookingView from "./components/GuestBookingView";
 import Booking from "./components/Booking";
-import LuxuryLoader from "./components/LuxuryLoader";
 import translations from "./i18n";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
@@ -103,6 +102,8 @@ function App() {
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [inputText, setInputText] = useState("");
   const [recurrence, setRecurrence] = useState("weekly");
+  const [eventType, setEventType] = useState("activity"); // "activity" or "notification"
+  const [activityDuration, setActivityDuration] = useState(60); // minutes
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -916,7 +917,7 @@ function App() {
       const res = await fetch(`${API_BASE}/api/parse-schedule`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: inputText, recurrence, location: selectedLocation }),
+        body: JSON.stringify({ text: inputText, recurrence, location: selectedLocation, eventType, duration: eventType === 'notification' ? 0 : activityDuration }),
         credentials: "include"
       });
       if (!res.ok) throw new Error(t.failedRequest + " " + res.status);
@@ -1175,9 +1176,16 @@ function App() {
     return dayEvents.filter(e => e.location === locationFilter);
   };
 
-  // Authenticating Screen: show LuxuryLoader while verifying auth
+  // Authenticating Screen: show inline loading indicator while verifying auth
   if (authStatus === 'checking') {
-    return <LuxuryLoader />;
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-slate-500 text-sm">{t.parsing || 'טוען...'}</p>
+        </div>
+      </div>
+    );
   }
 
   // If a dynamic booking ID is in the URL, show the guest booking view
@@ -1360,7 +1368,40 @@ function App() {
             </button>
           </div>
 
+          {/* ── Event Type and Duration Selector ── */}
           <div className="mt-4 flex flex-wrap items-center gap-3">
+            <span className="text-sm font-medium text-slate-600">{t.eventType}</span>
+            <div className="flex flex-wrap gap-2" role="radiogroup">
+              <button onClick={() => setEventType("activity")}
+                className={`px-3 py-1.5 text-sm rounded-lg border transition ${eventType === "activity" ? "bg-emerald-600 text-white border-emerald-600 shadow-sm" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-50"}`}>{t.typeActivity}</button>
+              <button onClick={() => setEventType("notification")}
+                className={`px-3 py-1.5 text-sm rounded-lg border transition ${eventType === "notification" ? "bg-amber-600 text-white border-amber-600 shadow-sm" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-50"}`}>{t.typeNotification}</button>
+            </div>
+            {/* Duration Selector (only for Activity) */}
+            {eventType === "activity" && (
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium text-slate-600">{t.activityDuration}</span>
+                <select
+                  value={activityDuration}
+                  onChange={e => setActivityDuration(parseInt(e.target.value))}
+                  className="px-3 py-1.5 text-sm rounded-lg border border-slate-300 bg-white text-slate-700 focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                >
+                  <option value={15}>{t.duration15}</option>
+                  <option value={30}>{t.duration30}</option>
+                  <option value={45}>{t.duration45}</option>
+                  <option value={60}>{t.duration60}</option>
+                  <option value={90}>{t.duration90}</option>
+                  <option value={120}>{t.duration120}</option>
+                </select>
+              </div>
+            )}
+            {eventType === "notification" && (
+              <span className="text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded border border-amber-200">{t.notificationPing}</span>
+            )}
+          </div>
+
+          {/* ── Recurrence Selector ── */}
+          <div className="mt-3 flex flex-wrap items-center gap-3">
             <span className="text-sm font-medium text-slate-600">{t.frequency}</span>
             <div className="flex flex-wrap gap-2" role="radiogroup">
               {RECURRENCE_OPTIONS(lang).map(opt => (

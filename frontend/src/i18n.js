@@ -27,6 +27,22 @@ const translations = {
     saveChanges: "שמור שינויים",
     update: "מעדכן...",
 
+    // Event Type
+    eventType: "סוג:",
+    typeActivity: "פעילות",
+    typeNotification: "התראה",
+    activityDuration: "משך פעילות:",
+    activityDurationMinutes: "דקות",
+    notificationPing: "פינג בדיוק בשעה (ללא משך)",
+
+    // Duration Options
+    duration15: "15 דקות",
+    duration30: "30 דקות",
+    duration45: "45 דקות",
+    duration60: "שעה",
+    duration90: "שעה וחצי",
+    duration120: "שעתיים",
+
     // Recurrence
     recurrenceOnce: "חד פעמי",
     recurrenceDaily: "יומי",
@@ -450,6 +466,22 @@ const translations = {
     cancel: "Cancel",
     saveChanges: "Save Changes",
     update: "Updating...",
+
+    // Event Type
+    eventType: "Type:",
+    typeActivity: "Activity",
+    typeNotification: "Notification",
+    activityDuration: "Duration:",
+    activityDurationMinutes: "min",
+    notificationPing: "Ping exactly at time (no duration)",
+
+    // Duration Options
+    duration15: "15 min",
+    duration30: "30 min",
+    duration45: "45 min",
+    duration60: "1 hour",
+    duration90: "1.5 hours",
+    duration120: "2 hours",
 
     // Recurrence
     recurrenceOnce: "Once",
