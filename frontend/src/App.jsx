@@ -343,19 +343,79 @@ function App() {
     }
   };
 
-  // ── Shabbat Mode ──
-  const isShabbatNow = useCallback(() => {
-    const now = new Date();
-    const day = now.getDay(); // 0=Sunday, 5=Friday, 6=Saturday
-    const hours = now.getHours();
-    const minutes = now.getMinutes();
-    const totalMinutes = hours * 60 + minutes;
+  // ── Shabbat Mode (Dynamic via Hebcal API) ──
+  const [shabbatTimes, setShabbatTimes] = useState(null); // { candles: Date, havdalah: Date }
+  const [shabbatFetchError, setShabbatFetchError] = useState(false);
 
-    // Friday 16:00 (960 min) to Saturday 20:00 (1200 min = Saturday 20:00)
-    if (day === 5 && totalMinutes >= 960) return true; // Friday >= 16:00
-    if (day === 6 && totalMinutes < 1200) return true; // Saturday < 20:00
-    return false;
+  // Fetch Shabbat times from Hebcal API
+  const fetchShabbatTimes = useCallback(async () => {
+    try {
+      const res = await fetch('https://www.hebcal.com/shabbat?cfg=json&geonameid=293397&m=50');
+      if (!res.ok) throw new Error('Failed to fetch Shabbat times');
+      const data = await res.json();
+      
+      let candlesTime = null;
+      let havdalahTime = null;
+      
+      for (const item of data.items) {
+        if (item.category === 'candles' && !candlesTime) {
+          candlesTime = new Date(item.date);
+        }
+        if (item.category === 'havdalah' && !havdalahTime) {
+          havdalahTime = new Date(item.date);
+        }
+      }
+      
+      if (candlesTime && havdalahTime) {
+        setShabbatTimes({ candles: candlesTime, havdalah: havdalahTime });
+        setShabbatFetchError(false);
+      } else {
+        throw new Error('Could not find candles/havdalah times');
+      }
+    } catch (e) {
+      console.error('Hebcal API error:', e);
+      setShabbatFetchError(true);
+    }
   }, []);
+
+  // Fetch on mount and every 6 hours
+  useEffect(() => {
+    fetchShabbatTimes();
+    const interval = setInterval(fetchShabbatTimes, 6 * 60 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [fetchShabbatTimes]);
+
+  const isShabbatNow = useCallback(() => {
+    if (!shabbatTimes || !shabbatTimes.candles || !shabbatTimes.havdalah) {
+      // Fallback: if API hasn't loaded yet, use hardcoded times
+      const now = new Date();
+      const day = now.getDay();
+      const hours = now.getHours();
+      const minutes = now.getMinutes();
+      const totalMinutes = hours * 60 + minutes;
+      if (day === 5 && totalMinutes >= 960) return true;
+      if (day === 6 && totalMinutes < 1200) return true;
+      return false;
+    }
+    
+    const now = new Date();
+    return now >= shabbatTimes.candles && now < shabbatTimes.havdalah;
+  }, [shabbatTimes]);
+
+  // Check if a given date/time falls within Shabbat (for blocking scheduling)
+  const isTimeInShabbat = useCallback((date) => {
+    if (!shabbatTimes || !shabbatTimes.candles || !shabbatTimes.havdalah) {
+      // Fallback: check if it's Friday 16:00 to Saturday 20:00
+      const day = date.getDay();
+      const hours = date.getHours();
+      const minutes = date.getMinutes();
+      const totalMinutes = hours * 60 + minutes;
+      if (day === 5 && totalMinutes >= 960) return true;
+      if (day === 6 && totalMinutes < 1200) return true;
+      return false;
+    }
+    return date >= shabbatTimes.candles && date < shabbatTimes.havdalah;
+  }, [shabbatTimes]);
 
   const [showShabbatOverlay, setShowShabbatOverlay] = useState(() => isShabbatNow());
 

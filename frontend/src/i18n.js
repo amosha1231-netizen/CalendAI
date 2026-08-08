@@ -371,6 +371,9 @@ const translations = {
     referralBannerButton: 'התחל עכשיו',
     referralBannerDesc: 'ניהול לו"ז חכם עם AI - תיאם פגישות, נהל משימות וחסוך זמן',
 
+    // Shabbat Block Error
+    shabbatBlockError: 'לא ניתן לקבוע פעילויות בזמן השבת. נחזור לפעילות בצאת השבת.',
+
     // Guest Usage Limit
     guestLimitTitle: 'אוהב את CalendAI? 🚀',
     guestLimitDesc: 'הגעת ל-10 פעולות ניסיון בחינם. התחבר עם Google כדי לשמור את כל הנתונים שלך!',
@@ -839,6 +842,9 @@ const translations = {
     referralBannerSubtitle: 'Join CalendAI! 🚀',
     referralBannerButton: 'Start Free',
     referralBannerDesc: 'Smart AI schedule management - schedule meetings, manage tasks, and save time',
+
+    // Shabbat Block Error
+    shabbatBlockError: 'Cannot schedule activities during Shabbat. We will resume after Shabbat ends.',
 
     // Guest Usage Limit
     guestLimitTitle: 'Love CalendAI? 🚀',
