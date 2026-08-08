@@ -295,6 +295,81 @@ function App() {
     }
   }, []);
 
+  // ── Share App Handler ──
+  const handleShareApp = useCallback(async () => {
+    const shareUrl = 'https://calendai-backend-dfmi.onrender.com/';
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: 'CalendAI',
+          text: t.shareAppDesc || 'CalendAI - העוזר החכם שלך לניהול הזמן',
+          url: shareUrl,
+        });
+      } catch (e) {
+        // User cancelled or error - fallback to clipboard
+        if (e.name !== 'AbortError') {
+          copyToClipboardFallback(shareUrl);
+        }
+      }
+    } else {
+      copyToClipboardFallback(shareUrl);
+    }
+  }, []);
+
+  const copyToClipboardFallback = (text) => {
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(text).then(() => {
+        setSuccess(t.shareLinkCopied || 'הקישור הועתק!');
+      }).catch(() => {
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+        setSuccess(t.shareLinkCopied || 'הקישור הועתק!');
+      });
+    } else {
+      const textArea = document.createElement('textarea');
+      textArea.value = text;
+      document.body.appendChild(textArea);
+      textArea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textArea);
+      setSuccess(t.shareLinkCopied || 'הקישור הועתק!');
+    }
+  };
+
+  // ── Shabbat Mode ──
+  const isShabbatNow = useCallback(() => {
+    const now = new Date();
+    const day = now.getDay(); // 0=Sunday, 5=Friday, 6=Saturday
+    const hours = now.getHours();
+    const minutes = now.getMinutes();
+    const totalMinutes = hours * 60 + minutes;
+
+    // Friday 16:00 (960 min) to Saturday 20:00 (1200 min = Saturday 20:00)
+    if (day === 5 && totalMinutes >= 960) return true; // Friday >= 16:00
+    if (day === 6 && totalMinutes < 1200) return true; // Saturday < 20:00
+    return false;
+  }, []);
+
+  const [showShabbatOverlay, setShowShabbatOverlay] = useState(() => isShabbatNow());
+
+  // Check shabbat status every minute
+  useEffect(() => {
+    const checkShabbat = () => {
+      setShowShabbatOverlay(isShabbatNow());
+    };
+    checkShabbat();
+    const interval = setInterval(checkShabbat, 60000);
+    return () => clearInterval(interval);
+  }, [isShabbatNow]);
+
+  // Block scheduling during Shabbat - wrap the parse handler
+  const handleParseOriginalRef = useRef(null);
+  // We'll check in handleParse before proceeding
+
   // Smart Auth: require login for save operations
   const handleLoginRequired = useCallback((action) => {
     if (!user) {
@@ -827,6 +902,10 @@ function App() {
 
   const handleParse = async () => {
     if (!inputText.trim()) return;
+    if (showShabbatOverlay) {
+      setError(t.shabbatBlockError || 'לא ניתן לתזמן פעילויות בשבת. נחזור לפעילות בצאת השבת.');
+      return;
+    }
     if (handleLoginRequired('parse')) return;
     if (!checkGuestActionLimit()) return;
     saveScheduleState();
@@ -1140,6 +1219,35 @@ function App() {
 
   return (
     <>
+      {/* ── Shabbat Screen Overlay ── */}
+      {showShabbatOverlay && (
+        <div className="fixed inset-0 z-[10000] bg-gradient-to-b from-indigo-950 via-purple-950 to-slate-900 flex flex-col items-center justify-center p-8" dir="rtl">
+          <div className="max-w-md mx-auto text-center">
+            {/* Candle SVG Icon */}
+            <div className="mb-8 flex items-center justify-center gap-6">
+              <svg width="48" height="72" viewBox="0 0 48 72" fill="none" xmlns="http://www.w3.org/2000/svg" className="opacity-90">
+                <rect x="18" y="52" width="12" height="18" rx="2" fill="#FCD34D" opacity="0.6"/>
+                <ellipse cx="24" cy="50" rx="8" ry="4" fill="#FBBF24" opacity="0.4"/>
+                <path d="M24 48C20 42 16 38 16 32C16 26 20 22 24 10C28 22 32 26 32 32C32 38 28 42 24 48Z" fill="#FCD34D" opacity="0.9"/>
+                <path d="M24 48C22 44 20 40 20 36C20 32 22 30 24 24C26 30 28 32 28 36C28 40 26 44 24 48Z" fill="#FEF3C7" opacity="0.7"/>
+                <ellipse cx="24" cy="20" rx="3" ry="5" fill="#FDE68A" opacity="0.5"/>
+              </svg>
+              <svg width="48" height="72" viewBox="0 0 48 72" fill="none" xmlns="http://www.w3.org/2000/svg" className="opacity-90 scale-x-[-1]">
+                <rect x="18" y="52" width="12" height="18" rx="2" fill="#FCD34D" opacity="0.6"/>
+                <ellipse cx="24" cy="50" rx="8" ry="4" fill="#FBBF24" opacity="0.4"/>
+                <path d="M24 48C20 42 16 38 16 32C16 26 20 22 24 10C28 22 32 26 32 32C32 38 28 42 24 48Z" fill="#FCD34D" opacity="0.9"/>
+                <path d="M24 48C22 44 20 40 20 36C20 32 22 30 24 24C26 30 28 32 28 36C28 40 26 44 24 48Z" fill="#FEF3C7" opacity="0.7"/>
+                <ellipse cx="24" cy="20" rx="3" ry="5" fill="#FDE68A" opacity="0.5"/>
+              </svg>
+            </div>
+            <h1 className="text-2xl sm:text-3xl font-bold text-amber-100 mb-4">שבת שלום</h1>
+            <p className="text-lg text-amber-200/80 font-medium">נחזור לפעילות בצאת השבת</p>
+            <div className="mt-8 w-16 h-0.5 bg-amber-300/30 rounded-full mx-auto" />
+            <p className="mt-6 text-sm text-amber-100/40">שבת קודש - יום מנוחה</p>
+          </div>
+        </div>
+      )}
+
       <div className={`min-h-screen bg-slate-50 p-4 sm:p-6 font-sans pb-20`} dir={isRTL ? 'rtl' : 'ltr'}>
       {/* Toast Notifications */}
       {toasts.length > 0 && (
@@ -1179,6 +1287,11 @@ function App() {
           <button onClick={() => setShowWizard(true)}
             className="flex items-center gap-1 bg-gradient-to-r from-blue-500 to-indigo-600 border border-blue-400 text-white px-1.5 sm:px-4 py-1 sm:py-2 rounded-lg hover:from-blue-600 hover:to-indigo-700 transition text-[11px] sm:text-sm font-medium shadow-sm whitespace-nowrap">
             <Calendar className="w-3 h-3 sm:w-4 sm:h-4" /> <span className="hidden sm:inline">{t.wizardTitle}</span><span className="sm:hidden">{t.wizardShort}</span>
+          </button>
+          {/* Share App Button */}
+          <button onClick={handleShareApp}
+            className="flex items-center gap-1 bg-white border border-emerald-300 text-emerald-700 px-1.5 sm:px-3 py-1 sm:py-2 rounded-lg hover:bg-emerald-50 transition text-[11px] sm:text-sm font-medium whitespace-nowrap shadow-sm">
+            <Share2 className="w-3 h-3 sm:w-4 sm:h-4" /> <span className="hidden sm:inline">{t.shareAppButton || 'שתף'}</span>
           </button>
           {/* Language Toggle Button */}
           <button onClick={toggleLanguage}

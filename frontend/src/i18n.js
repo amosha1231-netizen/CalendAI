@@ -52,7 +52,7 @@ const translations = {
     // Placeholder Examples
     placeholderExamples: [
       'תפנה לי זמן איכות עם המשפחה בסופ"ש',
-      'תמצא לי זמן לשיעור תורה בשני בערב',
+      'תמצא לי זמן להירגע בשני בערב',
       'תזמן לי 3 אימונים השבוע בבוקר',
       'תארגן לי זמן להכין אוכל ברביעי בערב',
       'קבע לי פגישת עבודה ביום שני ב-10:00',
@@ -63,13 +63,12 @@ const translations = {
     // Suggestion Chips
     suggestionChips: [
       'זמן איכות עם המשפחה',
-      'שיעור תורה בשני בערב',
+      'זמן להירגע בשני בערב',
       '3 אימונים השבוע בבוקר',
       'הכנת אוכל ברביעי בערב',
       'פגישת עבודה ביום שני',
       'תשלום חשבונות',
-      'לימודים פעמיים השבוע',
-      '8 שעות שינה בלילה'
+      'לימודים פעמיים השבוע'
     ],
     suggestionSleep: '🛌 8 שעות שינה',
 
@@ -477,7 +476,7 @@ const translations = {
     // Placeholder Examples
     placeholderExamples: [
       'Find me quality time with family this weekend',
-      'Find time for Torah study on Monday evening',
+      'Find time to relax on Monday evening',
       'Schedule 3 workouts this week in the morning',
       'Arrange time to prepare food on Wednesday evening',
       'Set a work meeting on Monday at 10:00',
@@ -488,13 +487,12 @@ const translations = {
     // Suggestion Chips
     suggestionChips: [
       'Quality time with family',
-      'Torah study Monday evening',
+      'Relax time Monday evening',
       '3 workouts this week morning',
       'Prepare food Wednesday evening',
       'Work meeting Monday',
       'Pay bills',
-      'Study twice this week',
-      '8 hours sleep at night'
+      'Study twice this week'
     ],
     suggestionSleep: '🛌 8 hours sleep',
 
