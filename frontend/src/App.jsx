@@ -9,6 +9,7 @@ import MeetingWizard from "./components/MeetingWizard";
 import GuestBookingView from "./components/GuestBookingView";
 import Booking from "./components/Booking";
 import LandingPage from "./components/LandingPage";
+import LuxuryLoader from "./components/LuxuryLoader";
 import translations from "./i18n";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
@@ -194,10 +195,7 @@ function App() {
     }
     return null;
   });
-  const [authLoading, setAuthLoading] = useState(() => {
-    // Only show loading if we think we're logged in but don't have user yet
-    try { return localStorage.getItem('calendai-isLoggedIn') === 'true'; } catch { return false; }
-  });
+  const [authLoading, setAuthLoading] = useState(true);
 
   // PWA Install State
   const [installPrompt, setInstallPrompt] = useState(null);
@@ -607,7 +605,8 @@ function App() {
     }
     if (intent.authFailed) {
       setAuthStatus('guest');
-      setCurrentView(intent.wantsBooking ? 'booking' : 'dashboard');
+      setCurrentView(intent.wantsBooking ? 'booking' : 'landing');
+      setAuthLoading(false);
       return;
     }
 
@@ -637,18 +636,21 @@ function App() {
             console.error('Failed to exchange session for JWT:', tokenErr);
           }
           syncGuestDataToBackend();
+          setAuthLoading(false);
         } else if (retries > 0) {
           setTimeout(() => checkAuth(retries - 1), 400);
         } else {
           setAuthStatus('guest');
-          setCurrentView(intent.wantsBooking ? 'booking' : 'dashboard');
+          setCurrentView(intent.wantsBooking ? 'booking' : 'landing');
+          setAuthLoading(false);
         }
       } catch (e) {
         if (retries > 0) {
           setTimeout(() => checkAuth(retries - 1), 400);
         } else {
           setAuthStatus('guest');
-          setCurrentView(intent.wantsBooking ? 'booking' : 'dashboard');
+          setCurrentView(intent.wantsBooking ? 'booking' : 'landing');
+          setAuthLoading(false);
         }
       }
     };
@@ -1253,6 +1255,11 @@ function App() {
     if (locationFilter === "all") return dayEvents;
     return dayEvents.filter(e => e.location === locationFilter);
   };
+
+  // Show LuxuryLoader while initial auth is being determined
+  if (authLoading) {
+    return <LuxuryLoader statusText={t.parsing || 'AUTHENTICATING...'} />;
+  }
 
   // Authenticating Screen: show inline loading indicator while verifying auth
   if (authStatus === 'checking') {
