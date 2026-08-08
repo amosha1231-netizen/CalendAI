@@ -1623,8 +1623,9 @@ app.get('/api/auth/google',
 
 app.get('/api/auth/google/callback',
   (req, res, next) => {
+    const rawUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || 'https://calendai.onrender.com';
     passport.authenticate('google', {
-      failureRedirect: '/?auth=failed',
+      failureRedirect: `${rawUrl}/?error=auth_failed`,
       failWithError: true
     }, (err, user, info) => {
       if (err) {
@@ -1636,14 +1637,14 @@ app.get('/api/auth/google/callback',
         console.error('Query params:', JSON.stringify(req.query));
         console.error('Session:', JSON.stringify(req.session?.id));
         console.error('==================================');
-        return res.redirect('/?auth=error&reason=internal');
+        return res.redirect(`${rawUrl}/?error=auth_failed`);
       }
       if (!user) {
         console.error('=== GOOGLE CALLBACK: NO USER ===');
         console.error('Info:', JSON.stringify(info || {}));
         console.error('Query params:', JSON.stringify(req.query));
         console.error('==================================');
-        return res.redirect('/?auth=failed');
+        return res.redirect(`${rawUrl}/?error=auth_failed`);
       }
       req.logIn(user, (loginErr) => {
         if (loginErr) {
@@ -1651,7 +1652,7 @@ app.get('/api/auth/google/callback',
           console.error('Error:', loginErr.message);
           console.error('Stack:', loginErr.stack);
           console.error('====================================');
-          return res.redirect('/?auth=error&reason=login');
+          return res.redirect(`${rawUrl}/?error=auth_failed`);
         }
         next();
       });
@@ -1666,18 +1667,12 @@ app.get('/api/auth/google/callback',
       } catch (e) {
         rawUrl = rawUrl.split('?')[0].replace(/\/+$/, '');
       }
-      const wantedBooking = req.session?.returnTo === 'booking';
-      if (req.session) {
-        delete req.session.returnTo;
-      }
 
       // Create a JWT token with 7-day expiry containing the user's _id
       const user = req.user || {};
       const token = jwt.sign({ id: user._id || user.id }, process.env.JWT_SECRET || 'calendai_secret', { expiresIn: '7d' });
 
-      const redirectUrl = wantedBooking
-        ? `${rawUrl}/?token=${token}&auth=success&book=1`
-        : `${rawUrl}/?token=${token}&auth=success`;
+      const redirectUrl = `${rawUrl}/?token=${token}&auth=success`;
 
       console.log('=== GOOGLE CALLBACK SUCCESS ===');
       console.log('User:', req.user?.displayName || req.user?.email || 'unknown');
@@ -1690,7 +1685,7 @@ app.get('/api/auth/google/callback',
       console.error('Error:', err.message);
       console.error('Stack:', err.stack);
       console.error('=======================================');
-      res.redirect('/?auth=error&reason=redirect');
+      res.redirect(`${process.env.FRONTEND_URL || 'https://calendai.onrender.com'}/?error=auth_failed`);
     }
   }
 );
