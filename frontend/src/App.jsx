@@ -520,20 +520,29 @@ function App() {
   // ── JWT Token Management ──
   // Store/retrieve JWT from localStorage for persistent auth across server restarts
   const getJwtToken = () => {
-    try { return localStorage.getItem('calendai-jwt'); } catch { return null; }
+    try { return localStorage.getItem('token') || localStorage.getItem('calendai-jwt'); } catch { return null; }
   };
   const setJwtToken = (token) => {
-    try { localStorage.setItem('calendai-jwt', token); } catch (e) {}
+    try { localStorage.setItem('token', token); localStorage.setItem('calendai-jwt', token); } catch (e) {}
   };
   const clearJwtToken = () => {
-    try { localStorage.removeItem('calendai-jwt'); } catch (e) {}
+    try { localStorage.removeItem('token'); localStorage.removeItem('calendai-jwt'); } catch (e) {}
   };
 
   // ── Unified Auth State Machine ──
   // Handles OAuth callback, auth failure, and initial auth check
   useEffect(() => {
     const intent = intentRef.current;
-    if (intent.isAuthCallback || intent.authFailed) {
+
+    // Extract token from URL query params (OAuth callback redirect with ?token=xxx)
+    const params = new URLSearchParams(window.location.search);
+    const urlToken = params.get('token');
+    if (urlToken) {
+      setJwtToken(urlToken);
+      try { localStorage.setItem('calendai-isLoggedIn', 'true'); } catch (e) {}
+    }
+
+    if (intent.isAuthCallback || intent.authFailed || urlToken) {
       window.history.replaceState({}, document.title, window.location.pathname);
     }
     if (intent.authFailed) {
@@ -544,7 +553,9 @@ function App() {
 
     const checkAuth = async (retries = 2) => {
       try {
-        const res = await fetch(`${API_BASE}/api/auth/me?t=${Date.now()}`, { cache: 'no-store', credentials: 'include' });
+        const token = getJwtToken();
+        const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+        const res = await fetch(`${API_BASE}/api/auth/me?t=${Date.now()}`, { cache: 'no-store', credentials: 'include', headers });
         const data = await res.json();
         if (data.user) {
           setUser(data.user);

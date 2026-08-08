@@ -1670,9 +1670,14 @@ app.get('/api/auth/google/callback',
       if (req.session) {
         delete req.session.returnTo;
       }
+
+      // Create a JWT token with 7-day expiry containing the user's _id
+      const user = req.user || {};
+      const token = jwt.sign({ id: user._id || user.id }, process.env.JWT_SECRET || 'calendai_secret', { expiresIn: '7d' });
+
       const redirectUrl = wantedBooking
-        ? `${rawUrl}/?auth=success&book=1`
-        : `${rawUrl}/?auth=success`;
+        ? `${rawUrl}/?token=${token}&auth=success&book=1`
+        : `${rawUrl}/?token=${token}&auth=success`;
 
       console.log('=== GOOGLE CALLBACK SUCCESS ===');
       console.log('User:', req.user?.displayName || req.user?.email || 'unknown');
@@ -1696,53 +1701,56 @@ app.get('/api/auth/me', async (req, res) => {
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
 
-  if (req.isAuthenticated && req.isAuthenticated()) {
-    const sessionUser = req.session.passport?.user;
-    const userId = sessionUser?._id || sessionUser?.id || sessionUser?.googleId;
-    let freshUser = sessionUser;
+  // Support both session-based auth (passport) and JWT token auth (Authorization: Bearer)
+  const authHeader = req.headers.authorization;
+  let userId = null;
 
-    // Fetch fresh user data from MongoDB so isPro reflects the latest state
-    if (userId) {
-      try {
-        const dbUser = await User.findById(userId).catch(() => null);
-        if (dbUser) {
-          freshUser = {
-            ...sessionUser,
-            _id: dbUser._id,
-            id: dbUser._id,
-            isPro: dbUser.isPro,
-            stripeCustomerId: dbUser.stripeCustomerId,
-            email: dbUser.email,
-            displayName: dbUser.displayName,
-            photo: dbUser.photo
-          };
-        } else if (mongoose.Types.ObjectId.isValid(userId) === false) {
-          // Maybe it's a googleId
-          const userByGoogle = await User.findOne({ googleId: userId }).catch(() => null);
-          if (userByGoogle) {
-            freshUser = {
-              ...sessionUser,
-              _id: userByGoogle._id,
-              id: userByGoogle._id,
-              googleId: userByGoogle.googleId,
-              isPro: userByGoogle.isPro,
-              stripeCustomerId: userByGoogle.stripeCustomerId,
-              email: userByGoogle.email,
-              displayName: userByGoogle.displayName,
-              photo: userByGoogle.photo
-            };
-          }
-        }
-      } catch (err) {
-        console.error('Failed to fetch fresh user data:', err.message);
-      }
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    // JWT token-based authentication
+    const token = authHeader.split(' ')[1];
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'calendai_secret');
+      userId = decoded.id;
+    } catch (err) {
+      return res.json({ user: null, error: 'Invalid or expired token' });
     }
-
-    const userForClient = freshUser ? { ...freshUser, hasToken: !!sessionUser?.accessToken } : null;
-    res.json({ user: userForClient });
-  } else {
-    res.json({ user: null });
+  } else if (req.isAuthenticated && req.isAuthenticated()) {
+    // Session-based authentication (passport)
+    const sessionUser = req.session.passport?.user;
+    userId = sessionUser?._id || sessionUser?.id || sessionUser?.googleId;
   }
+
+  if (!userId) {
+    return res.json({ user: null });
+  }
+
+  // Fetch fresh user data from MongoDB
+  let freshUser = null;
+  try {
+    let dbUser = null;
+    if (mongoose.Types.ObjectId.isValid(userId)) {
+      dbUser = await User.findById(userId).catch(() => null);
+    }
+    if (!dbUser) {
+      dbUser = await User.findOne({ googleId: userId }).catch(() => null);
+    }
+    if (dbUser) {
+      freshUser = {
+        _id: dbUser._id,
+        id: dbUser._id,
+        googleId: dbUser.googleId,
+        email: dbUser.email,
+        displayName: dbUser.displayName,
+        photo: dbUser.photo,
+        isPro: dbUser.isPro,
+        stripeCustomerId: dbUser.stripeCustomerId
+      };
+    }
+  } catch (err) {
+    console.error('Failed to fetch fresh user data:', err.message);
+  }
+
+  res.json({ user: freshUser });
 });
 
 app.post('/api/auth/logout', (req, res) => {
