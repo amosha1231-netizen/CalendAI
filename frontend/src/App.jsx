@@ -8,6 +8,7 @@ import SidebarDrawer from "./components/SidebarDrawer";
 import MeetingWizard from "./components/MeetingWizard";
 import GuestBookingView from "./components/GuestBookingView";
 import Booking from "./components/Booking";
+import LandingPage from "./components/LandingPage";
 import translations from "./i18n";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
@@ -179,10 +180,11 @@ function App() {
   const [showWizard, setShowWizard] = useState(false);
 
   // ── View State ──
-  // 'dashboard' = default for ALL users (guests can try the app, up to 10 actions)
+  // 'landing'   = default for unauthenticated guests (landing page)
+  // 'dashboard' = main app for authenticated users or guests who clicked "try demo"
   // 'booking'   = ONLY if ?book=true or ?book=dyn_xxx is explicitly in the URL
   // 'guest-booking' = when a dynamic booking ID is in the URL
-  const [currentView, setCurrentView] = useState(() => intentRef.current.wantsBooking ? 'booking' : 'dashboard');
+  const [currentView, setCurrentView] = useState(() => intentRef.current.wantsBooking ? 'booking' : 'landing');
   const [guestBookingId, setGuestBookingId] = useState(() => {
     const params = new URLSearchParams(window.location.search);
     const bookParam = params.get('book');
@@ -952,6 +954,11 @@ function App() {
 
   const handleLogin = () => { window.location.href = `${API_BASE}/api/auth/google`; };
 
+  const handleTryGuest = () => {
+    setCurrentView('dashboard');
+    window.history.replaceState({}, document.title, window.location.pathname);
+  };
+
   const handleLogout = async () => {
     try {
       await fetch(`${API_BASE}/api/auth/logout`, { method: "POST", credentials: "include" });
@@ -1205,6 +1212,19 @@ function App() {
   }
 
   if (showPrivacy) return <Privacy onBack={() => setShowPrivacy(false)} />;
+
+  // Landing Page: Show the landing page for unauthenticated guests on the root route
+  if (currentView === 'landing') {
+    return (
+      <LandingPage
+        t={t}
+        lang={lang}
+        onLogin={handleLogin}
+        onTryGuest={handleTryGuest}
+        toggleLanguage={toggleLanguage}
+      />
+    );
+  }
 
   // Booking View: ONLY when ?book=true or ?book=1 is explicitly in the URL
   if (currentView === 'booking') {
