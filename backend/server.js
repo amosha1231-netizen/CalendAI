@@ -822,11 +822,69 @@ async function parseWithGemini(text) {
   const currentTimeString = now.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
   const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   const todayEnglish = dayNames[now.getDay()];
+  const isoDate = now.toISOString();
 
   const isEnglish = /^[a-zA-Z0-9\s.,!?;:'"()-]+$/.test(text.trim()) && /[a-zA-Z]/.test(text.trim());
 
   const prompt = `
+    ═════════════════════════════════════════════════════
+    SYSTEM TIME CONTEXT (REAL-TIME — DO NOT IGNORE)
+    ═════════════════════════════════════════════════════
+    התאריך והשעה הנוכחיים הם: ${todayString}, ${currentTimeString}.
+    Current date in ISO format: ${isoDate}
+    Today's English day name: ${todayEnglish}
+    Today's day-of-month: ${now.getDate()}
+    Today's month (numeric): ${now.getMonth() + 1}
+    Today's year: ${now.getFullYear()}
+    Current day-of-week (0=Sunday): ${now.getDay()}
+
+    ═════════════════════════════════════════════════════
+    SYSTEM INSTRUCTIONS
+    ═════════════════════════════════════════════════════
+    תפקידך לתרגם את בקשת המשתמש לאובייקט JSON המכיל: { title, startDate, endDate, description }.
+
     You are a world-class AI scheduling agent. Your role is to **reason step-by-step** about the user's request, then produce a structured schedule. You think like a human personal assistant, not a text parser.
+
+    ═════════════════════════════════════════════════════
+    DATE CALCULATION RULES FOR RELATIVE EXPRESSIONS (CRITICAL)
+    ═════════════════════════════════════════════════════
+    All dates below MUST be calculated relative to the current date provided above (${todayString}, ISO: ${isoDate}).
+
+    1. **"תחילת [חודש]" / "תחילת [month]" / "start of [month]" (e.g., "תחילת ספטמבר", "תחילת אוגוסט", "תחילת יולי")**:
+       - Calculate the 1st day of that month in the CURRENT year FIRST.
+       - If that date has ALREADY PASSED (is in the past relative to today), use the 1st day of that month in the NEXT year.
+       - Example: If today is 9 באוגוסט 2026 and user says "תחילת ספטמבר" → 1 בספטמבר 2026 (current year, since Sept 2026 hasn't happened yet).
+       - Example: If today is 15 באוקטובר 2026 and user says "תחילת ספטמבר" → 1 בספטמבר 2027 (next year, since Sept 2026 already passed).
+       - The Hebrew month names are: ינואר, פברואר, מרץ, אפריל, מאי, יוני, יולי, אוגוסט, ספטמבר, אוקטובר, נובמבר, דצמבר.
+       - Convert to English: January, February, March, April, May, June, July, August, September, October, November, December.
+       - Set startTime to "09:00 AM" unless another time is specified.
+       - Set endTime to "10:00 AM" (1 hour default) unless another time or duration is specified.
+       - Set the "day" field to the actual English day name of that date (e.g., if 1 September 2026 is a Tuesday → "Tuesday").
+
+    2. **"שבוע הבא" / "בשבוע הבא" / "next week" / "בשבוע הבא ב[יום]"**:
+       - "שבוע הבא" alone → schedule the event on the SAME day of the week as today, but in the NEXT week (today + 7 days).
+         Example: If today is Sunday and user says "שבוע הבא" → next Sunday.
+       - "שבוע הבא ביום שני" / "next week on Monday" → calculate the Monday of next week.
+         Formula: Find the next occurrence of that day that falls in the NEXT calendar week (not the current week).
+         Example: Today is Wednesday (day 3). "יום שני בשבוע הבא" = next Monday = today + (7 - 3 + 1) = today + 5 days.
+         Example: Today is Monday (day 1). "יום שני בשבוע הבא" = today + 7 days.
+       - Set a reasonable default time (09:00 AM for work/study, 18:00 PM for social/evening).
+
+    3. **"יום שני בערב" / "יום שני בבוקר" / "Monday evening" / "Monday morning"**:
+       - Find the NEXT occurrence of that day from today (not the past one).
+       - Example: Today is Sunday → "Monday evening" = tomorrow (Monday) at 18:00 PM / 06:00 PM.
+       - Example: Today is Monday → "Monday evening" = today (Monday) at 18:00 PM / 06:00 PM.
+       - Example: Today is Tuesday → "Monday evening" = next Monday (7 days later) at 18:00 PM / 06:00 PM.
+       - "בבוקר" / "morning" → default time is 09:00 AM.
+       - "בערב" / "evening" → default time is 18:00 PM (06:00 PM).
+       - "בלילה" / "night" → default time is 21:00 PM (09:00 PM).
+       - If neither morning/evening/night is specified, use the activity-based default (see STEP 3).
+
+    4. **"החודש" / "this month" / "החודש הבא" / "next month"**:
+       - "החודש" → use the current month. Set day to the current date (today) or the first of the month if no specific date.
+       - "החודש הבא" → calculate the same day-of-month in the next month. If that day doesn't exist (e.g., Jan 31 → Feb 28/29), use the last day of that month.
+
+    5. **"מחרתיים" / "במחרתיים" / "day after tomorrow"**: today + 2 days.
 
     ─────────────────────────────────────────────
     LANGUAGE INSTRUCTIONS
