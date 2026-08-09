@@ -354,7 +354,7 @@ function checkShabbatBlock(startDate) {
   if (isShabbatTime(date)) {
     return {
       isBlocked: true,
-      message: 'לא ניתן לקבוע פגישות במהלך השבת. נשמח לתאם מועד לפני כניסת השבת או במוצאי השבת.'
+      message: 'האפליקציה אינה קובעת פגישות במהלך השבת. נשמח לתאם מועד לפני כניסת השבת או במוצאי השבת.'
     };
   }
 
@@ -981,7 +981,7 @@ async function parseWithGemini(text) {
 
     {
       "isBlocked": true,
-      "blockedMessage": "לא ניתן לקבוע פגישות במהלך השבת. נשמח לתאם מועד לפני כניסת השבת או במוצאי השבת."
+      "blockedMessage": "האפליקציה אינה קובעת פגישות במהלך השבת. נשמח לתאם מועד לפני כניסת השבת או במוצאי השבת."
     }
 
     When isBlocked is true, do NOT include an "events" array (or include an empty one). The system will recognize the isBlocked flag and display the blockedMessage to the user.
@@ -1397,9 +1397,9 @@ async function parseWithGemini(text) {
     if (parsed.isBlocked === true) {
       return {
         isBlocked: true,
-        blockedMessage: parsed.blockedMessage || 'לא ניתן לקבוע פגישות במהלך השבת. נשמח לתאם מועד לפני כניסת השבת או במוצאי השבת.',
+        blockedMessage: parsed.blockedMessage || 'האפליקציה אינה קובעת פגישות במהלך השבת. נשמח לתאם מועד לפני כניסת השבת או במוצאי השבת.',
         events: [],
-        replyMessage: parsed.blockedMessage || 'לא ניתן לקבוע פגישות במהלך השבת. נשמח לתאם מועד לפני כניסת השבת או במוצאי השבת.'
+        replyMessage: parsed.blockedMessage || 'האפליקציה אינה קובעת פגישות במהלך השבת. נשמח לתאם מועד לפני כניסת השבת או במוצאי השבת.'
       };
     }
 
@@ -2491,8 +2491,8 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
     if (parsedResult.isBlocked === true) {
       return res.status(400).json({
         isBlocked: true,
-        blockedMessage: parsedResult.blockedMessage || 'לא ניתן לקבוע פגישות במהלך השבת. נשמח לתאם מועד לפני כניסת השבת או במוצאי השבת.',
-        replyMessage: parsedResult.blockedMessage || 'לא ניתן לקבוע פגישות במהלך השבת. נשמח לתאם מועד לפני כניסת השבת או במוצאי השבת.',
+        blockedMessage: parsedResult.blockedMessage || 'האפליקציה אינה קובעת פגישות במהלך השבת. נשמח לתאם מועד לפני כניסת השבת או במוצאי השבת.',
+        replyMessage: parsedResult.blockedMessage || 'האפליקציה אינה קובעת פגישות במהלך השבת. נשמח לתאם מועד לפני כניסת השבת או במוצאי השבת.',
         events: []
       });
     }
@@ -2656,8 +2656,8 @@ app.post('/api/events/quick-add', aiLimiter, async (req, res) => {
       return res.status(400).json({ 
         success: false, 
         isBlocked: true,
-        blockedMessage: parsedResult.blockedMessage || 'לא ניתן לקבוע פגישות במהלך השבת. נשמח לתאם מועד לפני כניסת השבת או במוצאי השבת.',
-        message: parsedResult.blockedMessage || 'לא ניתן לקבוע פגישות במהלך השבת. נשמח לתאם מועד לפני כניסת השבת או במוצאי השבת.',
+        blockedMessage: parsedResult.blockedMessage || 'האפליקציה אינה קובעת פגישות במהלך השבת. נשמח לתאם מועד לפני כניסת השבת או במוצאי השבת.',
+        message: parsedResult.blockedMessage || 'האפליקציה אינה קובעת פגישות במהלך השבת. נשמח לתאם מועד לפני כניסת השבת או במוצאי השבת.',
         events: []
       });
     }
