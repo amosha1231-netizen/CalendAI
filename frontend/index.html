@@ -17,14 +17,15 @@
   <body>
     <div id="root">
       <!-- ── Instant Splash Screen (visible until React hydrates) ── -->
-      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;min-height:100dvh;background:linear-gradient(135deg,#1e3a5f 0%,#2563eb 50%,#7c3aed 100%);color:white;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;text-align:center;padding:2rem;box-sizing:border-box;">
-        <div style="width:48px;height:48px;border:4px solid rgba(255,255,255,0.2);border-top:4px solid #ffffff;border-radius:50%;animation:spinkf 0.8s linear infinite;margin-bottom:1.5rem;"></div>
-        <h1 style="font-size:2rem;font-weight:700;letter-spacing:0.05em;margin-bottom:0.5rem;background:linear-gradient(90deg,#fbbf24,#f59e0b);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">CalendAI</h1>
-        <p style="font-size:0.95rem;opacity:0.8;font-weight:400;">טוען...</p>
-        <div style="display:flex;gap:8px;margin-top:2rem;">
-          <div style="width:8px;height:8px;background:rgba(255,255,255,0.5);border-radius:50%;animation:pulse 1.4s ease-in-out infinite;"></div>
-          <div style="width:8px;height:8px;background:rgba(255,255,255,0.5);border-radius:50%;animation:pulse 1.4s ease-in-out infinite;animation-delay:0.2s;"></div>
-          <div style="width:8px;height:8px;background:rgba(255,255,255,0.5);border-radius:50%;animation:pulse 1.4s ease-in-out infinite;animation-delay:0.4s;"></div>
+      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;min-height:100dvh;background:#0a0a0f;color:white;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;text-align:center;padding:2rem;box-sizing:border-box;position:relative;overflow:hidden;">
+        <!-- Radial gradient depth effect -->
+        <div style="position:absolute;inset:0;background:radial-gradient(ellipse 60% 50% at 50% 40%,rgba(99,102,241,0.15),transparent 70%);pointer-events:none;"></div>
+        <div style="position:absolute;top:20%;left:50%;transform:translateX(-50%);width:300px;height:300px;background:radial-gradient(circle,rgba(99,102,241,0.06),transparent 70%);border-radius:50%;filter:blur(20px);pointer-events:none;animation:orph 3s ease-in-out infinite alternate;"></div>
+        <div style="position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;">
+          <!-- Breathing orb -->
+          <div style="width:48px;height:48px;border-radius:50%;background:radial-gradient(circle at 30% 30%,#818cf8,#6366f1,#4f46e5);box-shadow:0 0 40px rgba(99,102,241,0.4),0 0 80px rgba(99,102,241,0.2);animation:breath 3s ease-in-out infinite;margin-bottom:1.5rem;"></div>
+          <h1 style="font-size:2rem;font-weight:700;letter-spacing:0.05em;margin-bottom:0.5rem;background:linear-gradient(135deg,#f0f0ff 0%,#a5b4fc 50%,#c4b5fd 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">CalendAI</h1>
+          <p style="font-size:0.85rem;opacity:0.5;font-weight:300;letter-spacing:0.15em;">OPTIMIZING YOUR SCHEDULE...</p>
         </div>
       </div>
     </div>

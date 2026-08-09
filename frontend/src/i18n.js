@@ -79,12 +79,13 @@ const translations = {
     // Suggestion Chips
     suggestionChips: [
       'זמן איכות עם המשפחה',
-      'זמן להירגע בשני בערב',
+      'תמצא לי זמן לשיעור תורה בשני בערב',
       '3 אימונים השבוע בבוקר',
       'הכנת אוכל ברביעי בערב',
       'פגישת עבודה ביום שני',
       'תשלום חשבונות',
-      'לימודים פעמיים השבוע'
+      'לימודים פעמיים השבוע',
+      'חמש דקות זמן להירגע'
     ],
     suggestionSleep: '🛌 8 שעות שינה',
 
@@ -404,9 +405,10 @@ const translations = {
 
     // Landing Page
     landingHeroBadge: '🚀 ניהול לו"ז חכם עם AI',
-    landingHeroTitle: 'לנהל את הזמן שלך חכם יותר',
-    landingHeroSubtitle: 'CalendAI הוא העוזר האישי שלך לניהול הזמן. תאר לו"ז בשפה טבעית - וה-AI יסדר לך את השבוע, יתאם פגישות ויזכיר לך בזמן.',
+    landingHeroTitle: 'לנהל את הזמן שלך. בחוכמה.',
+    landingHeroSubtitle: 'CalendAI מנהל עבורך את הלו"ז בשפה טבעית. תאר את השבוע שלך וה-AI יתאם פגישות, יסדר משימות ויזכיר לך בזמן.',
     landingLoginWithGoogle: 'התחבר עם Google',
+    landingQuickLogin: 'התחברות מהירה עם Google',
     landingTryGuest: 'נסה הדגמה כאורח',
     landingFeaturesTitle: 'למה דווקא CalendAI?',
     landingHowItWorksTitle: 'איך זה עובד?',
@@ -548,12 +550,13 @@ const translations = {
     // Suggestion Chips
     suggestionChips: [
       'Quality time with family',
-      'Relax time Monday evening',
+      'Find me time for a Torah lesson Monday evening',
       '3 workouts this week morning',
       'Prepare food Wednesday evening',
       'Work meeting Monday',
       'Pay bills',
-      'Study twice this week'
+      'Study twice this week',
+      'Five minutes to relax'
     ],
     suggestionSleep: '🛌 8 hours sleep',
 
@@ -876,9 +879,10 @@ const translations = {
 
     // Landing Page
     landingHeroBadge: '🚀 Smart AI Schedule Management',
-    landingHeroTitle: 'Manage Your Time Smarter',
-    landingHeroSubtitle: 'CalendAI is your personal AI time management assistant. Describe your schedule in natural language - and the AI will organize your week, coordinate meetings, and remind you on time.',
+    landingHeroTitle: 'Manage Your Time. Smarter.',
+    landingHeroSubtitle: 'CalendAI manages your schedule in natural language. Describe your week and the AI will coordinate meetings, organize tasks, and remind you on time.',
     landingLoginWithGoogle: 'Login with Google',
+    landingQuickLogin: 'Quick Login with Google',
     landingTryGuest: 'Try Guest Demo',
     landingFeaturesTitle: 'Why CalendAI?',
     landingHowItWorksTitle: 'How It Works?',

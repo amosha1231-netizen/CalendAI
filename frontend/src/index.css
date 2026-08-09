@@ -49,6 +49,16 @@
   40% { transform: scale(1); opacity: 1; }
 }
 
+/* Luxury Splash Screen Animations (used by index.html inline splash) */
+@keyframes breath {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.15); }
+}
+@keyframes orph {
+  0% { opacity: 0.6; transform: translateX(-50%) scale(1); }
+  100% { opacity: 1; transform: translateX(-50%) scale(1.2); }
+}
+
 @keyframes splash-fade-out {
   from {
     opacity: 1;

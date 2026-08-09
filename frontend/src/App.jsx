@@ -622,6 +622,30 @@ function App() {
         const token = getJwtToken();
         const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
         const res = await fetch(`${API_BASE}/api/auth/me?t=${Date.now()}`, { cache: 'no-store', credentials: 'include', headers });
+
+        // ── Only clear the token on explicit 401 Unauthorized ──
+        if (res.status === 401) {
+          clearJwtToken();
+          try { localStorage.removeItem('calendai-isLoggedIn'); } catch (e) {}
+          setAuthStatus('guest');
+          setCurrentView(intent.wantsBooking ? 'booking' : 'landing');
+          setAuthLoading(false);
+          return;
+        }
+
+        // ── Network/transient server errors (5xx, etc.): do NOT clear token ──
+        if (!res.ok) {
+          if (retries > 0) {
+            setTimeout(() => checkAuth(retries - 1), 400);
+          } else {
+            // Keep the token; treat as guest for now but keep user logged in state
+            setAuthStatus('guest');
+            setCurrentView(intent.wantsBooking ? 'booking' : 'landing');
+            setAuthLoading(false);
+          }
+          return;
+        }
+
         const data = await res.json();
         if (data.user) {
           // ── Auth success: set user and navigate to dashboard ──
@@ -648,7 +672,7 @@ function App() {
         } else if (retries > 0) {
           setTimeout(() => checkAuth(retries - 1), 400);
         } else {
-          // ── Auth failed: clear localStorage and set guest ──
+          // ── Auth returned no user without 401: clear localStorage and set guest ──
           clearJwtToken();
           try { localStorage.removeItem('calendai-isLoggedIn'); } catch (e) {}
           setAuthStatus('guest');
@@ -656,12 +680,11 @@ function App() {
           setAuthLoading(false);
         }
       } catch (e) {
+        // ── Network/server error: do NOT clear the token, keep user logged in ──
         if (retries > 0) {
           setTimeout(() => checkAuth(retries - 1), 400);
         } else {
-          // ── Network/server error: clear localStorage and set guest ──
-          clearJwtToken();
-          try { localStorage.removeItem('calendai-isLoggedIn'); } catch (e) {}
+          // Keep the token in localStorage; show guest view but preserve login state
           setAuthStatus('guest');
           setCurrentView(intent.wantsBooking ? 'booking' : 'landing');
           setAuthLoading(false);
@@ -696,13 +719,28 @@ function App() {
         const res = await fetch(`${API_BASE}/api/auth/verify`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
+
+        // ── Only clear the token on explicit 401 Unauthorized ──
+        if (res.status === 401) {
+          if (!cancelled) {
+            clearJwtToken();
+            try { localStorage.removeItem('calendai-isLoggedIn'); } catch (e) {}
+          }
+          return;
+        }
+
+        // ── Network/transient server errors (5xx, etc.): do NOT clear token ──
+        if (!res.ok) {
+          return;
+        }
+
         const data = await res.json();
         if (data.user && !cancelled) {
           setUser(data.user);
           setIsPro(data.user?.isPro === true || data.user?.isPro === 'true');
           try { localStorage.setItem('calendai-isLoggedIn', 'true'); } catch (e) {}
         } else {
-          // Token expired, clear it
+          // Token no longer valid (non-401): clear it
           clearJwtToken();
           try { localStorage.removeItem('calendai-isLoggedIn'); } catch (e) {}
         }
@@ -1270,21 +1308,9 @@ function App() {
     return dayEvents.filter(e => e.location === locationFilter);
   };
 
-  // Show LuxuryLoader while initial auth is being determined
-  if (authLoading) {
+  // ── Unified LuxuryLoader: shown for ALL initial loading & auth-checking states ──
+  if (authLoading || authStatus === 'checking') {
     return <LuxuryLoader statusText={t.parsing || 'AUTHENTICATING...'} />;
-  }
-
-  // Authenticating Screen: show inline loading indicator while verifying auth
-  if (authStatus === 'checking') {
-    return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-slate-500 text-sm">{t.parsing || 'טוען...'}</p>
-        </div>
-      </div>
-    );
   }
 
   // If a dynamic booking ID is in the URL, show the guest booking view
