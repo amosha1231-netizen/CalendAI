@@ -1044,7 +1044,15 @@ function App() {
         body: JSON.stringify({ text: inputText, recurrence, location: selectedLocation, eventType, duration: eventType === 'notification' ? 0 : activityDuration }),
         credentials: "include"
       });
-      if (!res.ok) throw new Error(t.failedRequest + " " + res.status);
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        if (errorData.isBlocked === true) {
+          setError(errorData.blockedMessage || errorData.replyMessage || t.shabbatBlockError);
+          setInputText("");
+          return;
+        }
+        throw new Error(t.failedRequest + " " + res.status);
+      }
       const data = await res.json();
       if (user && data.events?.length > 0) {
         await Promise.allSettled(data.events.map(ev =>

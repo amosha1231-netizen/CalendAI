@@ -318,6 +318,50 @@ async function saveScheduleToMongo(userId, schedule) {
 }
 
 // ──────────────────────────────────────────────
+// Shabbat Validation Helper
+// ──────────────────────────────────────────────
+
+/**
+ * Check if a given Date falls within Shabbat (Friday sunset to Saturday nightfall).
+ * Uses hardcoded times as fallback (Friday 16:00 to Saturday 20:00 in Israel).
+ * @param {Date} date - The date/time to check.
+ * @returns {boolean} - True if the time falls within Shabbat.
+ */
+function isShabbatTime(date) {
+  const day = date.getDay();
+  const hours = date.getHours();
+  const minutes = date.getMinutes();
+  const totalMinutes = hours * 60 + minutes;
+
+  // Friday: from 16:00 (960 minutes) onward → Shabbat
+  if (day === 5 && totalMinutes >= 960) return true;
+  // Saturday: until 20:00 (1200 minutes) → Shabbat
+  if (day === 6 && totalMinutes < 1200) return true;
+
+  return false;
+}
+
+/**
+ * Check if an event's startDate falls within Shabbat.
+ * Parses a date string or Date object.
+ * @param {string|Date} startDate - The start date/time of the event.
+ * @returns {{ isBlocked: boolean, message: string }}
+ */
+function checkShabbatBlock(startDate) {
+  const date = startDate instanceof Date ? startDate : new Date(startDate);
+  if (isNaN(date.getTime())) return { isBlocked: false, message: '' };
+
+  if (isShabbatTime(date)) {
+    return {
+      isBlocked: true,
+      message: 'לא ניתן לקבוע פגישות במהלך השבת. נשמח לתאם מועד לפני כניסת השבת או במוצאי השבת.'
+    };
+  }
+
+  return { isBlocked: false, message: '' };
+}
+
+// ──────────────────────────────────────────────
 // 4. Event expansion helpers
 // ──────────────────────────────────────────────
 
@@ -921,7 +965,33 @@ async function parseWithGemini(text) {
     3. **Distribution Logic**: If the user mentions multiple items or a quantity, explain how you will distribute them across the week.
     4. **Common Sense Decisions**: Explain any gaps, rest periods, or reasonable defaults you applied.
 
-    ─────────────────────────────────────────────
+    ═════════════════════════════════════════════════════
+    SHABBAT RESTRICTION RULE (CRITICAL — MUST FOLLOW EXACTLY)
+    ═════════════════════════════════════════════════════
+    **ABSOLUTELY FORBIDDEN**: You MUST NEVER create events that fall during Shabbat (יום שבת / Saturday).
+
+    **Definition of Shabbat blocking hours**:
+    - **Friday (יום שישי)**: From 16:00 (04:00 PM) and onward — Shabbat has started. DO NOT schedule any events starting at or after this time on Friday.
+    - **Saturday (יום שבת / Shabbat / Saturday)**: All day until 20:00 (08:00 PM) — Shabbat. DO NOT schedule any events on Saturday until after 20:00.
+    - **Exception**: Sleep events that span from Friday night into Saturday morning are acceptable ONLY if they are standard sleep hours (11:00 PM to 07:00 AM). For example, sleeping from Friday 11:00 PM to Saturday 07:00 AM is allowed.
+
+    **What to do when a user requests a Shabbat event**:
+    - If ANY parsed event falls within Shabbat (Friday after 16:00 or any time Saturday), you MUST NOT return that event.
+    - Instead, include the following blocking structure in the JSON output:
+
+    {
+      "isBlocked": true,
+      "blockedMessage": "לא ניתן לקבוע פגישות במהלך השבת. נשמח לתאם מועד לפני כניסת השבת או במוצאי השבת."
+    }
+
+    When isBlocked is true, do NOT include an "events" array (or include an empty one). The system will recognize the isBlocked flag and display the blockedMessage to the user.
+
+    **Detection tips**:
+    - If the user says "שבת", "יום שבת", "Saturday", "שישי בערב" (Friday evening), these are all shabbat-time indicators.
+    - If the user says "במוצאי שבת" / "Saturday night" / "after shabbat" → schedule after 20:00 on Saturday (08:00 PM).
+    - Use the current date and time context provided above to determine which day of the week the requested date falls on.
+
+    ═════════════════════════════════════════════════════
     STEP 2: MULTI-EVENT PARSING (CRITICAL — NEW)
     ─────────────────────────────────────────────
     You MUST detect when the user's text contains MULTIPLE separate tasks or items and return an ARRAY of separate events, never a single combined event.
@@ -1322,6 +1392,16 @@ async function parseWithGemini(text) {
 
     const raw = response.text || '{}';
     const parsed = JSON.parse(raw);
+
+    // Handle Shabbat block response from the AI
+    if (parsed.isBlocked === true) {
+      return {
+        isBlocked: true,
+        blockedMessage: parsed.blockedMessage || 'לא ניתן לקבוע פגישות במהלך השבת. נשמח לתאם מועד לפני כניסת השבת או במוצאי השבת.',
+        events: [],
+        replyMessage: parsed.blockedMessage || 'לא ניתן לקבוע פגישות במהלך השבת. נשמח לתאם מועד לפני כניסת השבת או במוצאי השבת.'
+      };
+    }
 
     // Handle the new structure with reasoning field
     if (parsed.reasoning && parsed.events && parsed.replyMessage) {
@@ -2405,7 +2485,19 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
   }
 
   try {
-    const { events: parsedEvents, replyMessage } = await parseWithGemini(text, { eventType, duration });
+    const parsedResult = await parseWithGemini(text, { eventType, duration });
+    
+    // Handle Shabbat block response from AI
+    if (parsedResult.isBlocked === true) {
+      return res.status(400).json({
+        isBlocked: true,
+        blockedMessage: parsedResult.blockedMessage || 'לא ניתן לקבוע פגישות במהלך השבת. נשמח לתאם מועד לפני כניסת השבת או במוצאי השבת.',
+        replyMessage: parsedResult.blockedMessage || 'לא ניתן לקבוע פגישות במהלך השבת. נשמח לתאם מועד לפני כניסת השבת או במוצאי השבת.',
+        events: []
+      });
+    }
+
+    const { events: parsedEvents, replyMessage } = parsedResult;
     const userId = getUserId(req);
     const schedule = getUserSchedule(userId);
     const todayName = getTodayDayName();
@@ -2557,7 +2649,20 @@ app.post('/api/events/quick-add', aiLimiter, async (req, res) => {
     }
 
     // Parse the text using AI (same engine as /api/parse-schedule)
-    const { events: parsedEvents, replyMessage } = await parseWithGemini(text);
+    const parsedResult = await parseWithGemini(text);
+    
+    // Handle Shabbat block response from AI
+    if (parsedResult.isBlocked === true) {
+      return res.status(400).json({ 
+        success: false, 
+        isBlocked: true,
+        blockedMessage: parsedResult.blockedMessage || 'לא ניתן לקבוע פגישות במהלך השבת. נשמח לתאם מועד לפני כניסת השבת או במוצאי השבת.',
+        message: parsedResult.blockedMessage || 'לא ניתן לקבוע פגישות במהלך השבת. נשמח לתאם מועד לפני כניסת השבת או במוצאי השבת.',
+        events: []
+      });
+    }
+
+    const { events: parsedEvents, replyMessage } = parsedResult;
 
     if (!parsedEvents || parsedEvents.length === 0) {
       return res.status(400).json({ success: false, error: 'Could not parse any events from the provided text.' });
