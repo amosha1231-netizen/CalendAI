@@ -399,7 +399,7 @@ const translations = {
 
     // Smart Auth
     loginRequired: 'עליך להתחבר כדי לבצע פעולה זו',
-    loginShort: 'התחבר',
+    loginShort: 'כניסה',
     loginToSave: 'התחבר כדי לשמור',
     loginToSaveDesc: 'כדי לשמור אירועים בלוח השנה, עליך להתחבר קודם',
 

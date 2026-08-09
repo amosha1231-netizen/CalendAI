@@ -672,9 +672,8 @@ function App() {
         } else if (retries > 0) {
           setTimeout(() => checkAuth(retries - 1), 400);
         } else {
-          // ── Auth returned no user without 401: clear localStorage and set guest ──
-          clearJwtToken();
-          try { localStorage.removeItem('calendai-isLoggedIn'); } catch (e) {}
+          // ── Auth returned no user without 401: do NOT clear the token.
+          // The token is only cleared on an explicit 401 Unauthorized from the server.
           setAuthStatus('guest');
           setCurrentView(intent.wantsBooking ? 'booking' : 'landing');
           setAuthLoading(false);
@@ -739,11 +738,9 @@ function App() {
           setUser(data.user);
           setIsPro(data.user?.isPro === true || data.user?.isPro === 'true');
           try { localStorage.setItem('calendai-isLoggedIn', 'true'); } catch (e) {}
-        } else {
-          // Token no longer valid (non-401): clear it
-          clearJwtToken();
-          try { localStorage.removeItem('calendai-isLoggedIn'); } catch (e) {}
         }
+        // Non-401 responses without a user: do NOT clear the token.
+        // The token is only cleared on an explicit 401 Unauthorized from the server.
       } catch (e) {
         // Server might be waking up - keep the dashboard view, don't fall back
         // The JWT is still valid, just the server is down

@@ -28,10 +28,9 @@ export default function LandingPage({ t, lang, onLogin, onTryGuest, toggleLangua
             </button>
             <button
               onClick={onLogin}
-              className="flex items-center gap-1.5 border border-slate-300 hover:border-slate-400 text-slate-700 px-3 py-1.5 rounded-lg text-sm font-medium transition bg-white/50 hover:bg-white"
+              className="text-sm text-slate-500 hover:text-slate-800 px-3 py-1.5 rounded-lg border border-transparent hover:border-slate-200 hover:bg-white transition font-medium"
             >
-              <LogIn className="w-3.5 h-3.5" />
-              {t.loginShort || 'כניסה'}
+              {lang === 'he' ? 'כניסה' : (t.loginShort || 'Login')}
             </button>
           </div>
         </div>
