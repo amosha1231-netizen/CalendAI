@@ -127,7 +127,8 @@ const allowedOrigins = corsOrigin && corsOrigin !== '*'
   : [
       'http://localhost:5173',
       'https://calendai.onrender.com',
-      'https://calendai-backend-dfmi.onrender.com'
+      'https://calendai-backend-dfmi.onrender.com',
+      'https://calendai-q59p.onrender.com'
     ];
 app.use(cors({
   origin: allowedOrigins,

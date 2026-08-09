@@ -592,17 +592,18 @@ function App() {
   useEffect(() => {
     const intent = intentRef.current;
 
-    // Extract token from URL query params (OAuth callback redirect with ?token=xxx)
+    // ── Step 1: Extract token from URL query params (OAuth callback redirect with ?token=xxx) ──
     const params = new URLSearchParams(window.location.search);
     const urlToken = params.get('token');
     if (urlToken) {
+      // Save token to localStorage immediately
       setJwtToken(urlToken);
       try { localStorage.setItem('calendai-isLoggedIn', 'true'); } catch (e) {}
-    }
-
-    if (intent.isAuthCallback || intent.authFailed || urlToken) {
+      // Clean the URL without refreshing the page
       window.history.replaceState({}, document.title, window.location.pathname);
     }
+
+    // Handle auth failure from OAuth callback
     if (intent.authFailed) {
       setAuthStatus('guest');
       setCurrentView(intent.wantsBooking ? 'booking' : 'landing');
@@ -610,6 +611,12 @@ function App() {
       return;
     }
 
+    // Clean URL for auth callback (login=success / auth=success) even without token
+    if (intent.isAuthCallback && !urlToken) {
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+
+    // ── Step 2: Check auth with the token from localStorage ──
     const checkAuth = async (retries = 2) => {
       try {
         const token = getJwtToken();
@@ -617,6 +624,7 @@ function App() {
         const res = await fetch(`${API_BASE}/api/auth/me?t=${Date.now()}`, { cache: 'no-store', credentials: 'include', headers });
         const data = await res.json();
         if (data.user) {
+          // ── Auth success: set user and navigate to dashboard ──
           setUser(data.user);
           setIsPro(data.user?.isPro === true || data.user?.isPro === 'true');
           setAuthStatus('authenticated');
@@ -640,6 +648,9 @@ function App() {
         } else if (retries > 0) {
           setTimeout(() => checkAuth(retries - 1), 400);
         } else {
+          // ── Auth failed: clear localStorage and set guest ──
+          clearJwtToken();
+          try { localStorage.removeItem('calendai-isLoggedIn'); } catch (e) {}
           setAuthStatus('guest');
           setCurrentView(intent.wantsBooking ? 'booking' : 'landing');
           setAuthLoading(false);
@@ -648,6 +659,9 @@ function App() {
         if (retries > 0) {
           setTimeout(() => checkAuth(retries - 1), 400);
         } else {
+          // ── Network/server error: clear localStorage and set guest ──
+          clearJwtToken();
+          try { localStorage.removeItem('calendai-isLoggedIn'); } catch (e) {}
           setAuthStatus('guest');
           setCurrentView(intent.wantsBooking ? 'booking' : 'landing');
           setAuthLoading(false);
