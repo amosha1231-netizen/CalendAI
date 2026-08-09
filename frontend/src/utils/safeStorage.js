@@ -1,8 +1,9 @@
 /**
  * Safe Storage Utility
  * 
- * Wraps localStorage and sessionStorage with full try/catch protection.
- * Falls back to in-memory storage (JS object) when the browser blocks access
+ * Wraps localStorage with full try/catch protection.
+ * ALWAYS tries real localStorage first on every operation.
+ * Falls back to in-memory storage ONLY when the browser blocks access
  * (e.g., Safari private mode, WKWebView in WhatsApp/Instagram, etc.).
  * 
  * Usage:
@@ -13,120 +14,82 @@
  *   safeStorage.clear();
  */
 
-// In-memory fallback store
+// In-memory fallback store (used only when localStorage throws)
 const memoryStore = new Map();
-
-// Detect if a storage type is available
-function isStorageAvailable(type) {
-  try {
-    const storage = window[type];
-    const testKey = '__safe_storage_test__';
-    storage.setItem(testKey, 'test');
-    storage.removeItem(testKey);
-    return true;
-  } catch (e) {
-    return false;
-  }
-}
-
-// Cache availability checks (they won't change during a session)
-const localStorageAvailable = isStorageAvailable('localStorage');
-const sessionStorageAvailable = isStorageAvailable('sessionStorage');
 
 const safeStorage = {
   // ── localStorage ──
+  // Always tries real localStorage first. Falls to memory ONLY on exception.
   getItem(key) {
     try {
-      if (localStorageAvailable) {
-        return localStorage.getItem(key);
-      }
+      return localStorage.getItem(key);
     } catch (e) {
-      // Silently fall through to memory
+      // localStorage unavailable (private mode, etc.) → fall back to memory
+      return memoryStore.get(key) ?? null;
     }
-    return memoryStore.get(`local_${key}`) ?? null;
   },
 
   setItem(key, value) {
     try {
-      if (localStorageAvailable) {
-        localStorage.setItem(key, value);
-        return;
-      }
+      localStorage.setItem(key, value);
+      return;
     } catch (e) {
-      // Silently fall through to memory
+      // localStorage unavailable → store in memory
     }
-    memoryStore.set(`local_${key}`, value);
+    memoryStore.set(key, value);
   },
 
   removeItem(key) {
     try {
-      if (localStorageAvailable) {
-        localStorage.removeItem(key);
-      }
+      localStorage.removeItem(key);
     } catch (e) {
-      // Silently fall through to memory
+      // localStorage unavailable
     }
-    memoryStore.delete(`local_${key}`);
+    memoryStore.delete(key);
   },
 
   clear() {
     try {
-      if (localStorageAvailable) {
-        localStorage.clear();
-      }
+      localStorage.clear();
     } catch (e) {
-      // Silently fall through to memory
+      // localStorage unavailable
     }
-    // Clear only our keys from memory store
-    for (const key of memoryStore.keys()) {
-      if (key.startsWith('local_')) {
-        memoryStore.delete(key);
-      }
-    }
+    memoryStore.clear();
   },
 
   // ── sessionStorage ──
   sessionGetItem(key) {
     try {
-      if (sessionStorageAvailable) {
-        return sessionStorage.getItem(key);
-      }
+      return sessionStorage.getItem(key);
     } catch (e) {
-      // Silently fall through to memory
+      return memoryStore.get(`session_${key}`) ?? null;
     }
-    return memoryStore.get(`session_${key}`) ?? null;
   },
 
   sessionSetItem(key, value) {
     try {
-      if (sessionStorageAvailable) {
-        sessionStorage.setItem(key, value);
-        return;
-      }
+      sessionStorage.setItem(key, value);
+      return;
     } catch (e) {
-      // Silently fall through to memory
+      // sessionStorage unavailable → store in memory
     }
     memoryStore.set(`session_${key}`, value);
   },
 
   sessionRemoveItem(key) {
     try {
-      if (sessionStorageAvailable) {
-        sessionStorage.removeItem(key);
-      }
+      sessionStorage.removeItem(key);
     } catch (e) {
-      // Silently fall through to memory
+      // sessionStorage unavailable
     }
     memoryStore.delete(`session_${key}`);
   },
 
   sessionClear() {
     try {
-      if (sessionStorageAvailable) {
-        sessionStorage.clear();
-      }
+      sessionStorage.clear();
     } catch (e) {
-      // Silently fall through to memory
+      // sessionStorage unavailable
     }
     for (const key of memoryStore.keys()) {
       if (key.startsWith('session_')) {
@@ -136,8 +99,24 @@ const safeStorage = {
   },
 
   // ── Utility: check if real localStorage is available ──
-  isLocalStorageAvailable: () => localStorageAvailable,
-  isSessionStorageAvailable: () => sessionStorageAvailable,
+  isLocalStorageAvailable: () => {
+    try {
+      localStorage.setItem('__safe_storage_test__', '1');
+      localStorage.removeItem('__safe_storage_test__');
+      return true;
+    } catch (e) {
+      return false;
+    }
+  },
+  isSessionStorageAvailable: () => {
+    try {
+      sessionStorage.setItem('__safe_storage_test__', '1');
+      sessionStorage.removeItem('__safe_storage_test__');
+      return true;
+    } catch (e) {
+      return false;
+    }
+  },
 };
 
 export default safeStorage;

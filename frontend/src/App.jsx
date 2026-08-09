@@ -617,9 +617,16 @@ function App() {
           if (retries > 0) {
             setTimeout(() => checkAuth(retries - 1), 400);
           } else {
-            // Keep the token; treat as guest for now but keep user logged in state
-            setAuthStatus('guest');
-            setCurrentView(intent.wantsBooking ? 'booking' : 'landing');
+            const token = getJwtToken();
+            if (token) {
+              // We have a token → keep the user in authenticated state, show dashboard
+              // The token is still valid; the server just had a transient error
+              setAuthStatus('authenticated');
+              setCurrentView(intent.wantsBooking ? 'booking' : 'dashboard');
+            } else {
+              setAuthStatus('guest');
+              setCurrentView(intent.wantsBooking ? 'booking' : 'landing');
+            }
             setAuthLoading(false);
           }
           return;
@@ -662,9 +669,17 @@ function App() {
         if (retries > 0) {
           setTimeout(() => checkAuth(retries - 1), 400);
         } else {
-          // Keep the token in localStorage; show guest view but preserve login state
-          setAuthStatus('guest');
-          setCurrentView(intent.wantsBooking ? 'booking' : 'landing');
+          const token = getJwtToken();
+          if (token) {
+            // We have a valid token but the server is unreachable (network error / timeout).
+            // Keep the user authenticated so they see the dashboard (not the landing page).
+            // The token stays in localStorage and will be used on the next refresh.
+            setAuthStatus('authenticated');
+            setCurrentView(intent.wantsBooking ? 'booking' : 'dashboard');
+          } else {
+            setAuthStatus('guest');
+            setCurrentView(intent.wantsBooking ? 'booking' : 'landing');
+          }
           setAuthLoading(false);
         }
       }
@@ -698,8 +713,8 @@ function App() {
           headers: { 'Authorization': `Bearer ${token}` }
         });
 
-        // ── Only clear the token on explicit 401 Unauthorized ──
-        if (res.status === 401) {
+        // ── Only clear the token on explicit 401 or 403 Unauthorized ──
+        if (res.status === 401 || res.status === 403) {
           if (!cancelled) {
             clearJwtToken();
             safeStorage.removeItem('calendai-isLoggedIn');
@@ -717,6 +732,9 @@ function App() {
           setUser(data.user);
           setIsPro(data.user?.isPro === true || data.user?.isPro === 'true');
           safeStorage.setItem('calendai-isLoggedIn', 'true');
+          // Also update authStatus and currentView so the app transitions to dashboard
+          setAuthStatus('authenticated');
+          setCurrentView('dashboard');
         }
         // Non-401 responses without a user: do NOT clear the token.
         // The token is only cleared on an explicit 401 Unauthorized from the server.
