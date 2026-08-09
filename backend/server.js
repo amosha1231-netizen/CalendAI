@@ -2509,6 +2509,133 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
   }
 });
 
+// ──────────────────────────────────────────────
+// 8d. Quick Add endpoint for Siri / Apple Shortcuts / voice integrations
+// ──────────────────────────────────────────────
+
+/**
+ * POST /api/events/quick-add
+ * Accepts free-text input (voice or typed) and uses AI to parse, schedule,
+ * and return a structured JSON response. Designed for Siri Shortcuts integration.
+ * Body: { text: "string" }
+ * Auth: Bearer Token (required)
+ * Response: { success: true, message: "string", event: eventData }
+ */
+app.post('/api/events/quick-add', aiLimiter, async (req, res) => {
+  try {
+    const { text } = req.body;
+    if (!text || !text.trim()) {
+      return res.status(400).json({ success: false, error: 'Text input is required.' });
+    }
+
+    // Authenticate via Bearer token (same logic as /api/auth/me)
+    const authHeader = req.headers.authorization;
+    let userId = null;
+    let userData = null;
+
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        userId = decoded.id;
+        // Fetch fresh user data for display name
+        if (mongoose.Types.ObjectId.isValid(userId)) {
+          const dbUser = await User.findById(userId).lean().catch(() => null);
+          if (dbUser) {
+            userData = dbUser;
+          }
+        }
+      } catch (err) {
+        return res.status(401).json({ success: false, error: 'Invalid or expired token.' });
+      }
+    } else if (req.isAuthenticated && req.isAuthenticated()) {
+      const sessionUser = req.session?.passport?.user;
+      userId = sessionUser?._id || sessionUser?.id || sessionUser?.googleId || 'anonymous';
+      userData = sessionUser;
+    } else {
+      return res.status(401).json({ success: false, error: 'Authentication required. Provide a Bearer token.' });
+    }
+
+    // Parse the text using AI (same engine as /api/parse-schedule)
+    const { events: parsedEvents, replyMessage } = await parseWithGemini(text);
+
+    if (!parsedEvents || parsedEvents.length === 0) {
+      return res.status(400).json({ success: false, error: 'Could not parse any events from the provided text.' });
+    }
+
+    // Get the user's schedule
+    const effectiveUserId = userId || 'anonymous';
+    const schedule = getUserSchedule(effectiveUserId);
+    const todayName = getTodayDayName();
+
+    const addedEvents = [];
+
+    for (const event of parsedEvents) {
+      let day = event.day || todayName;
+      if (day === 'Today') {
+        day = todayName;
+      }
+
+      const eventRecurrence = event.recurrence || 'once';
+
+      // Auto-set createdMonth for yearly events
+      const createdMonth = new Date().getMonth();
+
+      const eventWithRecurrence = {
+        ...event,
+        day,
+        recurrence: eventRecurrence,
+        location: DEFAULT_LOCATION_ID,
+        ...(eventRecurrence === 'yearly' && { createdMonth })
+      };
+
+      // Add to schedule
+      if (schedule[day]) {
+        schedule[day].push(eventWithRecurrence);
+      } else {
+        schedule['Today'].push(eventWithRecurrence);
+      }
+
+      addedEvents.push(eventWithRecurrence);
+    }
+
+    syncTodayWithCurrentDay(schedule);
+    saveSchedulesNow();
+
+    // Save to MongoDB for logged-in users
+    if (userId && mongoose.Types.ObjectId.isValid(userId)) {
+      await saveScheduleToMongo(userId, schedule);
+    }
+
+    // Build a friendly message for the response
+    const firstEvent = addedEvents[0];
+    const eventCount = addedEvents.length;
+    const displayName = userData?.displayName || userData?.email || '';
+
+    let message;
+    if (eventCount === 1) {
+      message = replyMessage || `האירוע "${firstEvent.title}" נקבע בהצלחה ליום ${firstEvent.day} בשעה ${firstEvent.startTime}.`;
+    } else {
+      message = replyMessage || `${eventCount} אירועים נוספו בהצלחה.`;
+    }
+
+    res.json({
+      success: true,
+      message,
+      events: addedEvents,
+      count: eventCount
+    });
+
+  } catch (error) {
+    console.error('Quick-add endpoint error:', error);
+    res.status(500).json({ success: false, error: 'Failed to process quick-add request.' });
+  }
+});
+
+// ──────────────────────────────────────────────
+// 9. Google Calendar Integration
+// ──────────────────────────────────────────────
+
 // POST /api/add-to-google-calendar - Add an event to the user's Google Calendar
 app.post('/api/add-to-google-calendar', async (req, res) => {
   if (!req.isAuthenticated || !req.isAuthenticated() || !req.session.passport?.user?.accessToken) {
