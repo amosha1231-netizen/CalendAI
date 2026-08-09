@@ -510,6 +510,49 @@ try {
   console.error('Failed to initialize Gemini AI:', e.message);
 }
 
+/**
+ * Clean a title by removing Hebrew prefix letters (ל-, ב-, כ-, מ-, ש-, ה-, ו-, את)
+ * and temporal/duration phrases.
+ */
+function cleanTitle(title) {
+  if (!title || typeof title !== 'string') return 'פגישה / אירוע';
+  
+  let t = title.trim();
+  
+  // Remove Hebrew prefix letters: ל, ב, כ, מ, ש, ה, ו (with optional ה/ו after)
+  // Also remove "את" as a standalone prefix word
+  t = t.replace(/^(ל|ב|כ|מ|ש|ה|ו|ל|לה|לכ|למ|לש)(?:ה|ו)?\s+/, '').trim();
+  t = t.replace(/^את\s+/, '').trim();
+  
+  // Remove day-of-week references: ביום X, ביום שני, etc.
+  t = t.replace(/\sב(יום\s+)?(שני|שלישי|רביעי|חמישי|שישי|שבת|ראשון|א|ב|ג|ד|ה|ו|ש)\s*/g, ' ').trim();
+  t = t.replace(/\sביום\s+\S+/g, ' ').trim();
+  
+  // Remove relative time phrases
+  t = t.replace(/\s(בעוד|עוד|in|after|לפני|בערך|כ|כמו)\s+\S+(\s+\S+)?/g, ' ').trim();
+  
+  // Remove duration words
+  t = t.replace(/\s+(עשרים|שלושים|ארבעים|חמישים|ששים|עשר|עשרה)\s*(דקות|דקה|שעות|שעה)\s*/g, ' ').trim();
+  t = t.replace(/\s+\d+\s*(דקות|דקה|שעות|שעה|minutes?|min|hours?|hrs?)\s*/gi, ' ').trim();
+  t = t.replace(/\s*(חצי\s*שעה|רבע\s*שעה|half\s*hour|quarter\s*hour)\s*/gi, ' ').trim();
+  
+  // Remove standalone prefixes at word boundaries
+  t = t.replace(/\bל(?:\s|$)/g, ' ').trim();
+  
+  // Collapse multiple spaces
+  t = t.replace(/\s+/g, ' ').trim();
+  
+  // Remove trailing/leading punctuation
+  t = t.replace(/^[,!?;:.\s]+|[,!?;:.\s]+$/g, '').trim();
+  
+  // If too short or empty, use default
+  if (!t || t.length < 2) {
+    return 'פגישה / אירוע';
+  }
+  
+  return t;
+}
+
 function formatTime(hour, minute = '00', meridiem) {
   const h = Number(hour);
   const m = Number(minute || 0);
@@ -843,6 +886,9 @@ function fallbackParse(text) {
     }
   }
 
+  // Apply cleanTitle to the final fallback title
+  title = cleanTitle(title);
+
   if (!title || title.length < 2) {
     title = 'פגישה / אירוע';
   }
@@ -1030,6 +1076,37 @@ async function parseWithGemini(text) {
     - Leave at least 5-15 minute gaps between activities.
     - Don't schedule anything after 23:00 or before 06:00 unless explicitly requested.
     - ALWAYS compute unique startTime and endTime for each event. NEVER assign the same time to two different events.
+
+    ─────────────────────────────────────────────
+    CRITICAL — TITLE CLEANING RULE (ABSOLUTELY MUST FOLLOW)
+    ─────────────────────────────────────────────
+    When you extract/set the event "title", you MUST output a title stripped of Hebrew prefix letters and temporal phrases.
+
+    **For Hebrew titles**: Remove prefix letters such as:
+      - ל (meaning "to/for") — e.g., "לשיעור תורה" → "שיעור תורה"
+      - את (meaning "the object marker") — e.g., "את שיעור תורה" → "שיעור תורה"
+      - ב (meaning "in/on/at") — e.g., "בשיעור תורה" → "שיעור תורה"
+      - מ (meaning "from") 
+      - כ (meaning "as/like")
+      - ש (meaning "that/which")
+      - ה (meaning "the")
+      - Also remove day/time phrases from the title: "ביום שני", "בערב", "בבוקר", "בלילה"
+
+    **Examples of correct title extraction (Hebrew)**:
+      - "תמצא לי זמן לשיעור תורה ביום שני" → title: "שיעור תורה" (NOT "לשיעור תורה" or "תמצא לי זמן לשיעור תורה")
+      - "קבע לי אימון מחר ב-9 בבוקר" → title: "אימון"
+      - "תזכיר לי להתקשר לרופא" → title: "להתקשר לרופא" (reminder, keep the action)
+      - "פגישה עם דני בשעה 17:45" → title: "פגישה עם דני"
+      - "שלוש אימונים השבוע" → title for each: "אימון" (NOT "שלוש אימונים" or "אימונים השבוע")
+      - "רבע שעה לאוכל, חצי שעה עם הכלב" → title1: "אוכל", title2: "עם הכלב"
+
+    **Examples of correct title extraction (English)**:
+      - "schedule 3 workouts this week" → title: "Workout"
+      - "find time for a meeting with Danny" → title: "Meeting with Danny"
+      - "remind me to buy milk" → title: "Buy milk"
+      - "set a doctor appointment" → title: "Doctor appointment"
+
+    The title must be concise (1-4 words) and meaningful. Never include words like "תמצא", "קבע", "תזמן", "schedule", "find", "set" — these are commands, not part of the event title.
 
     ─────────────────────────────────────────────
     STEP 3: COMMON SENSE RESOLUTION
@@ -1393,6 +1470,14 @@ async function parseWithGemini(text) {
     const raw = response.text || '{}';
     const parsed = JSON.parse(raw);
 
+    // Apply title cleanup to ALL events from AI
+    if (parsed.events && Array.isArray(parsed.events)) {
+      parsed.events = parsed.events.map(ev => ({
+        ...ev,
+        title: cleanTitle(ev.title || text)
+      }));
+    }
+
     // Handle Shabbat block response from the AI
     if (parsed.isBlocked === true) {
       return {
@@ -1413,7 +1498,10 @@ async function parseWithGemini(text) {
       return {
         reasoning: parsed.reasoning || '',
         replyMessage: parsed.replyMessage,
-        events: parsed.events
+        events: parsed.events.map(ev => ({
+          ...ev,
+          title: cleanTitle(ev.title || text)
+        }))
       };
     }
 
@@ -1422,7 +1510,10 @@ async function parseWithGemini(text) {
       return {
         reasoning: isEnglish ? 'The model returned an array of events without explanation. Accepted by the system.' : 'המודל החזיר מערך אירועים ללא הסבר. התקבל על ידי המערכת.',
         replyMessage: isEnglish ? `Added ${parsed.length} new events.` : `נוספו ${parsed.length} אירועים חדשים.`,
-        events: parsed
+        events: parsed.map(ev => ({
+          ...ev,
+          title: cleanTitle(ev.title || text)
+        }))
       };
     }
 
@@ -1431,7 +1522,10 @@ async function parseWithGemini(text) {
       return {
         reasoning: parsed.reasoning || (isEnglish ? 'The model returned a single event.' : 'המודל החזיר אירוע בודד.'),
         replyMessage: parsed.replyMessage || (isEnglish ? 'Added one new event.' : 'נוסף אירוע אחד חדש.'),
-        events: [parsed]
+        events: [{
+          ...parsed,
+          title: cleanTitle(parsed.title || text)
+        }]
       };
     }
 
