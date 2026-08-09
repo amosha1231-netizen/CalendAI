@@ -11,6 +11,8 @@ import Booking from "./components/Booking";
 import LandingPage from "./components/LandingPage";
 import LuxuryLoader from "./components/LuxuryLoader";
 import translations from "./i18n";
+import safeStorage from "./utils/safeStorage";
+import { isIosWhatsApp, isIosSafari, isIosNonSafari, isStandalone } from "./utils/browserDetection";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
 
@@ -61,27 +63,6 @@ function playNotificationSound() {
   }
 }
 
-// Detect iOS Safari
-function isIosSafari() {
-  const ua = navigator.userAgent || navigator.vendor || window.opera;
-  const isIos = /iPhone|iPad|iPod/.test(ua);
-  const isSafari = /Safari/.test(ua) && !/Chrome|CriOS|FxiOS|OPiOS|mercury/.test(ua);
-  return isIos && isSafari;
-}
-
-// Detect iOS non-Safari browser
-function isIosNonSafari() {
-  const ua = navigator.userAgent || navigator.vendor || window.opera;
-  const isIos = /iPhone|iPad|iPod/.test(ua);
-  const isNotSafari = !(/Safari/.test(ua) && !/Chrome|CriOS|FxiOS|OPiOS|mercury/.test(ua));
-  return isIos && isNotSafari;
-}
-
-// Check if already in standalone mode (PWA)
-function isStandalone() {
-  return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
-}
-
 function getInitialIntent() {
   if (typeof window === 'undefined') return { isAuthCallback: false, authFailed: false, wantsBooking: false };
   const params = new URLSearchParams(window.location.search);
@@ -96,7 +77,7 @@ function App() {
   // Language state - load from localStorage or default to 'he'
   const [lang, setLang] = useState(() => {
     try {
-      return localStorage.getItem('calendai-lang') || 'he';
+      return safeStorage.getItem('calendai-lang') || 'he';
     } catch { return 'he'; }
   });
   const t = translations[lang] || translations['he'];
@@ -172,7 +153,7 @@ function App() {
   // ── Guest Usage Limit State ──
   const [guestUsageCount, setGuestUsageCount] = useState(() => {
     try {
-      return parseInt(localStorage.getItem(GUEST_COUNT_KEY) || '0', 10);
+      return parseInt(safeStorage.getItem(GUEST_COUNT_KEY) || '0', 10);
     } catch { return 0; }
   });
   const [showGuestLimitModal, setShowGuestLimitModal] = useState(false);
@@ -201,13 +182,13 @@ function App() {
   const [installPrompt, setInstallPrompt] = useState(null);
   const [showPwaPopup, setShowPwaPopup] = useState(false);
   const [pwaDismissed, setPwaDismissed] = useState(() => {
-    try { return localStorage.getItem('calendai-pwa-dismissed') === 'true'; } catch { return false; }
+    try { return safeStorage.getItem('calendai-pwa-dismissed') === 'true'; } catch { return false; }
   });
 
   // Smart PWA Install Banner (bottom toast, appears after 60s)
   const [showPwaBanner, setShowPwaBanner] = useState(false);
   const [pwaBannerDismissed, setPwaBannerDismissed] = useState(() => {
-    try { return localStorage.getItem('calendai-pwa-banner-dismissed') === 'true'; } catch { return false; }
+    try { return safeStorage.getItem('calendai-pwa-banner-dismissed') === 'true'; } catch { return false; }
   });
 
   // Smart Auth: show login prompt for save operations
@@ -229,7 +210,7 @@ function App() {
 
   // Profile settings (location in sidebar)
   const [profileLocation, setProfileLocation] = useState(() => {
-    try { return localStorage.getItem('calendai-profile-location') || 'none'; } catch { return 'none'; }
+    try { return safeStorage.getItem('calendai-profile-location') || 'none'; } catch { return 'none'; }
   });
 
   const bookingLink = typeof window !== 'undefined' ? `${window.location.origin}${window.location.pathname}?book=1` : '';
@@ -238,9 +219,7 @@ function App() {
   const incrementGuestUsage = useCallback(() => {
     setGuestUsageCount(prev => {
       const next = prev + 1;
-      try {
-        localStorage.setItem(GUEST_COUNT_KEY, String(next));
-      } catch (e) {}
+      safeStorage.setItem(GUEST_COUNT_KEY, String(next));
       return next;
     });
   }, []);
@@ -248,9 +227,9 @@ function App() {
   // Save guest-created data temporarily to localStorage
   const saveGuestTempData = useCallback((actionType, data) => {
     try {
-      const existing = JSON.parse(localStorage.getItem(GUEST_DATA_KEY) || '[]');
+      const existing = JSON.parse(safeStorage.getItem(GUEST_DATA_KEY) || '[]');
       existing.push({ type: actionType, data, timestamp: Date.now() });
-      localStorage.setItem(GUEST_DATA_KEY, JSON.stringify(existing));
+      safeStorage.setItem(GUEST_DATA_KEY, JSON.stringify(existing));
     } catch (e) {}
   }, []);
 
@@ -266,7 +245,7 @@ function App() {
   // Sync guest temp data to backend after login
   const syncGuestDataToBackend = useCallback(async () => {
     try {
-      const raw = localStorage.getItem(GUEST_DATA_KEY);
+      const raw = safeStorage.getItem(GUEST_DATA_KEY);
       if (!raw) return;
       const guestData = JSON.parse(raw);
       if (!Array.isArray(guestData) || guestData.length === 0) return;
@@ -288,8 +267,8 @@ function App() {
       }
 
       // Clear guest temp data after sync
-      localStorage.removeItem(GUEST_DATA_KEY);
-      localStorage.removeItem(GUEST_COUNT_KEY);
+      safeStorage.removeItem(GUEST_DATA_KEY);
+      safeStorage.removeItem(GUEST_COUNT_KEY);
       setGuestUsageCount(0);
     } catch (e) {
       console.error('Failed to sync guest data:', e);
@@ -496,13 +475,13 @@ function App() {
   const handleDismissPwa = () => {
     setShowPwaPopup(false);
     setPwaDismissed(true);
-    try { localStorage.setItem('calendai-pwa-dismissed', 'true'); } catch (e) {}
+    safeStorage.setItem('calendai-pwa-dismissed', 'true');
   };
 
   const handleDismissPwaBanner = () => {
     setShowPwaBanner(false);
     setPwaBannerDismissed(true);
-    try { localStorage.setItem('calendai-pwa-banner-dismissed', 'true'); } catch (e) {}
+    safeStorage.setItem('calendai-pwa-banner-dismissed', 'true');
   };
 
   const handleCopyShareLink = () => {
@@ -578,13 +557,13 @@ function App() {
   // ── JWT Token Management ──
   // Store/retrieve JWT from localStorage for persistent auth across server restarts
   const getJwtToken = () => {
-    try { return localStorage.getItem('token') || localStorage.getItem('calendai-jwt'); } catch { return null; }
+    try { return safeStorage.getItem('token') || safeStorage.getItem('calendai-jwt'); } catch { return null; }
   };
   const setJwtToken = (token) => {
-    try { localStorage.setItem('token', token); localStorage.setItem('calendai-jwt', token); } catch (e) {}
+    try { safeStorage.setItem('token', token); safeStorage.setItem('calendai-jwt', token); } catch (e) {}
   };
   const clearJwtToken = () => {
-    try { localStorage.removeItem('token'); localStorage.removeItem('calendai-jwt'); } catch (e) {}
+    try { safeStorage.removeItem('token'); safeStorage.removeItem('calendai-jwt'); } catch (e) {}
   };
 
   // ── Unified Auth State Machine ──
@@ -598,7 +577,7 @@ function App() {
     if (urlToken) {
       // Save token to localStorage immediately
       setJwtToken(urlToken);
-      try { localStorage.setItem('calendai-isLoggedIn', 'true'); } catch (e) {}
+      safeStorage.setItem('calendai-isLoggedIn', 'true');
       // Clean the URL without refreshing the page
       window.history.replaceState({}, document.title, window.location.pathname);
     }
@@ -626,7 +605,7 @@ function App() {
         // ── Only clear the token on explicit 401 Unauthorized ──
         if (res.status === 401) {
           clearJwtToken();
-          try { localStorage.removeItem('calendai-isLoggedIn'); } catch (e) {}
+          safeStorage.removeItem('calendai-isLoggedIn');
           setAuthStatus('guest');
           setCurrentView(intent.wantsBooking ? 'booking' : 'landing');
           setAuthLoading(false);
@@ -662,7 +641,7 @@ function App() {
             const tokenData = await tokenRes.json();
             if (tokenData.token) {
               setJwtToken(tokenData.token);
-              try { localStorage.setItem('calendai-isLoggedIn', 'true'); } catch (e) {}
+              safeStorage.setItem('calendai-isLoggedIn', 'true');
             }
           } catch (tokenErr) {
             console.error('Failed to exchange session for JWT:', tokenErr);
@@ -702,7 +681,7 @@ function App() {
       if (!token) {
         // No JWT, try session-based restore as fallback
         try {
-          if (localStorage.getItem('calendai-isLoggedIn') === 'true') {
+          if (safeStorage.getItem('calendai-isLoggedIn') === 'true') {
             const res = await fetch(`${API_BASE}/api/auth/me?t=${Date.now()}`, { cache: 'no-store', credentials: "include" });
             const data = await res.json();
             if (data.user && !cancelled) {
@@ -723,7 +702,7 @@ function App() {
         if (res.status === 401) {
           if (!cancelled) {
             clearJwtToken();
-            try { localStorage.removeItem('calendai-isLoggedIn'); } catch (e) {}
+            safeStorage.removeItem('calendai-isLoggedIn');
           }
           return;
         }
@@ -737,7 +716,7 @@ function App() {
         if (data.user && !cancelled) {
           setUser(data.user);
           setIsPro(data.user?.isPro === true || data.user?.isPro === 'true');
-          try { localStorage.setItem('calendai-isLoggedIn', 'true'); } catch (e) {}
+          safeStorage.setItem('calendai-isLoggedIn', 'true');
         }
         // Non-401 responses without a user: do NOT clear the token.
         // The token is only cleared on an explicit 401 Unauthorized from the server.
@@ -840,9 +819,7 @@ function App() {
   const toggleLanguage = () => {
     const newLang = lang === 'he' ? 'en' : 'he';
     setLang(newLang);
-    try {
-      localStorage.setItem('calendai-lang', newLang);
-    } catch (e) {}
+    safeStorage.setItem('calendai-lang', newLang);
   };
 
   const requestNotificationPermission = useCallback(async () => {
@@ -1096,10 +1073,8 @@ function App() {
       setIsPro(false);
       setSchedule({ Sunday: [], Monday: [], Tuesday: [], Wednesday: [], Thursday: [], Friday: [], Saturday: [], Today: [] });
       // Clear the logged-in flag from localStorage
-      try {
-        localStorage.removeItem('calendai-isLoggedIn');
-        localStorage.removeItem('calendai-user');
-      } catch (e) {}
+      safeStorage.removeItem('calendai-isLoggedIn');
+      safeStorage.removeItem('calendai-user');
     } catch (err) { console.error(err); }
   };
 
@@ -1400,6 +1375,39 @@ function App() {
       )}
 
       <div className={`min-h-screen bg-slate-50 p-4 sm:p-6 font-sans pb-20`} dir={isRTL ? 'rtl' : 'ltr'}>
+      {/* iOS In-App Browser Banner (WhatsApp, Facebook, Instagram) */}
+      {isIosWhatsApp() && (
+        <div className="fixed top-0 left-0 right-0 z-[99999] bg-amber-50 border-b border-amber-200 px-3 py-2 text-xs text-amber-800 flex items-center justify-between gap-2 shadow-sm" dir="rtl">
+          <div className="flex items-center gap-1.5">
+            <svg className="w-3.5 h-3.5 text-amber-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span>לקבלת חוויית התחברות מלאה, מומלץ לפתוח ב-Safari</span>
+          </div>
+          <button
+            onClick={() => {
+              // Copy current URL to clipboard
+              const url = window.location.href;
+              if (navigator.clipboard) {
+                navigator.clipboard.writeText(url).catch(() => {});
+              }
+              // Try to open in Safari using the safari:// URL scheme
+              window.location.href = url;
+            }}
+            className="shrink-0 px-2.5 py-1 bg-amber-600 text-white rounded-md font-medium hover:bg-amber-700 transition text-[10px]"
+          >
+            פתח ב-Safari
+          </button>
+          <button
+            onClick={(e) => {
+              e.currentTarget.closest('.fixed').style.display = 'none';
+            }}
+            className="shrink-0 p-1 text-amber-400 hover:text-amber-600 transition"
+          >
+            <X className="w-3 h-3" />
+          </button>
+        </div>
+      )}
       {/* Toast Notifications */}
       {toasts.length > 0 && (
         <div className={`fixed top-4 ${isRTL ? 'left-4' : 'right-4'} z-[100] flex flex-col gap-2 max-w-sm`}>
@@ -2164,10 +2172,8 @@ function App() {
                   setJwtToken(data.token);
                   setUser(data.user);
                   setIsPro(data.user?.isPro === true || data.user?.isPro === 'true');
-                  try {
-                    localStorage.setItem('calendai-isLoggedIn', 'true');
-                    localStorage.setItem('calendai-user', JSON.stringify(data.user));
-                  } catch (e) {}
+                  safeStorage.setItem('calendai-isLoggedIn', 'true');
+                  safeStorage.setItem('calendai-user', JSON.stringify(data.user));
                   
                   setShowEmailAuth(false);
                   setShowLoginPrompt(false);
@@ -2235,7 +2241,7 @@ function App() {
         selectedLocation={profileLocation !== 'none' ? profileLocation : selectedLocation}
         onLocationChange={(loc) => {
           setProfileLocation(loc);
-          try { localStorage.setItem('calendai-profile-location', loc); } catch (e) {}
+          safeStorage.setItem('calendai-profile-location', loc);
         }}
       />
     </div>
