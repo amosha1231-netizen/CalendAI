@@ -171,8 +171,8 @@ function saveSchedules(map) {
 const isProduction = process.env.NODE_ENV === 'production' || !!process.env.RENDER;
 
 // Dynamic base URLs for production vs local development
-const CLIENT_URL = process.env.CLIENT_URL || (isProduction ? 'https://calendai.onrender.com' : 'http://localhost:5173');
-const BACKEND_URL = process.env.BACKEND_URL || (isProduction ? 'https://calendai.onrender.com' : 'http://localhost:5000');
+const CLIENT_URL = process.env.CLIENT_URL || (isProduction ? 'https://calendai-q59p.onrender.com' : 'http://localhost:5173');
+const BACKEND_URL = process.env.BACKEND_URL || (isProduction ? 'https://calendai-backend-dfmi.onrender.com' : 'http://localhost:5000');
 
 app.set('trust proxy', 1);
 
@@ -779,7 +779,7 @@ app.get('/api/auth/google',
 
 app.get('/api/auth/google/callback',
   (req, res, next) => {
-    const rawUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || 'https://calendai.onrender.com';
+    const rawUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || 'https://calendai-q59p.onrender.com';
     passport.authenticate('google', {
       failureRedirect: `${rawUrl}/?error=auth_failed`,
       failWithError: true
@@ -818,7 +818,7 @@ app.get('/api/auth/google/callback',
     try {
       // Redirect back to the frontend with the JWT token in a query parameter.
       // The frontend extracts the token, stores it, and cleans the URL via replaceState.
-      const FRONTEND_URL = process.env.FRONTEND_URL || process.env.CLIENT_URL || 'https://calendai.onrender.com';
+      const FRONTEND_URL = process.env.FRONTEND_URL || process.env.CLIENT_URL || 'https://calendai-q59p.onrender.com';
 
       // Create a JWT token with 7-day expiry containing the user's _id
       const user = req.user || {};
@@ -837,7 +837,7 @@ app.get('/api/auth/google/callback',
       console.error('Error:', err.message);
       console.error('Stack:', err.stack);
       console.error('=======================================');
-      res.redirect(`${process.env.FRONTEND_URL || process.env.CLIENT_URL || 'https://calendai.onrender.com'}?error=auth_failed`);
+      res.redirect(`${process.env.FRONTEND_URL || process.env.CLIENT_URL || 'https://calendai-q59p.onrender.com'}?error=auth_failed`);
     }
   }
 );
