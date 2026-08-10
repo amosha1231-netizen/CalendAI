@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { X, BarChart3, Zap, Settings, Download, Moon, Sun, Target, Clock, Trophy, Activity, Share2, MapPin, Loader2, ExternalLink, CheckCircle } from 'lucide-react';
+import { X, BarChart3, Zap, Settings, Download, Moon, Sun, Target, Clock, Trophy, Activity, Share2, MapPin, Loader2, ExternalLink, CheckCircle, Mic } from 'lucide-react';
 import safeStorage from '../utils/safeStorage';
 
 const CATEGORY_KEYWORDS = {
@@ -595,6 +595,28 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, t, user
                     </div>
                   )}
                 </div>
+              </div>
+
+              {/* Siri / iOS Shortcuts Integration */}
+              <div className="border-t border-slate-200 pt-4 mt-2">
+                <h4 className="text-sm font-bold text-slate-700 mb-3 flex items-center gap-2">
+                  <Mic className="w-4 h-4 text-blue-500" />
+                  {lang === 'he' ? 'Siri / קיצורי דרך' : 'Siri / Shortcuts'}
+                </h4>
+                <p className="text-xs text-slate-400 mb-3">
+                  {lang === 'he'
+                    ? 'חבר את CalendAI ל-Siri באייפון שלך כדי להוסיף אירועים באמצעות הקול'
+                    : 'Connect CalendAI to Siri on your iPhone to add events using your voice'}
+                </p>
+                <button
+                  onClick={() => {
+                    window.open('https://www.icloud.com/shortcuts/3be0a95552164704818eab7aec056ffe', '_blank');
+                  }}
+                  className="w-full max-w-full box-border flex items-center justify-center gap-2 px-3 py-2.5 bg-blue-50 text-blue-700 border border-blue-200 rounded-lg hover:bg-blue-100 transition text-sm font-medium"
+                >
+                  <Mic className="w-4 h-4" />
+                  {lang === 'he' ? 'חבר ל-Siri (אייפון)' : 'Connect to Siri (iPhone)'}
+                </button>
               </div>
 
               <button

@@ -3013,6 +3013,12 @@ app.get('/api/schedule/analytics', async (req, res) => {
 });
 
 // ──────────────────────────────────────────────
+// 10d. Siri / iOS Shortcuts Route
+// ──────────────────────────────────────────────
+const eventRoutes = require('./routes/eventRoutes');
+app.use('/api/events', eventRoutes);
+
+// ──────────────────────────────────────────────
 // 11. Health & Fallback
 // ──────────────────────────────────────────────
 app.get('/api/health', (_req, res) => {
