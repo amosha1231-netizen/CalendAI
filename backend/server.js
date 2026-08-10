@@ -859,7 +859,9 @@ app.get('/api/auth/me', async (req, res) => {
       const decoded = jwt.verify(token, process.env.JWT_SECRET || 'calendai_secret');
       userId = decoded.id;
     } catch (err) {
-      return res.json({ user: null, error: 'Invalid or expired token' });
+      // Return 401 Unauthorized for invalid/expired tokens so the frontend
+      // can distinguish between "no user" and "invalid token" and clear storage accordingly.
+      return res.status(401).json({ user: null, error: 'Invalid or expired token' });
     }
   } else if (req.isAuthenticated && req.isAuthenticated()) {
     // Session-based authentication (passport)

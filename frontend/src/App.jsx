@@ -68,6 +68,7 @@ function getInitialIntent() {
   if (typeof window === 'undefined') return { isAuthCallback: false, authFailed: false, wantsBooking: false };
   const params = new URLSearchParams(window.location.search);
   return {
+    hasToken: !!params.get('token'),
     isAuthCallback: params.get('login') === 'success' || params.get('auth') === 'success',
     authFailed: params.get('auth') === 'failed',
     wantsBooking: params.get('book') === 'true' || params.get('book') === '1',
