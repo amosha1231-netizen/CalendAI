@@ -1,4 +1,22 @@
-﻿const express = require('express');
+﻿// ──────────────────────────────────────────────
+// Global Error Handlers (prevent server crashes)
+// ──────────────────────────────────────────────
+process.on('uncaughtException', (err) => {
+  console.error('=== UNCAUGHT EXCEPTION ===');
+  console.error('Error name:', err?.name);
+  console.error('Error message:', err?.message);
+  console.error('Stack trace:', err?.stack);
+  console.error('============================');
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('=== UNHANDLED REJECTION ===');
+  console.error('Reason:', reason);
+  console.error('Promise:', promise);
+  console.error('============================');
+});
+
+const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
 const session = require('express-session');
@@ -7,14 +25,52 @@ const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const mongoose = require('mongoose');
-const { parseWithGemini, rescheduleWithGemini, cleanTitle } = require('./services/aiService');
 const { google } = require('googleapis');
 const fs = require('fs');
 const path = require('path');
 const rateLimit = require('express-rate-limit');
-const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY || 'sk_test_placeholder');
 
 dotenv.config();
+
+// ──────────────────────────────────────────────
+// Safe module initialization (never crash on missing deps)
+// ──────────────────────────────────────────────
+
+// Safe import of AI service - if @google/generative-ai is missing,
+// the server still starts and uses the fallback parser.
+let parseWithGemini, rescheduleWithGemini, cleanTitle;
+try {
+  const aiService = require('./services/aiService');
+  parseWithGemini = aiService.parseWithGemini;
+  rescheduleWithGemini = aiService.rescheduleWithGemini;
+  cleanTitle = aiService.cleanTitle;
+  console.log('✅ AI Service loaded successfully');
+} catch (aiErr) {
+  console.error('⚠️ Failed to load AI service:', aiErr.message);
+  console.error('⚠️ Server will start with fallback parser only.');
+  // Provide safe fallbacks so the server never crashes
+  const { fallbackParseAdvice } = require('./services/aiFallback');
+  parseWithGemini = async (text, options = {}) => fallbackParseAdvice(text);
+  rescheduleWithGemini = async (currentSchedule, reason) => {
+    throw new Error('AI reschedule unavailable - fallback mode');
+  };
+  cleanTitle = (title) => title || 'פגישה / אירוע';
+}
+
+// Safe Stripe initialization - never crash if STRIPE_SECRET_KEY is missing
+let stripe = null;
+try {
+  const stripeKey = process.env.STRIPE_SECRET_KEY;
+  if (stripeKey && stripeKey !== 'sk_test_placeholder') {
+    stripe = require('stripe')(stripeKey);
+    console.log('✅ Stripe initialized');
+  } else {
+    console.warn('⚠️ STRIPE_SECRET_KEY not configured. Payment features disabled.');
+  }
+} catch (stripeErr) {
+  console.error('⚠️ Failed to initialize Stripe:', stripeErr.message);
+  console.error('⚠️ Payment features will be disabled.');
+}
 
 // ── Startup Environment Checks ──
 console.log('=== CalendAI Startup Environment Check ===');
@@ -260,11 +316,19 @@ if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET &&
 }
 
 // ──────────────────────────────────────────────
-// 3. Locations data
+// 3. Locations data (safe loading)
 // ──────────────────────────────────────────────
-const LOCATIONS_DATA = JSON.parse(fs.readFileSync(path.join(__dirname, 'data', 'locations.json'), 'utf-8'));
-const LOCATIONS = LOCATIONS_DATA.locations;
+let LOCATIONS = [];
 const DEFAULT_LOCATION_ID = 'jerusalem';
+try {
+  const LOCATIONS_DATA = JSON.parse(fs.readFileSync(path.join(__dirname, 'data', 'locations.json'), 'utf-8'));
+  LOCATIONS = LOCATIONS_DATA.locations || [];
+  console.log(`✅ Loaded ${LOCATIONS.length} locations from data file`);
+} catch (locErr) {
+  console.error('⚠️ Failed to load locations.json:', locErr.message);
+  console.error('⚠️ Using empty locations array. Location features may be limited.');
+  LOCATIONS = [];
+}
 
 // ──────────────────────────────────────────────
 // 4. Persistent schedule storage per user (file-backed for anonymous, MongoDB for logged-in)
