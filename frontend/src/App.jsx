@@ -1537,48 +1537,19 @@ function App() {
             </button>
           </div>
 
-          {/* ── Event Type and Duration Selector ── */}
-          <div className="mt-4 flex flex-wrap items-center gap-3">
-            <span className="text-sm font-medium text-slate-600">{t.eventType}</span>
-            <div className="flex flex-wrap gap-2" role="radiogroup">
-              <button onClick={() => setEventType("activity")}
-                className={`px-3 py-1.5 text-sm rounded-lg border transition ${eventType === "activity" ? "bg-emerald-600 text-white border-emerald-600 shadow-sm" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-50"}`}>{t.typeActivity}</button>
-              <button onClick={() => setEventType("notification")}
-                className={`px-3 py-1.5 text-sm rounded-lg border transition ${eventType === "notification" ? "bg-amber-600 text-white border-amber-600 shadow-sm" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-50"}`}>{t.typeNotification}</button>
-            </div>
-            {/* Duration Selector (only for Activity) */}
-            {eventType === "activity" && (
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-medium text-slate-600">{t.activityDuration}</span>
-                <select
-                  value={activityDuration}
-                  onChange={e => setActivityDuration(parseInt(e.target.value))}
-                  className="px-3 py-1.5 text-sm rounded-lg border border-slate-300 bg-white text-slate-700 focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
-                >
-                  <option value={15}>{t.duration15}</option>
-                  <option value={30}>{t.duration30}</option>
-                  <option value={45}>{t.duration45}</option>
-                  <option value={60}>{t.duration60}</option>
-                  <option value={90}>{t.duration90}</option>
-                  <option value={120}>{t.duration120}</option>
-                </select>
-              </div>
-            )}
-            {eventType === "notification" && (
-              <span className="text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded border border-amber-200">{t.notificationPing}</span>
-            )}
+          {/* ── Duration Chips: Quick Duration Selector ── */}
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <span className="text-xs font-medium text-slate-500">{t.quickDuration || 'משך מהיר'}</span>
+            <button onClick={() => setInputText(prev => prev + (prev ? ' ' : '') + 'למשך 15 דקות')}
+              className="px-3 py-1.5 text-xs rounded-full border bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100 transition shrink-0">15 דקות</button>
+            <button onClick={() => setInputText(prev => prev + (prev ? ' ' : '') + 'למשך 30 דקות')}
+              className="px-3 py-1.5 text-xs rounded-full border bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100 transition shrink-0">30 דקות</button>
+            <button onClick={() => setInputText(prev => prev + (prev ? ' ' : '') + 'למשך 45 דקות')}
+              className="px-3 py-1.5 text-xs rounded-full border bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100 transition shrink-0">45 דקות</button>
+            <button onClick={() => setInputText(prev => prev + (prev ? ' ' : '') + 'למשך שעה')}
+              className="px-3 py-1.5 text-xs rounded-full border bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100 transition shrink-0">שעה</button>
           </div>
 
-          {/* ── Recurrence Selector ── */}
-          <div className="mt-3 flex flex-wrap items-center gap-3">
-            <span className="text-sm font-medium text-slate-600">{t.frequency}</span>
-            <div className="flex flex-wrap gap-2" role="radiogroup">
-              {RECURRENCE_OPTIONS(lang).map(opt => (
-                <button key={opt.value} onClick={() => setRecurrence(opt.value)}
-                  className={`px-3 py-1.5 text-sm rounded-lg border transition ${recurrence === opt.value ? "bg-blue-600 text-white border-blue-600 shadow-sm" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-50"}`}>{opt.label}</button>
-              ))}
-            </div>
-          </div>
 
           {error && <div className="flex items-center gap-2 text-red-600 text-sm mt-4 bg-red-50 p-3 rounded-lg border border-red-200"><AlertCircle className="w-4 h-4" /><span>{error}</span></div>}
           {success && <div className="flex items-center gap-2 text-green-700 text-sm mt-4 bg-green-50 p-3 rounded-lg border border-green-200"><Sparkles className="w-4 h-4 text-green-600" /><span>{success}</span></div>}
@@ -1610,7 +1581,7 @@ function App() {
           <div className="mt-4 flex items-center gap-3">
             <button onClick={handleParse} disabled={loading}
               className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-medium transition disabled:bg-blue-400 disabled:cursor-not-allowed w-full sm:w-48">
-              {loading ? <><Loader2 className="w-4 h-4 animate-spin" /> {t.parsing}</> : <><Send className={`w-5 h-5 ${isRTL ? 'rotate-180' : ''}`} /> {t.parseButton}</>}
+              {loading ? <><Loader2 className="w-4 h-4 animate-spin" /> {t.parsing}</> : <><Sparkles className="w-5 h-5" /> {t.parseButton}</>}
             </button>
             <button onClick={handleUndo} disabled={scheduleHistoryRef.current.length === 0} className="flex items-center gap-2 text-slate-500 hover:text-slate-700 px-4 py-3 rounded-lg hover:bg-slate-50 transition text-sm disabled:opacity-30 disabled:cursor-not-allowed"><RotateCcw className="w-4 h-4" /> {t.undo}</button>
           </div>
