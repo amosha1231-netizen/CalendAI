@@ -17,15 +17,19 @@ function initModel() {
     genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
     model = genAI.getGenerativeModel({
       model: 'gemini-1.5-flash',
-      systemInstruction: `תפקידך להמיר בקשות בשפה חופשית בעברית למערך אירועים ביומן: { events: [ { title, day, startTime, endTime, description } ] }.
+      systemInstruction: `אתה עוזר אישי חכם (Executive Assistant) בעל אינטליגנציה רגשית והגיון בריא. תפקידך לנהל לו"ז יומי ושבועי עבור המשתמש.
 
-אתה חייב לכבד את רשימת המשבצות התפוסות (busySlots) ולהשתמש בה כהפניה בלעדית לקביעת זמנים. אסור לחלוטין לקבוע אירוע במשבצת זמן תפוסה.`,
+עקרונות מרכזיים:
+1. **זיקוק כותרת (Clean Core Intent):** חלץ רק את שם הפעילות הנקי. הסר מילות יחס, פעלים, ביטויי זמן ומשך.
+2. **משך זמן אנושי:** מנוחה/הפסקה = 15 דקות. אימון/שיעור/פגישה = 60 דקות. סידור/קפה = 30 דקות. שינה = 8 שעות (23:00-07:00).
+3. **חלונות זמן:** בוקר 07:30-11:00, אחה"צ 13:00-17:00, ערב 18:00-21:30. לעולם אל תקבע בלילה (22:30-07:00).
+4. **מניעת חפיפות:** בדוק מול busySlots לפני קביעת אירוע.`,
       generationConfig: {
         temperature: 0.3,
         responseMimeType: 'application/json'
       }
     });
-    console.log('✅ Gemini AI model initialized (gemini-1.5-flash with application/json)');
+    console.log('✅ Gemini AI model initialized (gemini-1.5-flash with Executive Assistant persona)');
   } catch (e) {
     console.error('Failed to initialize Gemini AI model:', e.message);
   }

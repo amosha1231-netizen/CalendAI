@@ -816,19 +816,15 @@ app.get('/api/auth/google/callback',
   },
   (req, res) => {
     try {
-      let rawUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || 'https://calendai.onrender.com';
-      try {
-        const parsed = new URL(rawUrl);
-        rawUrl = parsed.origin;
-      } catch (e) {
-        rawUrl = rawUrl.split('?')[0].replace(/\/+$/, '');
-      }
+      // Redirect back to the frontend with the JWT token in a query parameter.
+      // The frontend extracts the token, stores it, and cleans the URL via replaceState.
+      const FRONTEND_URL = process.env.FRONTEND_URL || process.env.CLIENT_URL || 'https://calendai.onrender.com';
 
       // Create a JWT token with 7-day expiry containing the user's _id
       const user = req.user || {};
       const token = jwt.sign({ id: user._id || user.id }, process.env.JWT_SECRET || 'calendai_secret', { expiresIn: '7d' });
 
-      const redirectUrl = `${rawUrl}/?token=${token}&auth=success`;
+      const redirectUrl = `${FRONTEND_URL}?token=${token}`;
 
       console.log('=== GOOGLE CALLBACK SUCCESS ===');
       console.log('User:', req.user?.displayName || req.user?.email || 'unknown');
@@ -841,7 +837,7 @@ app.get('/api/auth/google/callback',
       console.error('Error:', err.message);
       console.error('Stack:', err.stack);
       console.error('=======================================');
-      res.redirect(`${process.env.FRONTEND_URL || 'https://calendai.onrender.com'}/?error=auth_failed`);
+      res.redirect(`${process.env.FRONTEND_URL || process.env.CLIENT_URL || 'https://calendai.onrender.com'}?error=auth_failed`);
     }
   }
 );

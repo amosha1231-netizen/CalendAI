@@ -582,14 +582,26 @@ function App() {
     const intent = intentRef.current;
 
     // ── Step 1: Extract token from URL query params (OAuth callback redirect with ?token=xxx) ──
+    // The backend redirects to `${FRONTEND_URL}?token=${token}` after a successful Google OAuth login.
     const params = new URLSearchParams(window.location.search);
     const urlToken = params.get('token');
     if (urlToken) {
-      // Save token to localStorage immediately
+      // Save token to BOTH safeStorage (with in-memory fallback) and raw localStorage explicitly.
       setJwtToken(urlToken);
       safeStorage.setItem('calendai-isLoggedIn', 'true');
-      // Clean the URL without refreshing the page
-      window.history.replaceState({}, document.title, window.location.pathname);
+      try {
+        localStorage.setItem('token', urlToken);
+        localStorage.setItem('calendai-jwt', urlToken);
+        localStorage.setItem('calendai-isLoggedIn', 'true');
+      } catch (e) {
+        // localStorage unavailable (private mode, etc.) — safeStorage already handled it.
+      }
+      // Clean the URL without refreshing the page (replaceState preserves browser history state).
+      const url = new URL(window.location.href);
+      url.searchParams.delete('token');
+      url.searchParams.delete('auth');
+      url.searchParams.delete('login');
+      window.history.replaceState({}, document.title, url.pathname + url.search);
     }
 
     // Handle auth failure from OAuth callback
