@@ -143,7 +143,13 @@ function App() {
   const scheduleHistoryRef = useRef([]);
 
   // Notification / Reminder State
-  const [notificationPerm, setNotificationPerm] = useState(Notification.permission);
+  const getInitialNotificationPerm = () => {
+    try {
+      if (typeof Notification !== 'undefined') return Notification.permission;
+    } catch (e) {}
+    return 'denied';
+  };
+  const [notificationPerm, setNotificationPerm] = useState(getInitialNotificationPerm);
   const [toasts, setToasts] = useState([]);
   const notifiedRemindersRef = useRef(new Set());
 
@@ -841,9 +847,13 @@ function App() {
   };
 
   const requestNotificationPermission = useCallback(async () => {
-    if (Notification.permission === "default") {
-      const perm = await Notification.requestPermission();
-      setNotificationPerm(perm);
+    try {
+      if (typeof Notification !== 'undefined' && Notification.permission === "default") {
+        const perm = await Notification.requestPermission();
+        setNotificationPerm(perm);
+      }
+    } catch (e) {
+      // Notification API not available
     }
   }, []);
 

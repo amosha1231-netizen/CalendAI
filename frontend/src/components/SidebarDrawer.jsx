@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { X, BarChart3, Zap, Settings, Download, Moon, Sun, Target, Clock, Trophy, Activity, Share2, MapPin, Loader2, ExternalLink, CheckCircle } from 'lucide-react';
+import safeStorage from '../utils/safeStorage';
 
 const CATEGORY_KEYWORDS = {
   sport: ['אימון', 'ריצה', 'שחייה', 'הליכה', 'ספורט', 'חדר כושר', 'יוגה', 'פילאטיס', 'רכיבה', 'טיפוס', 'workout', 'run', 'swim', 'walk', 'sport', 'gym', 'yoga', 'pilates', 'bike', 'climb'],
@@ -171,7 +172,7 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, t, user
       
       // Update the location in localStorage
       try {
-        localStorage.setItem('calendai-detected-location', JSON.stringify({
+        safeStorage.setItem('calendai-detected-location', JSON.stringify({
           city,
           timezone,
           lat: latitude,
@@ -240,8 +241,8 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, t, user
 
   const handleSettingsSave = () => {
     try {
-      localStorage.setItem('calendai-default-start', settingsData.defaultStart);
-      localStorage.setItem('calendai-default-end', settingsData.defaultEnd);
+      safeStorage.setItem('calendai-default-start', settingsData.defaultStart);
+      safeStorage.setItem('calendai-default-end', settingsData.defaultEnd);
       setSettingsSaved(true);
       setTimeout(() => setSettingsSaved(false), 2000);
     } catch (e) {}

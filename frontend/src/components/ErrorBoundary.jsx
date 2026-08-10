@@ -14,7 +14,26 @@ export default class ErrorBoundary extends React.Component {
     this.setState({ errorInfo });
     // Log the error but never throw
     try {
-      console.error('ErrorBoundary caught:', error?.message || error, errorInfo);
+      // ── Debug: Always print error details to console ──
+      console.error('=== ErrorBoundary Caught Error ===');
+      console.error('Message:', error?.message || error);
+      console.error('Stack:', error?.stack);
+      console.error('Component Stack:', errorInfo?.componentStack);
+      console.error('URL:', typeof window !== 'undefined' ? window.location.href : 'N/A');
+      console.error('UserAgent:', typeof navigator !== 'undefined' ? navigator.userAgent : 'N/A');
+      console.error('===================================');
+      
+      // Store in a global debug variable so we can show on screen
+      if (typeof window !== 'undefined') {
+        window.__calendaiLastError = {
+          message: error?.message || String(error),
+          stack: error?.stack,
+          componentStack: errorInfo?.componentStack,
+          timestamp: new Date().toISOString(),
+          url: window.location.href
+        };
+      }
+      
       // Attempt to report to a logging service if available
       if (typeof window !== 'undefined' && window.__errorLog) {
         try {
