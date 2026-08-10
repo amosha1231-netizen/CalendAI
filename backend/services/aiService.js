@@ -17,13 +17,9 @@ function initModel() {
     genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
     model = genAI.getGenerativeModel({
       model: 'gemini-1.5-flash',
-      systemInstruction: `תפקידך להמיר בקשות בשפה חופשית בעברית למערך אירועים ביומן: { events: [ { title, startDate, endDate, description } ] }.
+      systemInstruction: `תפקידך להמיר בקשות בשפה חופשית בעברית למערך אירועים ביומן: { events: [ { title, day, startTime, endTime, description } ] }.
 
-כותרת (title): חייבת להיות שם הפעילות בלבד (למשל 'אימון', 'שיעור תורה') ללא מילות יחס, ימים או מספרים.
-
-כמויות ופיצול: אם המשתמש מבקש '4 אימונים השבוע', צור בדיוק 4 אובייקטים נפרדים במערך events, מופצים בימים שונים.
-
-ביטויי זמן בעברית: 'חמש ועשרים' פירושו 17:20, 'שש וחצי' פירושו 18:30.`,
+אתה חייב לכבד את רשימת המשבצות התפוסות (busySlots) ולהשתמש בה כהפניה בלעדית לקביעת זמנים. אסור לחלוטין לקבוע אירוע במשבצת זמן תפוסה.`,
       generationConfig: {
         temperature: 0.3,
         responseMimeType: 'application/json'
@@ -37,15 +33,19 @@ function initModel() {
 
 /**
  * Parse a free-text Hebrew (or English) scheduling request into structured events.
+ * Now accepts existing schedule data for conflict-aware scheduling.
  * @param {string} text - The user's natural language request.
  * @param {Object} [options] - Optional parse options.
  * @param {string} [options.eventType] - Override event type.
  * @param {number} [options.duration] - Override duration in minutes.
+ * @param {Array} [options.busySlots] - Array of existing busy time slots [{ day, startTime, endTime, title }]
+ * @param {Object} [options.schedule] - The user's full schedule object
  * @returns {Promise<Object>} Parsed result with events, replyMessage, etc.
  */
 async function parseWithGemini(text, options = {}) {
   initModel();
   if (!model) {
+    const { fallbackParseAdvice } = require('./aiFallback');
     return fallbackParseAdvice(text);
   }
 
@@ -56,6 +56,40 @@ async function parseWithGemini(text, options = {}) {
   const todayString = now.toLocaleDateString('he-IL', { weekday: 'long', day: 'numeric', month: 'numeric', year: 'numeric' });
   const currentTimeString = now.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
   const isEnglish = /^[a-zA-Z0-9\s.,!?;:'"()-]+$/.test(text.trim()) && /[a-zA-Z]/.test(text.trim());
+
+  // ── Build busy slots summary from existing schedule ──
+  let busySlotsSummary = 'אין אירועים קיימים ביומן.';
+  const busySlots = options.busySlots || [];
+  const schedule = options.schedule || {};
+
+  if (busySlots.length > 0) {
+    busySlotsSummary = 'האירועים הקיימים בלוח השנה (משבצות תפוסות - אסור לקבוע עליהן!):\n';
+    for (const slot of busySlots) {
+      const slotDay = slot.day || '';
+      const slotStart = slot.startTime || slot.start || '';
+      const slotEnd = slot.endTime || slot.end || '';
+      const slotTitle = slot.title || '';
+      busySlotsSummary += `  - ${slotDay}: ${slotStart} - ${slotEnd} "${slotTitle}"\n`;
+    }
+  } else if (schedule && typeof schedule === 'object') {
+    // Fallback: build busy slots from schedule object
+    const allSlots = [];
+    for (const [day, events] of Object.entries(schedule)) {
+      if (Array.isArray(events) && events.length > 0) {
+        for (const ev of events) {
+          if (ev.startTime && ev.endTime) {
+            allSlots.push({ day, startTime: ev.startTime, endTime: ev.endTime, title: ev.title || '' });
+          }
+        }
+      }
+    }
+    if (allSlots.length > 0) {
+      busySlotsSummary = 'האירועים הקיימים בלוח השנה (משבצות תפוסות - אסור לקבוע עליהן!):\n';
+      for (const slot of allSlots) {
+        busySlotsSummary += `  - ${slot.day}: ${slot.startTime} - ${slot.endTime} "${slot.title}"\n`;
+      }
+    }
+  }
 
   const prompt = `
     ═════════════════════════════════════════════════════
@@ -70,11 +104,80 @@ async function parseWithGemini(text, options = {}) {
     Current day-of-week (0=Sunday): ${now.getDay()}
 
     ═════════════════════════════════════════════════════
+    EXISTING BUSY SLOTS — ABSOLUTELY MUST NOT OVERLAP
+    ═════════════════════════════════════════════════════
+    ${busySlotsSummary}
+
+    ═════════════════════════════════════════════════════
+    CRITICAL — CONFLICT PREVENTION & SMART SCHEDULING
+    ═════════════════════════════════════════════════════
+    1. YOU MUST NEVER create an event that overlaps with any existing busy slot listed above.
+    2. Check every proposed event time against the busy slots BEFORE including it in the output.
+    3. If the user's requested time is busy, find the FIRST available free window in the schedule.
+    4. For the current day (Today = ${todayEnglish}), only consider future time windows (from the current time ${currentTimeString} onward).
+    5. Prefer the EARLIEST available free window that accommodates the requested duration.
+    6. If absolutely no free window exists on the requested day, suggest the next available day.
+
+    ═════════════════════════════════════════════════════
     SYSTEM INSTRUCTIONS
     ═════════════════════════════════════════════════════
-    תפקידך לתרגם את בקשת המשתמש לאובייקט JSON המכיל: { title, startDate, endDate, description }.
+    תפקידך לתרגם את בקשת המשתמש לאובייקט JSON המכיל: { title, day, startTime, endTime, description }.
 
     You are a world-class AI scheduling agent. Your role is to **reason step-by-step** about the user's request, then produce a structured schedule. You think like a human personal assistant, not a text parser.
+
+    ═════════════════════════════════════════════════════
+    LOGICAL HOURS MAPPING (CRITICAL — MUST FOLLOW)
+    ═════════════════════════════════════════════════════
+    Map Hebrew time-of-day expressions to these SPECIFIC hour ranges:
+
+    1. **"בבוקר" / "morning"**: שעות פנויות בין 07:30 ל-10:30 בלבד.
+       - בשום אופן לא לקבוע ב-03:00, 04:00, 05:00, 06:00 בלילה!
+       - Example: "אימון בבוקר" → 07:30 AM or 08:00 AM or 09:00 AM etc. (whatever is free)
+    
+    2. **"אחה"צ" / "אחר הצהריים" / "afternoon"**: בין 13:00 ל-17:00.
+       - Example: "פגישה אחה"צ" → 01:00 PM or 02:00 PM etc.
+
+    3. **"בערב" / "evening"**: בין 18:00 ל-21:00.
+       - Example: "שיעור בערב" → 06:00 PM or 07:00 PM etc.
+
+    4. **"בלילה" / "night"**: בין 21:00 ל-23:00.
+       - Example: "לימודים בלילה" → 09:00 PM or 10:00 PM etc.
+
+    5. **No time specified**: Use activity-based defaults:
+       - Work/Study → 09:00 AM
+       - Workout/Sport → 07:30 AM or 17:00 PM
+       - Social/Family → 18:00 PM
+       - Meal → 08:00 AM (breakfast), 13:00 PM (lunch), 19:00 PM (dinner)
+       - Sleep → 11:00 PM to 07:00 AM (crosses midnight!)
+
+    ═════════════════════════════════════════════════════
+    CLEAN TITLE ONLY RULE (CRITICAL)
+    ═════════════════════════════════════════════════════
+    The title MUST contain ONLY the clean activity name. Remove ALL:
+    - Preposition prefixes: ל, ב, כ, מ, ש, ה, ו
+    - Time phrases: "למשך שעה", "בערב", "בבוקר", "בלילה", "בעוד X דקות"
+    - Command verbs: "תמצא לי", "תזמן", "קבע", "תפנה לי"
+    - Duration words: "חצי שעה", "רבע שעה", "30 דקות", "שעה"
+
+    Examples:
+    - "תמצא לי זמן לשיעור תורה בערב" → title: "שיעור תורה"
+    - "קבע לי אימון מחר ב-9 בבוקר" → title: "אימון"
+    - "תזכיר לי להתקשר לרופא" → title: "להתקשר לרופא"
+    - "שלוש אימונים השבוע" → title for each: "אימון"
+    - "find time for a meeting with Danny" → title: "Meeting with Danny"
+    - "remind me to buy milk" → title: "Buy milk"
+
+    ═════════════════════════════════════════════════════
+    EXPLICIT DURATION PARSING (CRITICAL)
+    ═════════════════════════════════════════════════════
+    When the user mentions a duration, you MUST compute endTime EXACTLY:
+    - "חמש דקות" / "5 דקות" / "5 minutes" → duration = 5 minutes. endTime = startTime + 5min
+    - "רבע שעה" / "15 דקות" / "15 minutes" → duration = 15 minutes. endTime = startTime + 15min
+    - "חצי שעה" / "30 דקות" / "30 minutes" / "half hour" → duration = 30 minutes. endTime = startTime + 30min
+    - "שעה" / "60 דקות" / "an hour" / "60 minutes" → duration = 60 minutes. endTime = startTime + 60min
+    - "שעתיים" / "2 hours" / "120 דקות" → duration = 120 minutes. endTime = startTime + 120min
+    - "שעה וחצי" / "90 דקות" / "an hour and a half" → duration = 90 minutes. endTime = startTime + 90min
+    - Default if no duration mentioned: 30 minutes (NOT 60 minutes!).
 
     ═════════════════════════════════════════════════════
     DATE CALCULATION RULES FOR RELATIVE EXPRESSIONS (CRITICAL)
@@ -89,7 +192,7 @@ async function parseWithGemini(text, options = {}) {
        - The Hebrew month names are: ינואר, פברואר, מרץ, אפריל, מאי, יוני, יולי, אוגוסט, ספטמבר, אוקטובר, נובמבר, דצמבר.
        - Convert to English: January, February, March, April, May, June, July, August, September, October, November, December.
        - Set startTime to "09:00 AM" unless another time is specified.
-       - Set endTime to "10:00 AM" (1 hour default) unless another time or duration is specified.
+       - Set endTime to "09:30 AM" (30 min default) unless another time or duration is specified.
        - Set the "day" field to the actual English day name of that date (e.g., if 1 September 2026 is a Tuesday → "Tuesday").
 
     2. **"שבוע הבא" / "בשבוע הבא" / "next week" / "בשבוע הבא ב[יום]"**:
@@ -106,10 +209,10 @@ async function parseWithGemini(text, options = {}) {
        - Example: Today is Sunday → "Monday evening" = tomorrow (Monday) at 18:00 PM / 06:00 PM.
        - Example: Today is Monday → "Monday evening" = today (Monday) at 18:00 PM / 06:00 PM.
        - Example: Today is Tuesday → "Monday evening" = next Monday (7 days later) at 18:00 PM / 06:00 PM.
-       - "בבוקר" / "morning" → default time is 09:00 AM.
-       - "בערב" / "evening" → default time is 18:00 PM (06:00 PM).
-       - "בלילה" / "night" → default time is 21:00 PM (09:00 PM).
-       - If neither morning/evening/night is specified, use the activity-based default (see STEP 3).
+       - "בבוקר" / "morning" → use morning hours (07:30-10:30).
+       - "בערב" / "evening" → use evening hours (18:00-21:00).
+       - "בלילה" / "night" → use night hours (21:00-23:00).
+       - If neither morning/evening/night is specified, use the activity-based default.
 
     4. **"החודש" / "this month" / "החודש הבא" / "next month"**:
        - "החודש" → use the current month. Set day to the current date (today) or the first of the month if no specific date.
@@ -149,8 +252,9 @@ async function parseWithGemini(text, options = {}) {
 
     1. **Intent Analysis**: What is the user trying to accomplish?
     2. **Temporal Calculation**: How do you resolve the day, time, and duration? Show your math.
-    3. **Distribution Logic**: If the user mentions multiple items or a quantity, explain how you will distribute them across the week.
-    4. **Common Sense Decisions**: Explain any gaps, rest periods, or reasonable defaults you applied.
+    3. **Busy Slot Check**: Explain which busy slots you checked and how you avoided them.
+    4. **Distribution Logic**: If the user mentions multiple items or a quantity, explain how you will distribute them across the week.
+    5. **Common Sense Decisions**: Explain any gaps, rest periods, or reasonable defaults you applied.
 
     ═════════════════════════════════════════════════════
     SHABBAT RESTRICTION RULE (CRITICAL — MUST FOLLOW EXACTLY)
@@ -213,9 +317,9 @@ async function parseWithGemini(text, options = {}) {
 
     For distribution, use COMMON SENSE:
     - Spread activities evenly across the week (not all on the same day).
-    - Morning activities = 06:00-12:00. Afternoon = 12:00-17:00. Evening = 17:00-22:00.
+    - Use the logical hours mapping (morning 07:30-10:30, afternoon 13:00-17:00, evening 18:00-21:00).
     - Leave at least 5-15 minute gaps between activities.
-    - Don't schedule anything after 23:00 or before 06:00 unless explicitly requested.
+    - Don't schedule anything after 23:00 or before 07:30 unless explicitly requested.
     - ALWAYS compute unique startTime and endTime for each event. NEVER assign the same time to two different events.
 
     ─────────────────────────────────────────────
@@ -249,20 +353,14 @@ async function parseWithGemini(text, options = {}) {
 
     The title must be concise (1-4 words) and meaningful. Never include words like "תמצא", "קבע", "תזמן", "schedule", "find", "set" — these are commands, not part of the event title.
 
-    ─────────────────────────────────────────────
+    ═════════════════════════════════════════════════════
     STEP 3: COMMON SENSE RESOLUTION
-    ─────────────────────────────────────────────
+    ═════════════════════════════════════════════════════
     Fill in missing details using HUMAN JUDGMENT:
 
     - **Missing Day**: If no day is specified, default to "Today" (today's actual day name).
-    - **Missing Time**: If no time is specified, use reasonable defaults based on the activity type:
-      * Work/Study → 09:00 AM
-      * Workout/Sport → 06:00 AM or 17:00 PM
-      * Errands/Shopping → 10:00 AM
-      * Social/Family → 17:00 PM
-      * Meal → 08:00 AM (breakfast), 13:00 PM (lunch), 19:00 PM (dinner)
-      * Sleep → 11:00 PM to 07:00 AM (default 8 hours, crosses midnight!)
-    - **Missing Duration**: If no duration is given, assume 1 hour (60 minutes) for general activities, 30 minutes for quick tasks.
+    - **Missing Time**: If no time is specified, use the logical hours mapping above.
+    - **Missing Duration**: If no duration is given, assume 30 minutes (NOT 60 minutes).
     - **Rest Breaks**: If scheduling multiple events in sequence, leave 5-15 minute gaps between them.
     - **Conflicts**: If the user's request would create overlapping events, note this in "reasoning" and suggest alternatives in the replyMessage.
     - **Sleep Handling**: Sleep hours CROSS MIDNIGHT. For example, "קבע לי 8 שעות שינה בלילה" / "set me 8 hours of sleep tonight" means 11:00 PM to 07:00 AM (next day). Mark the event with "isSleep": true.
@@ -361,7 +459,7 @@ async function parseWithGemini(text, options = {}) {
        - Example: Reminder at 06:55 AM → endTime "07:05 AM" (10 minutes max).
     3. The endTime MUST NOT be a full hour after the startTime for reminder events. NEVER use the 60-minute default for reminders.
 
-    **EXPLICIT DURATION RULE (CRITICAL — MUST NOT BE OVERRIDDEN BY THE 60-MINUTE DEFAULT)**:
+    **EXPLICIT DURATION RULE (CRITICAL — MUST NOT BE OVERRIDDEN BY THE 30-MINUTE DEFAULT)**:
     When the text specifies an explicit duration, compute endTime EXACTLY = startTime + specified duration:
     - "חצי שעה" / "half an hour" / "half hour" / "30 דקות" / "30 minutes" → duration = 30 minutes.
       Example: startTime 09:30 AM → endTime = 10:00 AM (NOT 10:30 AM!).
@@ -372,7 +470,7 @@ async function parseWithGemini(text, options = {}) {
     - "שעה" / "an hour" / "60 דקות" / "60 minutes" → duration = 60 minutes.
     - "שעה ורבע" / "an hour and a quarter" / "75 דקות" / "75 minutes" → duration = 75 minutes.
     - "שעה וחצי" / "an hour and a half" / "90 דקות" / "90 minutes" → duration = 90 minutes.
-    - **NEVER apply the default 60-minute duration when the text explicitly states a duration.** The explicit duration ALWAYS wins.
+    - **NEVER apply the default 30-minute duration when the text explicitly states a duration.** The explicit duration ALWAYS wins.
 
     ─────────────────────────────────────────────
     STEP 5: AM/PM SMART LOGIC (CRITICAL)
@@ -492,12 +590,12 @@ async function parseWithGemini(text, options = {}) {
     User text: "Schedule 3 workouts this week in the morning"
     Expected JSON:
     {
-      "reasoning": "The user wants 3 workouts this week in the morning. Today is Monday, so remaining days are: Monday, Tuesday, Wednesday, Thursday, Friday. I will distribute workouts on Monday, Wednesday, Friday at 06:00 AM, a common workout time. Each workout will be 1 hour (default).",
-      "replyMessage": "I've scheduled 3 workouts for this week: Monday, Wednesday, and Friday at 06:00 AM. Each workout is 1 hour. Good luck!",
+      "reasoning": "The user wants 3 workouts this week in the morning. Today is Monday, so remaining days are: Monday, Tuesday, Wednesday, Thursday, Friday. I will distribute workouts on Monday, Wednesday, Friday at 07:30 AM, following the logical hours mapping for morning (07:30-10:30). Each workout will be 30 minutes (default).",
+      "replyMessage": "I've scheduled 3 workouts for this week: Monday, Wednesday, and Friday at 07:30 AM. Each workout is 30 minutes. Good luck!",
       "events": [
-        { "title": "Workout", "day": "Monday", "startTime": "06:00 AM", "endTime": "07:00 AM", "recurrence": "weekly", "isRecurring": true, "isSleep": false, "hasAdvice": false, "aiAdvice": "" },
-        { "title": "Workout", "day": "Wednesday", "startTime": "06:00 AM", "endTime": "07:00 AM", "recurrence": "weekly", "isRecurring": true, "isSleep": false, "hasAdvice": false, "aiAdvice": "" },
-        { "title": "Workout", "day": "Friday", "startTime": "06:00 AM", "endTime": "07:00 AM", "recurrence": "weekly", "isRecurring": true, "isSleep": false, "hasAdvice": false, "aiAdvice": "" }
+        { "title": "Workout", "day": "Monday", "startTime": "07:30 AM", "endTime": "08:00 AM", "recurrence": "weekly", "isRecurring": true, "isSleep": false, "hasAdvice": false, "aiAdvice": "" },
+        { "title": "Workout", "day": "Wednesday", "startTime": "07:30 AM", "endTime": "08:00 AM", "recurrence": "weekly", "isRecurring": true, "isSleep": false, "hasAdvice": false, "aiAdvice": "" },
+        { "title": "Workout", "day": "Friday", "startTime": "07:30 AM", "endTime": "08:00 AM", "recurrence": "weekly", "isRecurring": true, "isSleep": false, "hasAdvice": false, "aiAdvice": "" }
       ]
     }
 
@@ -508,7 +606,7 @@ async function parseWithGemini(text, options = {}) {
       "reasoning": "The user wants a reminder to buy milk tomorrow. Today is Monday, so tomorrow is Tuesday. The reminder should fire at 09:00 AM on Tuesday.",
       "replyMessage": "I've set a reminder for you to buy milk tomorrow (Tuesday) at 09:00 AM.",
       "events": [
-        { "title": "Buy milk", "day": "Tuesday", "startTime": "09:00 AM", "endTime": "09:15 AM", "recurrence": "once", "isRecurring": false, "isSleep": false, "hasAdvice": false, "aiAdvice": "", "isReminder": true, "reminderTime": "2026-07-29T06:00:00.000Z" }
+        { "title": "Buy milk", "day": "Tuesday", "startTime": "09:00 AM", "endTime": "09:05 AM", "recurrence": "once", "isRecurring": false, "isSleep": false, "hasAdvice": false, "aiAdvice": "", "isReminder": true, "reminderTime": "2026-07-29T06:00:00.000Z" }
       ]
     }
 
@@ -533,10 +631,10 @@ async function parseWithGemini(text, options = {}) {
     User text: "חמש וחצי ספרים לעמי"
     Expected JSON:
     {
-      "reasoning": "המשתמש רוצה לקבוע אירוע בשם 'ספרים לעמי' בשעה 17:30. 'חמש וחצי' ללא ציון בוקר/ערב מתפרש כשעה 17:30 לפי חוקי ה-AM/PM (שעות נמוכות 1-7 ברירת מחדל אחה״צ). משך ברירת מחדל: שעה אחת, עד 18:30.",
-      "replyMessage": "קבעתי לך 'ספרים לעמי' להיום (יום חמישי) בשעה 17:30-18:30.",
+      "reasoning": "המשתמש רוצה לקבוע אירוע בשם 'ספרים לעמי' בשעה 17:30. 'חמש וחצי' ללא ציון בוקר/ערב מתפרש כשעה 17:30 לפי חוקי ה-AM/PM (שעות נמוכות 1-7 ברירת מחדל אחה״צ). משך ברירת מחדל: 30 דקות, עד 18:00.",
+      "replyMessage": "קבעתי לך 'ספרים לעמי' להיום (יום חמישי) בשעה 17:30-18:00.",
       "events": [
-        { "title": "ספרים לעמי", "day": "Thursday", "startTime": "05:30 PM", "endTime": "06:30 PM", "recurrence": "once", "isRecurring": false, "isSleep": false, "hasAdvice": false, "aiAdvice": "" }
+        { "title": "ספרים לעמי", "day": "Thursday", "startTime": "05:30 PM", "endTime": "06:00 PM", "recurrence": "once", "isRecurring": false, "isSleep": false, "hasAdvice": false, "aiAdvice": "" }
       ]
     }
 
@@ -544,10 +642,10 @@ async function parseWithGemini(text, options = {}) {
     User text: "five thirty books for ami"
     Expected JSON:
     {
-      "reasoning": "The user wants to schedule an event called 'Books for Ami' at 17:30. 'five thirty' without AM/PM marker defaults to PM (low hours 1-7 default to afternoon/evening). Default duration: 1 hour, until 18:30.",
-      "replyMessage": "I've scheduled 'Books for Ami' for today (Thursday) at 05:30 PM - 06:30 PM.",
+      "reasoning": "The user wants to schedule an event called 'Books for Ami' at 17:30. 'five thirty' without AM/PM marker defaults to PM (low hours 1-7 default to afternoon/evening). Default duration: 30 minutes, until 18:00.",
+      "replyMessage": "I've scheduled 'Books for Ami' for today (Thursday) at 05:30 PM - 06:00 PM.",
       "events": [
-        { "title": "Books for Ami", "day": "Thursday", "startTime": "05:30 PM", "endTime": "06:30 PM", "recurrence": "once", "isRecurring": false, "isSleep": false, "hasAdvice": false, "aiAdvice": "" }
+        { "title": "Books for Ami", "day": "Thursday", "startTime": "05:30 PM", "endTime": "06:00 PM", "recurrence": "once", "isRecurring": false, "isSleep": false, "hasAdvice": false, "aiAdvice": "" }
       ]
     }
 
@@ -555,10 +653,10 @@ async function parseWithGemini(text, options = {}) {
     User text: "רבע לשישה פגישה עם דני"
     Expected JSON:
     {
-      "reasoning": "המשתמש רוצה לקבוע פגישה עם דני. 'רבע לשישה' = 17:45 (רבע לשש בערב, לפי חוקי ה-AM/PM). משך ברירת מחדל: שעה, עד 18:45.",
-      "replyMessage": "קבעתי לך פגישה עם דני להיום (יום חמישי) בשעה 17:45-18:45.",
+      "reasoning": "המשתמש רוצה לקבוע פגישה עם דני. 'רבע לשישה' = 17:45 (רבע לשש בערב, לפי חוקי ה-AM/PM). משך ברירת מחדל: 30 דקות, עד 18:15.",
+      "replyMessage": "קבעתי לך פגישה עם דני להיום (יום חמישי) בשעה 17:45-18:15.",
       "events": [
-        { "title": "פגישה עם דני", "day": "Thursday", "startTime": "05:45 PM", "endTime": "06:45 PM", "recurrence": "once", "isRecurring": false, "isSleep": false, "hasAdvice": false, "aiAdvice": "" }
+        { "title": "פגישה עם דני", "day": "Thursday", "startTime": "05:45 PM", "endTime": "06:15 PM", "recurrence": "once", "isRecurring": false, "isSleep": false, "hasAdvice": false, "aiAdvice": "" }
       ]
     }
 
@@ -566,10 +664,10 @@ async function parseWithGemini(text, options = {}) {
     User text: "quarter to six meeting with Danny"
     Expected JSON:
     {
-      "reasoning": "The user wants a meeting with Danny. 'quarter to six' = 5:45 PM (quarter to six in the evening, default PM for low hours). Default duration: 1 hour, until 6:45 PM.",
-      "replyMessage": "I've scheduled a meeting with Danny for today (Thursday) at 05:45 PM - 06:45 PM.",
+      "reasoning": "The user wants a meeting with Danny. 'quarter to six' = 5:45 PM (quarter to six in the evening, default PM for low hours). Default duration: 30 minutes, until 6:15 PM.",
+      "replyMessage": "I've scheduled a meeting with Danny for today (Thursday) at 05:45 PM - 06:15 PM.",
       "events": [
-        { "title": "Meeting with Danny", "day": "Thursday", "startTime": "05:45 PM", "endTime": "06:45 PM", "recurrence": "once", "isRecurring": false, "isSleep": false, "hasAdvice": false, "aiAdvice": "" }
+        { "title": "Meeting with Danny", "day": "Thursday", "startTime": "05:45 PM", "endTime": "06:15 PM", "recurrence": "once", "isRecurring": false, "isSleep": false, "hasAdvice": false, "aiAdvice": "" }
       ]
     }
 

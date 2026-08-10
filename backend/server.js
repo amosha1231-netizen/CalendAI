@@ -1502,7 +1502,28 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
   }
 
   try {
-    const parsedResult = await parseWithGemini(text, { eventType, duration });
+    const userId = getUserId(req);
+    const schedule = getUserSchedule(userId);
+    const todayName = getTodayDayName();
+
+    // Build busy slots array from existing schedule for conflict-aware AI
+    const busySlots = [];
+    for (const [day, events] of Object.entries(schedule)) {
+      if (Array.isArray(events) && events.length > 0) {
+        for (const ev of events) {
+          if (ev.startTime && ev.endTime) {
+            busySlots.push({
+              day,
+              startTime: ev.startTime,
+              endTime: ev.endTime,
+              title: ev.title || ''
+            });
+          }
+        }
+      }
+    }
+
+    const parsedResult = await parseWithGemini(text, { eventType, duration, busySlots, schedule });
     
     // Handle Shabbat block response from AI
     if (parsedResult.isBlocked === true) {
@@ -1515,9 +1536,6 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
     }
 
     const { events: parsedEvents, replyMessage } = parsedResult;
-    const userId = getUserId(req);
-    const schedule = getUserSchedule(userId);
-    const todayName = getTodayDayName();
 
     const locationId = location || DEFAULT_LOCATION_ID;
     const locData = LOCATIONS.find(loc => loc.id === locationId);

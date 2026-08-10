@@ -1505,20 +1505,60 @@ function App() {
             </button>
           </div>
 
-          {/* ── Duration Chips: Quick Duration Selector ── */}
+          {/* ── Event Type Selector ── */}
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <span className="text-xs font-medium text-slate-500">{t.quickDuration || 'משך מהיר'}</span>
-            <button onClick={() => setInputText(prev => prev + (prev ? ' ' : '') + 'למשך 15 דקות')}
-              className="px-3 py-1.5 text-xs rounded-full border bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100 transition shrink-0">15 דקות</button>
-            <button onClick={() => setInputText(prev => prev + (prev ? ' ' : '') + 'למשך 30 דקות')}
-              className="px-3 py-1.5 text-xs rounded-full border bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100 transition shrink-0">30 דקות</button>
-            <button onClick={() => setInputText(prev => prev + (prev ? ' ' : '') + 'למשך 45 דקות')}
-              className="px-3 py-1.5 text-xs rounded-full border bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100 transition shrink-0">45 דקות</button>
-            <button onClick={() => setInputText(prev => prev + (prev ? ' ' : '') + 'למשך שעה')}
-              className="px-3 py-1.5 text-xs rounded-full border bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100 transition shrink-0">שעה</button>
+            <span className="text-xs font-medium text-slate-500">{t.eventType || 'סוג:'}</span>
+            <div className="flex rounded-lg border border-slate-300 overflow-hidden">
+              <button
+                onClick={() => setEventType('activity')}
+                className={`px-3 py-1.5 text-xs font-medium transition ${
+                  eventType === 'activity'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-white text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                {t.typeActivity || 'פעילות'}
+              </button>
+              <button
+                onClick={() => setEventType('notification')}
+                className={`px-3 py-1.5 text-xs font-medium transition border-r border-slate-300 ${
+                  eventType === 'notification'
+                    ? 'bg-amber-500 text-white'
+                    : 'bg-white text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                {t.typeNotification || 'התראה'}
+              </button>
+            </div>
           </div>
 
-
+          {/* ── Frequency / Recurrence Selector ── */}
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <span className="text-xs font-medium text-slate-500">{t.frequency || 'תדירות:'}</span>
+            <div className="flex rounded-lg border border-slate-300 overflow-hidden">
+              {['once', 'weekly', 'monthly', 'yearly'].map((recVal) => {
+                const labels = {
+                  once: t.recurrenceOnce || 'חד פעמי',
+                  weekly: t.recurrenceWeekly || 'שבועי',
+                  monthly: t.recurrenceMonthly || 'חודשי',
+                  yearly: t.recurrenceYearly || 'שנתי'
+                };
+                return (
+                  <button
+                    key={recVal}
+                    onClick={() => setRecurrence(recVal)}
+                    className={`px-3 py-1.5 text-xs font-medium transition border-r border-slate-300 last:border-r-0 ${
+                      recurrence === recVal
+                        ? 'bg-indigo-600 text-white'
+                        : 'bg-white text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    {labels[recVal]}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
           {error && <div className="flex items-center gap-2 text-red-600 text-sm mt-4 bg-red-50 p-3 rounded-lg border border-red-200"><AlertCircle className="w-4 h-4" /><span>{error}</span></div>}
           {success && <div className="flex items-center gap-2 text-green-700 text-sm mt-4 bg-green-50 p-3 rounded-lg border border-green-200"><Sparkles className="w-4 h-4 text-green-600" /><span>{success}</span></div>}
 
