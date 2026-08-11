@@ -13,8 +13,12 @@ export default function AuthSuccess() {
         const params = new URLSearchParams(window.location.search);
         const token = params.get("token");
 
+        console.log("=== AuthSuccess loaded ===");
+        console.log("Captured Token from URL:", token);
+
         if (!token) {
           // No token in URL — redirect to home
+          console.warn("AuthSuccess: No token found in URL, redirecting to home.");
           window.location.href = "/";
           return;
         }

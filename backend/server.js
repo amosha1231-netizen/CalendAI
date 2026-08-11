@@ -781,6 +781,7 @@ app.get('/api/auth/google/callback',
   (req, res, next) => {
     const rawUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || 'https://calendai-q59p.onrender.com';
     passport.authenticate('google', {
+      session: false,
       failureRedirect: `${rawUrl}/?error=auth_failed`,
       failWithError: true
     }, (err, user, info) => {
@@ -791,7 +792,6 @@ app.get('/api/auth/google/callback',
         console.error('Stack trace:', err.stack);
         console.error('Info:', JSON.stringify(info || {}));
         console.error('Query params:', JSON.stringify(req.query));
-        console.error('Session:', JSON.stringify(req.session?.id));
         console.error('==================================');
         return res.redirect(`${rawUrl}/?error=auth_failed`);
       }
@@ -802,43 +802,40 @@ app.get('/api/auth/google/callback',
         console.error('==================================');
         return res.redirect(`${rawUrl}/?error=auth_failed`);
       }
-      req.logIn(user, (loginErr) => {
-        if (loginErr) {
-          console.error('=== GOOGLE CALLBACK LOGIN ERROR ===');
-          console.error('Error:', loginErr.message);
-          console.error('Stack:', loginErr.stack);
-          console.error('====================================');
-          return res.redirect(`${rawUrl}/?error=auth_failed`);
-        }
-        next();
-      });
-    })(req, res, next);
-  },
-  (req, res) => {
-    try {
-      // Redirect back to the frontend with the JWT token in a query parameter.
-      // The frontend extracts the token, stores it, and cleans the URL via replaceState.
+
+      // ── Stateless JWT: no req.logIn, no session ──
+      console.log('=== GOOGLE CALLBACK: USER RECEIVED ===');
+      console.log('req.user exists:', !!user);
+      console.log('User ID:', user._id || user.id);
+      console.log('Display Name:', user.displayName);
+      console.log('Email:', user.email);
+      console.log('JWT_SECRET is set:', !!process.env.JWT_SECRET);
+      console.log('=====================================');
+
       const FRONTEND_URL = process.env.FRONTEND_URL || process.env.CLIENT_URL || 'https://calendai-q59p.onrender.com';
 
-      // Create a JWT token with 7-day expiry containing the user's _id
-      const user = req.user || {};
-      const token = jwt.sign({ id: user._id || user.id }, process.env.JWT_SECRET || 'calendai_secret', { expiresIn: '7d' });
+      try {
+        // Create a JWT token with 7-day expiry containing the user's _id
+        const jwtSecret = process.env.JWT_SECRET || 'calendai_secret';
+        const token = jwt.sign({ id: user._id || user.id }, jwtSecret, { expiresIn: '7d' });
 
-      const redirectUrl = `${FRONTEND_URL}/auth/success?token=${token}`;
+        console.log('=== GOOGLE CALLBACK: JWT CREATED ===');
+        console.log('Token (first 30 chars):', token.substring(0, 30) + '...');
+        console.log('Redirecting to:', `${FRONTEND_URL}/auth/success?token=...`);
+        console.log('=====================================');
 
-      console.log('=== GOOGLE CALLBACK SUCCESS ===');
-      console.log('User:', req.user?.displayName || req.user?.email || 'unknown');
-      console.log('Redirecting to:', redirectUrl);
-      console.log('===============================');
-
-      res.redirect(redirectUrl);
-    } catch (err) {
-      console.error('=== GOOGLE CALLBACK REDIRECT ERROR ===');
-      console.error('Error:', err.message);
-      console.error('Stack:', err.stack);
-      console.error('=======================================');
-      res.redirect(`${process.env.FRONTEND_URL || process.env.CLIENT_URL || 'https://calendai-q59p.onrender.com'}?error=auth_failed`);
-    }
+        const redirectUrl = `${FRONTEND_URL}/auth/success?token=${token}`;
+        res.redirect(redirectUrl);
+      } catch (jwtErr) {
+        console.error('=== GOOGLE CALLBACK: JWT CREATION FAILED ===');
+        console.error('Error:', jwtErr.message);
+        console.error('Stack:', jwtErr.stack);
+        console.error('JWT_SECRET available:', !!process.env.JWT_SECRET);
+        console.error('user object:', JSON.stringify({ _id: user._id, id: user.id, displayName: user.displayName }));
+        console.error('============================================');
+        res.redirect(`${FRONTEND_URL}/?error=jwt_creation_failed`);
+      }
+    })(req, res, next);
   }
 );
 
