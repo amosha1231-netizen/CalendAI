@@ -587,13 +587,7 @@ function App() {
     // The backend redirects to `${FRONTEND_URL}?token=${token}` after a successful Google OAuth login.
     const params = new URLSearchParams(window.location.search);
     const urlToken = params.get('token');
-    const urlError = params.get('error');
-    if (urlError) {
-      alert("שגיאת התחברות: " + urlError);
-    }
     if (urlToken) {
-      // ── DEBUG: Visual confirmation that the token arrived from the OAuth callback ──
-      alert("טוקן התקבל בהצלחה!");
       // Save token to BOTH safeStorage (with in-memory fallback) and raw localStorage explicitly.
       setJwtToken(urlToken);
       safeStorage.setItem('calendai-isLoggedIn', 'true');
