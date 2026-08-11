@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import api from "./api/axios";
+import { useAuth } from "./context/AuthContext";
 import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Menu, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff } from "lucide-react";
 import MonthlyCalendar from "./components/MonthlyCalendar";
 import LocationSelector from "./components/LocationSelector";
@@ -132,12 +132,10 @@ function App() {
 
   const [selectedLocation, setSelectedLocation] = useState("jerusalem");
   const [locationFilter, setLocationFilter] = useState("all");
-  const [user, setUser] = useState(null);
-  const [isPro, setIsPro] = useState(false);
+  const { user, isPro, isAuthenticated, authLoading, authStatus, handleLogin, handleLogout } = useAuth();
 
   const intentRef = useRef(getInitialIntent());
 
-  const [authStatus, setAuthStatus] = useState('checking'); // 'checking' | 'authenticated' | 'guest'
 
   const [schedule, setSchedule] = useState({
     Sunday: [], Monday: [], Tuesday: [], Wednesday: [],
@@ -185,7 +183,6 @@ function App() {
     }
     return null;
   });
-  const [authLoading, setAuthLoading] = useState(true);
 
   // PWA Install State
   const [installPrompt, setInstallPrompt] = useState(null);
@@ -563,170 +560,9 @@ function App() {
     };
   }, []);
 
-  // ── JWT Token Management ──
-  // Store/retrieve JWT from localStorage for persistent auth across server restarts
-  const getJwtToken = () => {
-    try { return safeStorage.getItem('token') || safeStorage.getItem('calendai-jwt'); } catch { return null; }
-  };
-  const setJwtToken = (token) => {
-    try { safeStorage.setItem('token', token); safeStorage.setItem('calendai-jwt', token); } catch (e) {}
-  };
-  const clearJwtToken = () => {
-    try { safeStorage.removeItem('token'); safeStorage.removeItem('calendai-jwt'); } catch (e) {}
-  };
-
-  // ── Unified Auth State Machine ──
-  // SINGLE source of truth for auth: handles OAuth callback, token extraction,
-  // initial auth check, and JWT restore. Eliminates the race condition caused
-  // by two competing effects.
-  useEffect(() => {
-    let cancelled = false;
-    const intent = intentRef.current;
-
-    // ── Step 1: Extract token & error from URL query params (OAuth callback redirect with ?token=xxx) ──
-    // The backend redirects to `${FRONTEND_URL}?token=${token}` after a successful Google OAuth login.
-    const params = new URLSearchParams(window.location.search);
-    const urlToken = params.get('token');
-    if (urlToken) {
-      // Save token to BOTH safeStorage (with in-memory fallback) and raw localStorage explicitly.
-      setJwtToken(urlToken);
-      safeStorage.setItem('calendai-isLoggedIn', 'true');
-      try {
-        localStorage.setItem('token', urlToken);
-        localStorage.setItem('calendai-jwt', urlToken);
-        localStorage.setItem('calendai-isLoggedIn', 'true');
-      } catch (e) {
-        // localStorage unavailable (private mode, etc.) — safeStorage already handled it.
-      }
-      // Set the Authorization header explicitly on the axios instance for all future requests.
-      api.defaults.headers.common['Authorization'] = `Bearer ${urlToken}`;
-      // Clean the URL without refreshing the page (replaceState preserves browser history state).
-      const url = new URL(window.location.href);
-      url.searchParams.delete('token');
-      url.searchParams.delete('auth');
-      url.searchParams.delete('login');
-      url.searchParams.delete('error');
-      window.history.replaceState({}, document.title, url.pathname + url.search);
-    }
-
-    // Handle auth failure from OAuth callback
-    if (intent.authFailed) {
-      setAuthStatus('guest');
-      setCurrentView(intent.wantsBooking ? 'booking' : 'landing');
-      setAuthLoading(false);
-      return;
-    }
-
-    // Clean URL for auth callback (login=success / auth=success) even without token
-    if (intent.isAuthCallback && !urlToken) {
-      window.history.replaceState({}, document.title, window.location.pathname);
-    }
-
-    // ── Step 2: Check auth with the token from localStorage ──
-    const checkAuth = async (retries = 2) => {
-      if (cancelled) return;
-      
-      try {
-        const token = getJwtToken();
-        
-        // ── No token at all → guest, no need to call the server ──
-        if (!token) {
-          setAuthStatus('guest');
-          setCurrentView(intent.wantsBooking ? 'booking' : 'landing');
-          setAuthLoading(false);
-          return;
-        }
-
-        // ── Token exists → call /api/auth/me with Authorization header ──
-        // The axios interceptor will also add the token, but we set it explicitly
-        // here as well for safety.
-        const res = await api.get(`/api/auth/me?t=${Date.now()}`, {
-          cache: 'no-store',
-          validateStatus: false // don't throw on non-2xx
-        });
-
-        // ── Only clear the token on explicit 401 Unauthorized ──
-        if (res.status === 401) {
-          clearJwtToken();
-          safeStorage.removeItem('calendai-isLoggedIn');
-          setAuthStatus('guest');
-          setCurrentView(intent.wantsBooking ? 'booking' : 'landing');
-          setAuthLoading(false);
-          return;
-        }
-
-        // ── Network/transient server errors (5xx, etc.): do NOT clear token ──
-        if (!res.ok) {
-          if (retries > 0) {
-            setTimeout(() => checkAuth(retries - 1), 400);
-          } else {
-            const token = getJwtToken();
-            if (token) {
-              // We have a token → keep the user in authenticated state, show dashboard
-              // The token is still valid; the server just had a transient error
-              setAuthStatus('authenticated');
-              setCurrentView(intent.wantsBooking ? 'booking' : 'dashboard');
-            } else {
-              setAuthStatus('guest');
-              setCurrentView(intent.wantsBooking ? 'booking' : 'landing');
-            }
-            setAuthLoading(false);
-          }
-          return;
-        }
-
-        const data = res.data;
-        if (data.user) {
-          // ── Auth success: set user and navigate to dashboard ──
-          setUser(data.user);
-          setIsPro(data.user?.isPro === true || data.user?.isPro === 'true');
-          setAuthStatus('authenticated');
-          setCurrentView(intent.wantsBooking ? 'booking' : 'dashboard');
-          // Exchange session for a JWT token to persist login across server restarts
-          try {
-            const tokenRes = await api.post('/api/auth/token', {}, { validateStatus: false });
-            if (tokenRes.data?.token) {
-              setJwtToken(tokenRes.data.token);
-              safeStorage.setItem('calendai-isLoggedIn', 'true');
-            }
-          } catch (tokenErr) {
-            console.error('Failed to exchange session for JWT:', tokenErr);
-          }
-          syncGuestDataToBackend();
-          setAuthLoading(false);
-        } else if (retries > 0) {
-          setTimeout(() => checkAuth(retries - 1), 400);
-        } else {
-          // ── Auth returned no user without 401: do NOT clear the token.
-          // The token is only cleared on an explicit 401 Unauthorized from the server.
-          setAuthStatus('guest');
-          setCurrentView(intent.wantsBooking ? 'booking' : 'landing');
-          setAuthLoading(false);
-        }
-      } catch (e) {
-        // ── Network/server error: do NOT clear the token, keep user logged in ──
-        if (retries > 0) {
-          setTimeout(() => checkAuth(retries - 1), 400);
-        } else {
-          const token = getJwtToken();
-          if (token) {
-            // We have a valid token but the server is unreachable (network error / timeout).
-            // Keep the user authenticated so they see the dashboard (not the landing page).
-            // The token stays in localStorage and will be used on the next refresh.
-            setAuthStatus('authenticated');
-            setCurrentView(intent.wantsBooking ? 'booking' : 'dashboard');
-          } else {
-            setAuthStatus('guest');
-            setCurrentView(intent.wantsBooking ? 'booking' : 'landing');
-          }
-          setAuthLoading(false);
-        }
-      }
-    };
-
-    checkAuth();
-    return () => { cancelled = true; };
-  }, [syncGuestDataToBackend]);
+  // Auth is now managed by AuthContext
+  // The initial auth check, token extraction from URL, and session restoration
+  // all happen in the AuthProvider component (context/AuthContext.jsx).
 
   // Handle booking confirmation
   const handleBookingConfirm = useCallback(async (bookingData) => {
@@ -1062,23 +898,9 @@ function App() {
     }
   };
 
-  const handleLogin = () => { window.location.href = `${API_BASE}/api/auth/google`; };
-
   const handleTryGuest = () => {
     setCurrentView('dashboard');
     window.history.replaceState({}, document.title, window.location.pathname);
-  };
-
-  const handleLogout = async () => {
-    try {
-      await fetch(`${API_BASE}/api/auth/logout`, { method: "POST", credentials: "include" });
-      setUser(null);
-      setIsPro(false);
-      setSchedule({ Sunday: [], Monday: [], Tuesday: [], Wednesday: [], Thursday: [], Friday: [], Saturday: [], Today: [] });
-      // Clear the logged-in flag from localStorage
-      safeStorage.removeItem('calendai-isLoggedIn');
-      safeStorage.removeItem('calendai-user');
-    } catch (err) { console.error(err); }
   };
 
   const handleRemoveEvent = async (day, index) => {
