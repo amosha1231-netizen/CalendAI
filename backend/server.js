@@ -821,10 +821,10 @@ app.get('/api/auth/google/callback',
 
         console.log('=== GOOGLE CALLBACK: JWT CREATED ===');
         console.log('Token (first 30 chars):', token.substring(0, 30) + '...');
-        console.log('Redirecting to:', `${FRONTEND_URL}/auth/success?token=...`);
+        console.log('Redirecting to:', `${FRONTEND_URL}?token=...`);
         console.log('=====================================');
 
-        const redirectUrl = `${FRONTEND_URL}/auth/success?token=${token}`;
+        const redirectUrl = `${FRONTEND_URL}?token=${token}`;
         res.redirect(redirectUrl);
       } catch (jwtErr) {
         console.error('=== GOOGLE CALLBACK: JWT CREATION FAILED ===');
