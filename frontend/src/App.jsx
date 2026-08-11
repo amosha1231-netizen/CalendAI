@@ -11,6 +11,7 @@ import GuestBookingView from "./components/GuestBookingView";
 import Booking from "./components/Booking";
 import LandingPage from "./components/LandingPage";
 import LuxuryLoader from "./components/LuxuryLoader";
+import AuthSuccess from "./pages/AuthSuccess";
 import translations from "./i18n";
 import safeStorage from "./utils/safeStorage";
 import { isIosWhatsApp, isIosSafari, isIosNonSafari, isStandalone } from "./utils/browserDetection";
@@ -1286,6 +1287,15 @@ function App() {
     if (locationFilter === "all") return dayEvents;
     return dayEvents.filter(e => e.location === locationFilter);
   };
+
+  // ── Dedicated OAuth callback route ──
+  // When the backend redirects to /auth/success?token=xxx after a successful
+  // Google OAuth login, render the AuthSuccess component. It extracts the token,
+  // stores it, fetches user data, and performs a full navigation to "/" so that
+  // App.jsx re-initializes with the authenticated state — no race conditions.
+  if (typeof window !== 'undefined' && window.location.pathname === '/auth/success') {
+    return <AuthSuccess />;
+  }
 
   // ── Unified LuxuryLoader: shown for ALL initial loading & auth-checking states ──
   if (authLoading || authStatus === 'checking') {

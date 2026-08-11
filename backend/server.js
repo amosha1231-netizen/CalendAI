@@ -824,7 +824,7 @@ app.get('/api/auth/google/callback',
       const user = req.user || {};
       const token = jwt.sign({ id: user._id || user.id }, process.env.JWT_SECRET || 'calendai_secret', { expiresIn: '7d' });
 
-      const redirectUrl = `${FRONTEND_URL}?token=${token}`;
+      const redirectUrl = `${FRONTEND_URL}/auth/success?token=${token}`;
 
       console.log('=== GOOGLE CALLBACK SUCCESS ===');
       console.log('User:', req.user?.displayName || req.user?.email || 'unknown');
