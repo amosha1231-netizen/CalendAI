@@ -583,11 +583,17 @@ function App() {
     let cancelled = false;
     const intent = intentRef.current;
 
-    // ── Step 1: Extract token from URL query params (OAuth callback redirect with ?token=xxx) ──
+    // ── Step 1: Extract token & error from URL query params (OAuth callback redirect with ?token=xxx) ──
     // The backend redirects to `${FRONTEND_URL}?token=${token}` after a successful Google OAuth login.
     const params = new URLSearchParams(window.location.search);
     const urlToken = params.get('token');
+    const urlError = params.get('error');
+    if (urlError) {
+      alert("שגיאת התחברות: " + urlError);
+    }
     if (urlToken) {
+      // ── DEBUG: Visual confirmation that the token arrived from the OAuth callback ──
+      alert("טוקן התקבל בהצלחה!");
       // Save token to BOTH safeStorage (with in-memory fallback) and raw localStorage explicitly.
       setJwtToken(urlToken);
       safeStorage.setItem('calendai-isLoggedIn', 'true');
@@ -598,11 +604,14 @@ function App() {
       } catch (e) {
         // localStorage unavailable (private mode, etc.) — safeStorage already handled it.
       }
+      // Set the Authorization header explicitly on the axios instance for all future requests.
+      api.defaults.headers.common['Authorization'] = `Bearer ${urlToken}`;
       // Clean the URL without refreshing the page (replaceState preserves browser history state).
       const url = new URL(window.location.href);
       url.searchParams.delete('token');
       url.searchParams.delete('auth');
       url.searchParams.delete('login');
+      url.searchParams.delete('error');
       window.history.replaceState({}, document.title, url.pathname + url.search);
     }
 

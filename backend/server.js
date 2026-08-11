@@ -804,6 +804,7 @@ app.get('/api/auth/google/callback',
       }
 
       // ── Stateless JWT: no req.logIn, no session ──
+      console.log("OAuth User authenticated:", req.user);
       console.log('=== GOOGLE CALLBACK: USER RECEIVED ===');
       console.log('req.user exists:', !!user);
       console.log('User ID:', user._id || user.id);
@@ -819,12 +820,13 @@ app.get('/api/auth/google/callback',
         const jwtSecret = process.env.JWT_SECRET || 'calendai_secret';
         const token = jwt.sign({ id: user._id || user.id }, jwtSecret, { expiresIn: '7d' });
 
+        console.log("Generated JWT Token:", token ? "SUCCESS" : "FAILED");
         console.log('=== GOOGLE CALLBACK: JWT CREATED ===');
         console.log('Token (first 30 chars):', token.substring(0, 30) + '...');
-        console.log('Redirecting to:', `${FRONTEND_URL}?token=...`);
+        const redirectUrl = `${FRONTEND_URL}?token=${token}`;
+        console.log("Redirecting to:", redirectUrl);
         console.log('=====================================');
 
-        const redirectUrl = `${FRONTEND_URL}?token=${token}`;
         res.redirect(redirectUrl);
       } catch (jwtErr) {
         console.error('=== GOOGLE CALLBACK: JWT CREATION FAILED ===');
@@ -833,7 +835,9 @@ app.get('/api/auth/google/callback',
         console.error('JWT_SECRET available:', !!process.env.JWT_SECRET);
         console.error('user object:', JSON.stringify({ _id: user._id, id: user.id, displayName: user.displayName }));
         console.error('============================================');
-        res.redirect(`${FRONTEND_URL}/?error=jwt_creation_failed`);
+        const errorRedirectUrl = `${FRONTEND_URL}/?error=${encodeURIComponent(jwtErr.message)}`;
+        console.log("Redirecting to (error):", errorRedirectUrl);
+        res.redirect(errorRedirectUrl);
       }
     })(req, res, next);
   }
