@@ -17,26 +17,31 @@ import translations from "./i18n";
 import safeStorage from "./utils/safeStorage";
 import { isIosWhatsApp, isIosSafari, isIosNonSafari, isStandalone } from "./utils/browserDetection";
 
-const API_BASE = import.meta.env.VITE_API_URL || "";
+// ── Module-level declarations (using var/function to avoid TDZ) ──
+var API_BASE = import.meta.env.VITE_API_URL || "";
 
-const RECURRENCE_OPTIONS = (lang) => [
-  { value: "once", label: translations[lang].recurrenceOnce },
-  { value: "daily", label: translations[lang].recurrenceDaily },
-  { value: "weekly", label: translations[lang].recurrenceWeekly },
-  { value: "monthly", label: translations[lang].recurrenceMonthly },
-  { value: "yearly", label: translations[lang].recurrenceYearly }
-];
+function RECURRENCE_OPTIONS(lang) {
+  return [
+    { value: "once", label: translations[lang].recurrenceOnce },
+    { value: "daily", label: translations[lang].recurrenceDaily },
+    { value: "weekly", label: translations[lang].recurrenceWeekly },
+    { value: "monthly", label: translations[lang].recurrenceMonthly },
+    { value: "yearly", label: translations[lang].recurrenceYearly }
+  ];
+}
 // "forever" is now the default behavior (no end date / no UNTIL in RRULE)
 
-const REMINDER_MINUTES_OPTIONS = (lang) => [
-  { value: 0, label: translations[lang].reminderNone },
-  { value: 5, label: translations[lang].reminder5min },
-  { value: 15, label: translations[lang].reminder15min },
-  { value: 30, label: translations[lang].reminder30min },
-  { value: 60, label: translations[lang].reminder1hour }
-];
+function REMINDER_MINUTES_OPTIONS(lang) {
+  return [
+    { value: 0, label: translations[lang].reminderNone },
+    { value: 5, label: translations[lang].reminder5min },
+    { value: 15, label: translations[lang].reminder15min },
+    { value: 30, label: translations[lang].reminder30min },
+    { value: 60, label: translations[lang].reminder1hour }
+  ];
+}
 
-const LOCATION_LABELS = {
+var LOCATION_LABELS = {
   jerusalem: "Jerusalem",
   newyork: "New York",
   london: "London",
@@ -44,9 +49,9 @@ const LOCATION_LABELS = {
 };
 
 // ── Guest Usage Limit Constants ──
-const GUEST_MAX_ACTIONS = 10;
-const GUEST_COUNT_KEY = 'calendai-guest-usage-count';
-const GUEST_DATA_KEY = 'calendai-guest-temp-data';
+var GUEST_MAX_ACTIONS = 10;
+var GUEST_COUNT_KEY = 'calendai-guest-usage-count';
+var GUEST_DATA_KEY = 'calendai-guest-temp-data';
 
 function playNotificationSound() {
   try {
@@ -78,9 +83,9 @@ function getInitialIntent() {
 }
 
 // ── JWT Token Management (local helpers for email auth) ──
-const setJwtToken = (token) => {
+function setJwtToken(token) {
   try { safeStorage.setItem('token', token); safeStorage.setItem('calendai-jwt', token); } catch (e) {}
-};
+}
 
 // ── Inner component that runs INSIDE BrowserRouter + AuthProvider ──
 function AppRoutes() {
@@ -157,12 +162,12 @@ function AppRoutes() {
   const scheduleHistoryRef = useRef([]);
 
   // Notification / Reminder State
-  const getInitialNotificationPerm = () => {
+  function getInitialNotificationPerm() {
     try {
       if (typeof Notification !== 'undefined') return Notification.permission;
     } catch (e) {}
     return 'denied';
-  };
+  }
   const [notificationPerm, setNotificationPerm] = useState(getInitialNotificationPerm);
   const [toasts, setToasts] = useState([]);
   const notifiedRemindersRef = useRef(new Set());
@@ -315,7 +320,7 @@ function AppRoutes() {
     }
   }, []);
 
-  const copyToClipboardFallback = (text) => {
+  function copyToClipboardFallback(text) {
     if (navigator.clipboard) {
       navigator.clipboard.writeText(text).then(() => {
         setSuccess(t.shareLinkCopied || 'הקישור הועתק!');
@@ -337,7 +342,7 @@ function AppRoutes() {
       document.body.removeChild(textArea);
       setSuccess(t.shareLinkCopied || 'הקישור הועתק!');
     }
-  };
+  }
 
   // ── Shabbat Mode (Dynamic via Hebcal API) ──
   const [shabbatTimes, setShabbatTimes] = useState(null); // { candles: Date, havdalah: Date }
