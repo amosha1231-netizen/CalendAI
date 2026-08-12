@@ -136,6 +136,12 @@ function App() {
 
   const intentRef = useRef(getInitialIntent());
 
+  // ── Auto-redirect authenticated users from landing to dashboard ──
+  useEffect(() => {
+    if (!authLoading && isAuthenticated && currentView === 'landing') {
+      setCurrentView('dashboard');
+    }
+  }, [authLoading, isAuthenticated, currentView]);
 
   const [schedule, setSchedule] = useState({
     Sunday: [], Monday: [], Tuesday: [], Wednesday: [],
@@ -1146,7 +1152,8 @@ function App() {
   if (showPrivacy) return <Privacy onBack={() => setShowPrivacy(false)} />;
 
   // Landing Page: Show the landing page for unauthenticated guests on the root route
-  if (currentView === 'landing') {
+  // If the user is already authenticated, skip the landing page and go to dashboard
+  if (currentView === 'landing' && !isAuthenticated) {
     return (
       <LandingPage
         t={t}
