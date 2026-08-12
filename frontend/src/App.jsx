@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { useAuth } from "./context/AuthContext";
+import { BrowserRouter } from "react-router-dom";
+import { AuthProvider, useAuth } from "./context/AuthContext";
 import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Menu, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff } from "lucide-react";
 import MonthlyCalendar from "./components/MonthlyCalendar";
 import LocationSelector from "./components/LocationSelector";
@@ -76,7 +77,13 @@ function getInitialIntent() {
   };
 }
 
-function App() {
+// ── JWT Token Management (local helpers for email auth) ──
+const setJwtToken = (token) => {
+  try { safeStorage.setItem('token', token); safeStorage.setItem('calendai-jwt', token); } catch (e) {}
+};
+
+// ── Inner component that runs INSIDE BrowserRouter + AuthProvider ──
+function AppRoutes() {
   // Language state - load from localStorage or default to 'he'
   const [lang, setLang] = useState(() => {
     try {
@@ -132,7 +139,7 @@ function App() {
 
   const [selectedLocation, setSelectedLocation] = useState("jerusalem");
   const [locationFilter, setLocationFilter] = useState("all");
-  const { user, isPro, isAuthenticated, authLoading, authStatus, handleLogin, handleLogout } = useAuth();
+  const { user, isPro, isAuthenticated, authLoading, authStatus, handleLogin, handleLogout, setUser, setIsPro } = useAuth();
 
   const intentRef = useRef(getInitialIntent());
 
@@ -1300,8 +1307,8 @@ function App() {
           </button>
           {user ? (
             <div className="flex items-center gap-1 sm:gap-3">
-              {user.photo ? <img src={user.photo} alt="" className="w-6 h-6 sm:w-8 sm:h-8 rounded-full shrink-0" /> : <User className="w-4 h-4 sm:w-6 sm:h-6 text-slate-500 shrink-0" />}
-              <span className="hidden sm:inline text-sm text-slate-700 truncate max-w-[100px]">{user.displayName || user.email}</span>
+              {user?.photo ? <img src={user.photo} alt="" className="w-6 h-6 sm:w-8 sm:h-8 rounded-full shrink-0" /> : <User className="w-4 h-4 sm:w-6 sm:h-6 text-slate-500 shrink-0" />}
+              <span className="hidden sm:inline text-sm text-slate-700 truncate max-w-[100px]">{user?.displayName || user?.email || ''}</span>
               <button onClick={handleLogout} className="flex items-center gap-1 text-[11px] sm:text-sm text-red-500 hover:text-red-700 transition shrink-0"><LogOut className="w-3 h-3 sm:w-4 sm:h-4" /> <span className="hidden sm:inline">{t.logout}</span></button>
             </div>
           ) : (
@@ -2022,8 +2029,8 @@ function App() {
 
                   // Save JWT token and user
                   setJwtToken(data.token);
-                  setUser(data.user);
-                  setIsPro(data.user?.isPro === true || data.user?.isPro === 'true');
+                  if (setUser) setUser(data.user);
+                  if (setIsPro) setIsPro(data.user?.isPro === true || data.user?.isPro === 'true');
                   safeStorage.setItem('calendai-isLoggedIn', 'true');
                   safeStorage.setItem('calendai-user', JSON.stringify(data.user));
                   
@@ -2101,6 +2108,18 @@ function App() {
   );
 }
 
+// ── Root App: wraps everything in the correct provider hierarchy ──
+function App() {
+  return (
+    <BrowserRouter>
+      <AuthProvider>
+        <AppRoutes />
+      </AuthProvider>
+    </BrowserRouter>
+  );
+}
+
+// ── Default export with ErrorBoundary ──
 export default function AppWithBoundary() {
   return (
     <ErrorBoundary>
