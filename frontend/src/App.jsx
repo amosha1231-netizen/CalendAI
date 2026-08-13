@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, Suspense, lazy } from "react";
 import { BrowserRouter } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Menu, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff } from "lucide-react";
@@ -8,11 +8,13 @@ import Privacy from "./components/Privacy";
 import ErrorBoundary from "./components/ErrorBoundary";
 import SidebarDrawer from "./components/SidebarDrawer";
 import MeetingWizard from "./components/MeetingWizard";
-import GuestBookingView from "./components/GuestBookingView";
-import Booking from "./components/Booking";
-import LandingPage from "./components/LandingPage";
 import LuxuryLoader from "./components/LuxuryLoader";
-import AuthSuccess from "./pages/AuthSuccess";
+
+// ── Lazy-loaded page chunks ──
+const LandingPage = lazy(() => import("./components/LandingPage"));
+const AuthSuccess = lazy(() => import("./pages/AuthSuccess"));
+const GuestBookingView = lazy(() => import("./components/GuestBookingView"));
+const Booking = lazy(() => import("./components/Booking"));
 import translations from "./i18n";
 import safeStorage from "./utils/safeStorage";
 import { isIosWhatsApp, isIosSafari, isIosNonSafari, isStandalone } from "./utils/browserDetection";
@@ -2118,7 +2120,9 @@ function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <AppRoutes />
+        <Suspense fallback={<LuxuryLoader statusText="Loading..." />}>
+          <AppRoutes />
+        </Suspense>
       </AuthProvider>
     </BrowserRouter>
   );

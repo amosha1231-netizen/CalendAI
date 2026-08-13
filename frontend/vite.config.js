@@ -17,6 +17,8 @@ export default defineConfig({
   },
   build: {
     target: 'es2015',
+    minify: 'esbuild',
+    esbuild: { keepNames: true },
     rollupOptions: {
       output: {
         manualChunks(id) {
