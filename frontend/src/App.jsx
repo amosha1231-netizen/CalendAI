@@ -150,6 +150,22 @@ function AppRoutes() {
 
   const intentRef = useRef(getInitialIntent());
 
+  // ── View State ──
+  // 'landing'   = default for unauthenticated guests (landing page)
+  // 'dashboard' = main app for authenticated users or guests who clicked "try demo"
+  // 'booking'   = ONLY if ?book=true or ?book=dyn_xxx is explicitly in the URL
+  // 'guest-booking' = when a dynamic booking ID is in the URL
+  const [currentView, setCurrentView] = useState(() => intentRef.current.wantsBooking ? 'booking' : 'landing');
+  const [guestBookingId, setGuestBookingId] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    const bookParam = params.get('book');
+    // Check if it's a dynamic booking ID (starts with dyn_)
+    if (bookParam && bookParam !== 'true' && bookParam !== '1') {
+      return bookParam;
+    }
+    return null;
+  });
+
   // ── Auto-redirect authenticated users from landing to dashboard ──
   useEffect(() => {
     if (!authLoading && isAuthenticated && currentView === 'landing') {
@@ -187,22 +203,6 @@ function AppRoutes() {
 
   // Meeting Wizard State
   const [showWizard, setShowWizard] = useState(false);
-
-  // ── View State ──
-  // 'landing'   = default for unauthenticated guests (landing page)
-  // 'dashboard' = main app for authenticated users or guests who clicked "try demo"
-  // 'booking'   = ONLY if ?book=true or ?book=dyn_xxx is explicitly in the URL
-  // 'guest-booking' = when a dynamic booking ID is in the URL
-  const [currentView, setCurrentView] = useState(() => intentRef.current.wantsBooking ? 'booking' : 'landing');
-  const [guestBookingId, setGuestBookingId] = useState(() => {
-    const params = new URLSearchParams(window.location.search);
-    const bookParam = params.get('book');
-    // Check if it's a dynamic booking ID (starts with dyn_)
-    if (bookParam && bookParam !== 'true' && bookParam !== '1') {
-      return bookParam;
-    }
-    return null;
-  });
 
   // PWA Install State
   const [installPrompt, setInstallPrompt] = useState(null);
