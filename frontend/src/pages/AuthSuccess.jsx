@@ -69,16 +69,17 @@ export default function AuthSuccess() {
           } catch (e) {}
         }
 
-        // ── Step 5: Navigate to dashboard ──
-        // Use window.location for a full page navigation to ensure
-        // App.jsx re-initializes with the authenticated state.
-        window.location.href = "/";
+        // ── Step 5: Navigate to dashboard without full page reload ──
+        // AuthContext has already extracted the token, saved it, and called
+        // /api/auth/me. We just need to clean the URL so App.jsx re-renders
+        // with the normal view (dashboard) instead of this AuthSuccess page.
+        window.history.replaceState({}, document.title, "/");
       } catch (err) {
         console.error("AuthSuccess error:", err);
         if (!cancelled) {
-          // On network error, still navigate to home — the token is saved
-          // and App.jsx's auth check will pick it up.
-          window.location.href = "/";
+          // On network error, still navigate to home without reload —
+          // the token is saved and AuthContext will pick it up.
+          window.history.replaceState({}, document.title, "/");
         }
       }
     }
