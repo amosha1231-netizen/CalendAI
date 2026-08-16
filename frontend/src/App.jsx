@@ -155,7 +155,14 @@ function AppRoutes() {
   // 'dashboard' = main app for authenticated users or guests who clicked "try demo"
   // 'booking'   = ONLY if ?book=true or ?book=dyn_xxx is explicitly in the URL
   // 'guest-booking' = when a dynamic booking ID is in the URL
-  const [currentView, setCurrentView] = useState(() => intentRef.current.wantsBooking ? 'booking' : 'landing');
+  const [currentView, setCurrentView] = useState(() => {
+    if (intentRef.current.wantsBooking) return 'booking';
+    // Initialize based on persisted auth state so logged-in users land directly on dashboard
+    try {
+      const isLoggedIn = localStorage.getItem('calendai-isLoggedIn') === 'true' || !!localStorage.getItem('calendai-jwt') || !!localStorage.getItem('token');
+      return isLoggedIn ? 'dashboard' : 'landing';
+    } catch { return 'landing'; }
+  });
   const [guestBookingId, setGuestBookingId] = useState(() => {
     const params = new URLSearchParams(window.location.search);
     const bookParam = params.get('book');
@@ -168,10 +175,10 @@ function AppRoutes() {
 
   // ── Auto-redirect authenticated users from landing to dashboard ──
   useEffect(() => {
-    if (!authLoading && isAuthenticated && currentView === 'landing') {
+    if (isAuthenticated) {
       setCurrentView('dashboard');
     }
-  }, [authLoading, isAuthenticated, currentView]);
+  }, [isAuthenticated]);
 
   const [schedule, setSchedule] = useState({
     Sunday: [], Monday: [], Tuesday: [], Wednesday: [],
