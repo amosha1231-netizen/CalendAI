@@ -32,6 +32,96 @@ export function AuthProvider({ children }) {
 
   // Guard against double execution in React Strict Mode
   const isCheckingRef = useRef(false);
+  const cancelledRef = useRef(false);
+
+  // ── checkAuth: exposed function to re-check auth status ──
+  const checkAuth = useCallback(async (retries = 2) => {
+    if (cancelledRef.current) return;
+
+    try {
+      const token = getJwtToken();
+
+      // No token → guest, no need to call the server
+      if (!token) {
+        setAuthStatus('guest');
+        setAuthLoading(false);
+        return;
+      }
+
+      // Token exists → call /api/auth/me
+      const res = await api.get(`/api/auth/me?t=${Date.now()}`, {
+        cache: 'no-store',
+        validateStatus: false
+      });
+
+      // ── 401 Unauthorized → clear token, mark as guest ──
+      if (res.status === 401) {
+        clearJwtToken();
+        safeStorage.removeItem('calendai-isLoggedIn');
+        setAuthStatus('guest');
+        setAuthLoading(false);
+        return;
+      }
+
+      // ── Network/server errors (5xx, etc.) → retry, do NOT clear token ──
+      if (!res.ok) {
+        if (retries > 0) {
+          setTimeout(() => checkAuth(retries - 1), 400);
+        } else {
+          const token = getJwtToken();
+          if (token) {
+            setAuthStatus('authenticated');
+          } else {
+            setAuthStatus('guest');
+          }
+          setAuthLoading(false);
+        }
+        return;
+      }
+
+      // ── 200 OK → authenticated! ──
+      const data = res.data;
+      if (data.user) {
+        setUser(data.user);
+        setIsPro(data.user?.isPro === true || data.user?.isPro === 'true');
+        setIsAuthenticated(true);
+        setAuthStatus('authenticated');
+
+        // Exchange session for a JWT token to persist login
+        try {
+          const tokenRes = await api.post('/api/auth/token', {}, { validateStatus: false });
+          if (tokenRes.data?.token) {
+            setJwtToken(tokenRes.data.token);
+            safeStorage.setItem('calendai-isLoggedIn', 'true');
+          }
+        } catch (tokenErr) {
+          console.error('Failed to exchange session for JWT:', tokenErr);
+        }
+
+        // Sync guest data to backend
+        syncGuestData();
+        setAuthLoading(false);
+      } else if (retries > 0) {
+        setTimeout(() => checkAuth(retries - 1), 400);
+      } else {
+        setAuthStatus('guest');
+        setAuthLoading(false);
+      }
+    } catch (e) {
+      // Network error → do NOT clear token, retry
+      if (retries > 0) {
+        setTimeout(() => checkAuth(retries - 1), 400);
+      } else {
+        const token = getJwtToken();
+        if (token) {
+          setAuthStatus('authenticated');
+        } else {
+          setAuthStatus('guest');
+        }
+        setAuthLoading(false);
+      }
+    }
+  }, [syncGuestData]);
 
   // ── Unified Auth State Machine ──
   // Runs exactly ONCE on mount (empty dependency array).
@@ -41,13 +131,13 @@ export function AuthProvider({ children }) {
     isCheckingRef.current = true;
 
     let cancelled = false;
+    cancelledRef.current = false;
 
     // Parse initial URL intent
     const params = new URLSearchParams(window.location.search);
     const urlToken = params.get('token');
     const authFailed = params.get('auth') === 'failed';
     const isAuthCallback = params.get('login') === 'success' || params.get('auth') === 'success';
-    const wantsBooking = params.get('book') === 'true' || params.get('book') === '1';
 
     // ── Step 1: Extract token from URL query params (OAuth callback) ──
     if (urlToken) {
@@ -81,98 +171,13 @@ export function AuthProvider({ children }) {
     }
 
     // ── Step 2: Check auth with the token from localStorage ──
-    const checkAuth = async (retries = 2) => {
-      if (cancelled) return;
-
-      try {
-        const token = getJwtToken();
-
-        // No token → guest, no need to call the server
-        if (!token) {
-          setAuthStatus('guest');
-          setAuthLoading(false);
-          return;
-        }
-
-        // Token exists → call /api/auth/me
-        const res = await api.get(`/api/auth/me?t=${Date.now()}`, {
-          cache: 'no-store',
-          validateStatus: false
-        });
-
-        // ── 401 Unauthorized → clear token, mark as guest ──
-        if (res.status === 401) {
-          clearJwtToken();
-          safeStorage.removeItem('calendai-isLoggedIn');
-          setAuthStatus('guest');
-          setAuthLoading(false);
-          return;
-        }
-
-        // ── Network/server errors (5xx, etc.) → retry, do NOT clear token ──
-        if (!res.ok) {
-          if (retries > 0) {
-            setTimeout(() => checkAuth(retries - 1), 400);
-          } else {
-            const token = getJwtToken();
-            if (token) {
-              // Have token but server returned error — keep authenticated
-              setAuthStatus('authenticated');
-            } else {
-              setAuthStatus('guest');
-            }
-            setAuthLoading(false);
-          }
-          return;
-        }
-
-        // ── 200 OK → authenticated! ──
-        const data = res.data;
-        if (data.user) {
-          setUser(data.user);
-          setIsPro(data.user?.isPro === true || data.user?.isPro === 'true');
-          setIsAuthenticated(true);
-          setAuthStatus('authenticated');
-
-          // Exchange session for a JWT token to persist login
-          try {
-            const tokenRes = await api.post('/api/auth/token', {}, { validateStatus: false });
-            if (tokenRes.data?.token) {
-              setJwtToken(tokenRes.data.token);
-              safeStorage.setItem('calendai-isLoggedIn', 'true');
-            }
-          } catch (tokenErr) {
-            console.error('Failed to exchange session for JWT:', tokenErr);
-          }
-
-          // Sync guest data to backend
-          syncGuestData();
-          setAuthLoading(false);
-        } else if (retries > 0) {
-          setTimeout(() => checkAuth(retries - 1), 400);
-        } else {
-          setAuthStatus('guest');
-          setAuthLoading(false);
-        }
-      } catch (e) {
-        // Network error → do NOT clear token, retry
-        if (retries > 0) {
-          setTimeout(() => checkAuth(retries - 1), 400);
-        } else {
-          const token = getJwtToken();
-          if (token) {
-            setAuthStatus('authenticated');
-          } else {
-            setAuthStatus('guest');
-          }
-          setAuthLoading(false);
-        }
-      }
-    };
-
     checkAuth();
-    return () => { cancelled = true; };
-  }, []); // ⚠️ Intentionally empty — runs exactly ONCE on mount
+
+    return () => {
+      cancelled = true;
+      cancelledRef.current = true;
+    };
+  }, [checkAuth]); // ⚠️ Intentionally runs ONCE on mount (checkAuth is stable via useCallback)
 
   // ── Sync guest temp data to backend after login ──
   const syncGuestData = useCallback(async () => {
@@ -231,6 +236,7 @@ export function AuthProvider({ children }) {
     setUser,
     setIsPro,
     setIsAuthenticated,
+    checkAuth,
   };
 
   return (
