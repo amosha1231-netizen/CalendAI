@@ -30,8 +30,8 @@ export function AuthProvider({ children }) {
   const [authLoading, setAuthLoading] = useState(true); // true until first auth check completes
   const [authStatus, setAuthStatus] = useState('checking'); // 'checking' | 'authenticated' | 'guest'
 
-  // Guard against double execution in React Strict Mode
-  const isCheckingRef = useRef(false);
+  // Guard: ensures the auth check effect runs exactly once ever
+  const hasCheckedAuth = useRef(false);
   const cancelledRef = useRef(false);
 
   // ── Sync guest temp data to backend after login ──
@@ -64,8 +64,8 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
-  // ── checkAuth: exposed function to re-check auth status ──
-  const checkAuth = useCallback(async (retries = 2) => {
+  // ── checkAuth: single-shot auth verification (no retries, no loops) ──
+  const checkAuth = useCallback(async () => {
     if (cancelledRef.current) return;
 
     try {
@@ -78,7 +78,7 @@ export function AuthProvider({ children }) {
         return;
       }
 
-      // Token exists → call /api/auth/me
+      // Token exists → call /api/auth/me exactly once
       const res = await api.get(`/api/auth/me?t=${Date.now()}`, {
         cache: 'no-store',
         validateStatus: false
@@ -93,19 +93,11 @@ export function AuthProvider({ children }) {
         return;
       }
 
-      // ── Network/server errors (5xx, etc.) → retry, do NOT clear token ──
-      if (!res.ok) {
-        if (retries > 0) {
-          setTimeout(() => checkAuth(retries - 1), 400);
-        } else {
-          const token = getJwtToken();
-          if (token) {
-            setAuthStatus('authenticated');
-          } else {
-            setAuthStatus('guest');
-          }
-          setAuthLoading(false);
-        }
+      // ── Any server error (5xx, 4xx) → guest, do NOT retry ──
+      if (res.status >= 400) {
+        const token = getJwtToken();
+        setAuthStatus(token ? 'authenticated' : 'guest');
+        setAuthLoading(false);
         return;
       }
 
@@ -131,25 +123,17 @@ export function AuthProvider({ children }) {
         // Sync guest data to backend
         syncGuestData();
         setAuthLoading(false);
-      } else if (retries > 0) {
-        setTimeout(() => checkAuth(retries - 1), 400);
       } else {
+        // Response missing user → guest
         setAuthStatus('guest');
         setAuthLoading(false);
       }
     } catch (e) {
-      // Network error → do NOT clear token, retry
-      if (retries > 0) {
-        setTimeout(() => checkAuth(retries - 1), 400);
-      } else {
-        const token = getJwtToken();
-        if (token) {
-          setAuthStatus('authenticated');
-        } else {
-          setAuthStatus('guest');
-        }
-        setAuthLoading(false);
-      }
+      // Network error → do NOT clear token, do NOT retry
+      console.warn('Auth check failed (network error):', e);
+      const token = getJwtToken();
+      setAuthStatus(token ? 'authenticated' : 'guest');
+      setAuthLoading(false);
     }
   }, [syncGuestData]);
 
@@ -170,11 +154,10 @@ export function AuthProvider({ children }) {
   }, []);
 
   // ── Unified Auth State Machine ──
-  // Runs exactly ONCE on mount (empty dependency array).
-  // isCheckingRef prevents double invocation in React Strict Mode.
+  // Runs exactly ONCE on mount (empty dependency array, hardened with useRef).
   useEffect(() => {
-    if (isCheckingRef.current) return;
-    isCheckingRef.current = true;
+    if (hasCheckedAuth.current) return;
+    hasCheckedAuth.current = true;
 
     let cancelled = false;
     cancelledRef.current = false;
@@ -217,13 +200,37 @@ export function AuthProvider({ children }) {
     }
 
     // ── Step 2: Check auth with the token from localStorage ──
-    checkAuth();
+    const verifyAuth = async () => {
+      const token = getJwtToken();
+      if (!token) {
+        setAuthLoading(false);
+        return;
+      }
+      try {
+        const res = await api.get(`/api/auth/me?t=${Date.now()}`, {
+          cache: 'no-store',
+          validateStatus: false
+        });
+        if (res.status === 200 && res.data) {
+          setUser(res.data.user || res.data);
+          setIsAuthenticated(true);
+        }
+      } catch (err) {
+        console.warn('Auth check failed', err);
+        setIsAuthenticated(false);
+        setUser(null);
+      } finally {
+        setAuthLoading(false);
+      }
+    };
+
+    verifyAuth();
 
     return () => {
       cancelled = true;
       cancelledRef.current = true;
     };
-  }, [checkAuth]); // ⚠️ Intentionally runs ONCE on mount (checkAuth is stable via useCallback)
+  }, []); // מערך תלויות ריק לחלוטין!
 
   const value = {
     user,
