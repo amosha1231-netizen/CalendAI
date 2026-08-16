@@ -34,6 +34,36 @@ export function AuthProvider({ children }) {
   const isCheckingRef = useRef(false);
   const cancelledRef = useRef(false);
 
+  // ── Sync guest temp data to backend after login ──
+  const syncGuestData = useCallback(async () => {
+    try {
+      const raw = safeStorage.getItem('calendai-guest-temp-data');
+      if (!raw) return;
+      const guestData = JSON.parse(raw);
+      if (!Array.isArray(guestData) || guestData.length === 0) return;
+
+      for (const entry of guestData) {
+        if (entry.type === 'parse' && entry.data?.text) {
+          await fetch(`${API_BASE}/api/parse-schedule`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              text: entry.data.text,
+              recurrence: entry.data.recurrence || 'weekly',
+              location: entry.data.location || 'jerusalem'
+            }),
+            credentials: "include"
+          });
+        }
+      }
+
+      safeStorage.removeItem('calendai-guest-temp-data');
+      safeStorage.removeItem('calendai-guest-usage-count');
+    } catch (e) {
+      console.error('Failed to sync guest data:', e);
+    }
+  }, []);
+
   // ── checkAuth: exposed function to re-check auth status ──
   const checkAuth = useCallback(async (retries = 2) => {
     if (cancelledRef.current) return;
@@ -123,6 +153,22 @@ export function AuthProvider({ children }) {
     }
   }, [syncGuestData]);
 
+  const handleLogin = useCallback(() => {
+    window.location.href = `${API_BASE}/api/auth/google`;
+  }, []);
+
+  const handleLogout = useCallback(async () => {
+    try {
+      await fetch(`${API_BASE}/api/auth/logout`, { method: "POST", credentials: "include" });
+      setUser(null);
+      setIsPro(false);
+      setIsAuthenticated(false);
+      setAuthStatus('guest');
+      safeStorage.removeItem('calendai-isLoggedIn');
+      safeStorage.removeItem('calendai-user');
+    } catch (err) { console.error(err); }
+  }, []);
+
   // ── Unified Auth State Machine ──
   // Runs exactly ONCE on mount (empty dependency array).
   // isCheckingRef prevents double invocation in React Strict Mode.
@@ -178,52 +224,6 @@ export function AuthProvider({ children }) {
       cancelledRef.current = true;
     };
   }, [checkAuth]); // ⚠️ Intentionally runs ONCE on mount (checkAuth is stable via useCallback)
-
-  // ── Sync guest temp data to backend after login ──
-  const syncGuestData = useCallback(async () => {
-    try {
-      const raw = safeStorage.getItem('calendai-guest-temp-data');
-      if (!raw) return;
-      const guestData = JSON.parse(raw);
-      if (!Array.isArray(guestData) || guestData.length === 0) return;
-
-      for (const entry of guestData) {
-        if (entry.type === 'parse' && entry.data?.text) {
-          await fetch(`${API_BASE}/api/parse-schedule`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              text: entry.data.text,
-              recurrence: entry.data.recurrence || 'weekly',
-              location: entry.data.location || 'jerusalem'
-            }),
-            credentials: "include"
-          });
-        }
-      }
-
-      safeStorage.removeItem('calendai-guest-temp-data');
-      safeStorage.removeItem('calendai-guest-usage-count');
-    } catch (e) {
-      console.error('Failed to sync guest data:', e);
-    }
-  }, []);
-
-  const handleLogin = useCallback(() => {
-    window.location.href = `${API_BASE}/api/auth/google`;
-  }, []);
-
-  const handleLogout = useCallback(async () => {
-    try {
-      await fetch(`${API_BASE}/api/auth/logout`, { method: "POST", credentials: "include" });
-      setUser(null);
-      setIsPro(false);
-      setIsAuthenticated(false);
-      setAuthStatus('guest');
-      safeStorage.removeItem('calendai-isLoggedIn');
-      safeStorage.removeItem('calendai-user');
-    } catch (err) { console.error(err); }
-  }, []);
 
   const value = {
     user,
