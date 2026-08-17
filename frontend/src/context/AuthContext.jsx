@@ -153,6 +153,17 @@ export function AuthProvider({ children }) {
     } catch (err) { console.error(err); }
   }, []);
 
+  // ── Safety Fallback Timer ──
+  // Forces loading to false after 3 seconds to prevent infinite loading state.
+  useEffect(() => {
+    const safetyTimer = setTimeout(() => {
+      if (authLoading) {
+        setAuthLoading(false);
+      }
+    }, 3000);
+    return () => clearTimeout(safetyTimer);
+  }, []);
+
   // ── Unified Auth State Machine ──
   // Runs exactly ONCE on mount (empty dependency array, hardened with useRef).
   useEffect(() => {

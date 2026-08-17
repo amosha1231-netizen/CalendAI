@@ -1150,6 +1150,7 @@ function AppRoutes() {
   }
 
   // ── Unified LuxuryLoader: shown for ALL initial loading & auth-checking states ──
+  console.log('🔄 [App render] loading:', authLoading, 'isAuthenticated:', isAuthenticated, 'currentView:', currentView, 'authStatus:', authStatus);
   if (authLoading || authStatus === 'checking') {
     return <LuxuryLoader statusText={t.parsing || 'AUTHENTICATING...'} />;
   }
