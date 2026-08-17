@@ -1,9 +1,28 @@
 import React, { useState, useEffect } from "react";
 import { Calendar, Clock, Loader2, Check, X, Sparkles, ExternalLink } from "lucide-react";
+import { isShabbatNow } from "../utils/shabbatHelper";
+import ShabbatBanner from "./ShabbatBanner";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
 
 export default function GuestBookingView({ bookingId, lang, t, onClose }) {
+  // ── Shabbat Guard ──
+  const [shabbatActive] = useState(() => isShabbatNow());
+
+  // Check every minute if Shabbat status changed
+  useEffect(() => {
+    if (!shabbatActive) return;
+    const interval = setInterval(() => {
+      if (!isShabbatNow()) {
+        window.location.reload();
+      }
+    }, 60000);
+    return () => clearInterval(interval);
+  }, [shabbatActive]);
+
+  if (shabbatActive) {
+    return <ShabbatBanner t={t} lang={lang} />;
+  }
   const [booking, setBooking] = useState(null);
   const [slots, setSlots] = useState([]);
   const [loading, setLoading] = useState(true);

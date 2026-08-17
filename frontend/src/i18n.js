@@ -372,6 +372,11 @@ const translations = {
     referralBannerButton: 'התחל עכשיו',
     referralBannerDesc: 'ניהול לו"ז חכם עם AI - תיאם פגישות, נהל משימות וחסוך זמן',
 
+    // Shabbat Banner
+    shabbatBannerMessage: 'המערכת אינה פעילה במהלך השבת. נשמח לחזור לפעילות מלאה ולתיאום פגישות במוצאי השבת.',
+    shabbatBannerFooter: 'שבת היא מלכה — זמן למנוחה, משפחה ונחת.',
+    shabbatContactButton: 'יצירת קשר 📧',
+
     // Shabbat Block Error
     shabbatBlockError: 'לא ניתן לקבוע פעילויות בזמן השבת. נחזור לפעילות בצאת השבת.',
 
@@ -845,6 +850,11 @@ const translations = {
     referralBannerSubtitle: 'Join CalendAI! 🚀',
     referralBannerButton: 'Start Free',
     referralBannerDesc: 'Smart AI schedule management - schedule meetings, manage tasks, and save time',
+
+    // Shabbat Banner
+    shabbatBannerMessage: 'The system is not active during Shabbat. We will resume full activity and meeting scheduling after Shabbat ends.',
+    shabbatBannerFooter: 'Shabbat is a day of rest — time for family and peace.',
+    shabbatContactButton: 'Contact Us 📧',
 
     // Shabbat Block Error
     shabbatBlockError: 'Cannot schedule activities during Shabbat. We will resume after Shabbat ends.',

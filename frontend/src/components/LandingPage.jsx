@@ -1,7 +1,22 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { Calendar, Sparkles, LogIn, ChevronDown } from "lucide-react";
+import { isShabbatNow } from "../utils/shabbatHelper";
+import ShabbatBanner from "./ShabbatBanner";
 
 export default function LandingPage({ t, lang, onLogin, onTryGuest, toggleLanguage }) {
+  // ── Shabbat Guard ──
+  const [shabbatActive, setShabbatActive] = useState(() => isShabbatNow());
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setShabbatActive(isShabbatNow());
+    }, 60000);
+    return () => clearInterval(interval);
+  }, []);
+
+  if (shabbatActive) {
+    return <ShabbatBanner t={t} lang={lang} />;
+  }
   const isRTL = lang === 'he';
 
   const scrollToFeatures = () => {

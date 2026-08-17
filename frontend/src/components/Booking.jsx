@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Calendar, Clock, Loader2, Sparkles, X, Check, Sun, Moon, MapPin, Filter, Eye, EyeOff, Square, Mail, Phone, MessageSquare, AlertCircle, Share2, ExternalLink, Copy, Download, Users, Send } from "lucide-react";
+import { isShabbatNow } from "../utils/shabbatHelper";
+import ShabbatBanner from "./ShabbatBanner";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
 
@@ -18,6 +20,23 @@ const MEETING_TYPES = [
 ];
 
 export default function Booking({ schedule, lang, t, onClose, onConfirm, user }) {
+  // ── Shabbat Guard ──
+  const [shabbatActive] = useState(() => isShabbatNow());
+
+  // Check every minute if Shabbat status changed
+  useEffect(() => {
+    if (!shabbatActive) return;
+    const interval = setInterval(() => {
+      if (!isShabbatNow()) {
+        window.location.reload();
+      }
+    }, 60000);
+    return () => clearInterval(interval);
+  }, [shabbatActive]);
+
+  if (shabbatActive) {
+    return <ShabbatBanner t={t} lang={lang} />;
+  }
   const [step, setStep] = useState('meeting-type'); // 'meeting-type' | 'select-time' | 'details' | 'success' | 'share-link'
   const [selectedMeetingType, setSelectedMeetingType] = useState(null);
   const [selectedDay, setSelectedDay] = useState(() => {
