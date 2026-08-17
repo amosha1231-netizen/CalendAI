@@ -1149,9 +1149,11 @@ function AppRoutes() {
     return <AuthSuccess />;
   }
 
-  // ── Unified LuxuryLoader: shown for ALL initial loading & auth-checking states ──
-  console.log('🔄 [App render] loading:', authLoading, 'isAuthenticated:', isAuthenticated, 'currentView:', currentView, 'authStatus:', authStatus);
-  if (authLoading || authStatus === 'checking') {
+  // ── LuxuryLoader: only shown during initial loading when there's no saved token ──
+  // If the user has a token in localStorage, render immediately — AuthContext
+  // will resolve auth in the background and update the user state.
+  console.log('🔄 [App render] authLoading:', authLoading, 'isAuthenticated:', isAuthenticated, 'currentView:', currentView, 'authStatus:', authStatus);
+  if (authLoading && !user && !localStorage.getItem('token')) {
     return <LuxuryLoader statusText={t.parsing || 'AUTHENTICATING...'} />;
   }
 

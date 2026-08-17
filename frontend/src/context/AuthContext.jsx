@@ -214,6 +214,7 @@ export function AuthProvider({ children }) {
     const verifyAuth = async () => {
       const token = getJwtToken();
       if (!token) {
+        setAuthStatus('guest');
         setAuthLoading(false);
         return;
       }
@@ -225,11 +226,19 @@ export function AuthProvider({ children }) {
         if (res.status === 200 && res.data) {
           setUser(res.data.user || res.data);
           setIsAuthenticated(true);
+          setAuthStatus('authenticated');
+        } else {
+          // Non-200 response → token invalid, clear and treat as guest
+          clearJwtToken();
+          safeStorage.removeItem('calendai-isLoggedIn');
+          setAuthStatus('guest');
         }
       } catch (err) {
         console.warn('Auth check failed', err);
         setIsAuthenticated(false);
         setUser(null);
+        // Network error → keep the token, but treat as guest for UI purposes
+        setAuthStatus('guest');
       } finally {
         setAuthLoading(false);
       }
