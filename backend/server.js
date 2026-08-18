@@ -2411,7 +2411,7 @@ app.post('/api/booking/create-link', (req, res) => {
     const bookingFile = path.join(bookingDir, `${bookingId}.json`);
     fs.writeFileSync(bookingFile, JSON.stringify(bookingData, null, 2));
 
-    const link = `${CLIENT_URL}/?book=${bookingId}`;
+    const link = `${CLIENT_URL}/book/${bookingId}`;
 
     res.json({ ok: true, bookingId, link, booking: bookingData });
   } catch (err) {
@@ -2469,7 +2469,7 @@ app.get('/api/booking/:id', (req, res) => {
 app.post('/api/booking/:id/confirm', async (req, res) => {
   try {
     const { id } = req.params;
-    const { slotIndex, guestName } = req.body;
+    const { slotIndex, guestName, guestEmail, guestPhone, guestNotes } = req.body;
 
     if (slotIndex === undefined || !guestName) {
       return res.status(400).json({ error: 'slotIndex and guestName are required.' });
@@ -2499,6 +2499,9 @@ app.post('/api/booking/:id/confirm', async (req, res) => {
     // Mark slot as booked
     slot.booked = true;
     slot.bookedBy = guestName;
+    slot.bookedByEmail = guestEmail || '';
+    slot.bookedByPhone = guestPhone || '';
+    slot.bookedByNotes = guestNotes || '';
     slot.bookedAt = new Date().toISOString();
     booking.status = 'completed';
 
@@ -2529,6 +2532,9 @@ app.post('/api/booking/:id/confirm', async (req, res) => {
       recurrence: 'once',
       location: DEFAULT_LOCATION_ID,
       guestName: guestName,
+      guestEmail: guestEmail || '',
+      guestPhone: guestPhone || '',
+      guestNotes: guestNotes || '',
       bookingId: id
     };
 

@@ -164,6 +164,12 @@ function AppRoutes() {
     } catch { return 'landing'; }
   });
   const [guestBookingId, setGuestBookingId] = useState(() => {
+    // First check /book/:id in the pathname (public guest booking route)
+    const pathMatch = typeof window !== 'undefined' ? window.location.pathname.match(/^\/book\/(.+)$/) : null;
+    if (pathMatch && pathMatch[1]) {
+      return pathMatch[1];
+    }
+    // Fallback to ?book=dyn_xxx query parameter
     const params = new URLSearchParams(window.location.search);
     const bookParam = params.get('book');
     // Check if it's a dynamic booking ID (starts with dyn_)
