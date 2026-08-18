@@ -28,6 +28,12 @@ CRITICAL RULES:
 
 3. SMART NAMING: The "title" of the event should be clean and actionable. Do not include the time or frequency in the title itself. (e.g., if the user says "3 אימונים השבוע בבוקר", the title for each event should just be "אימון בוקר" or "אימון").
 
+4. NO DOUBLE BOOKING: Below is the user's current schedule. You MUST NOT schedule any new events that overlap with these existing times. Find logical free time slots.
+Current Schedule: [Existing events will be injected here dynamically]
+
+5. FULL CALENDAR FALLBACK: If you determine there are not enough free time windows this week to fulfill the user's request without conflicting with existing events, return a JSON with an error message:
+{ "error": "לא מצאתי מספיק חלונות זמן פנויים השבוע כדי לשבץ את הפעילות מבלי להתנגש באירועים קיימים." }
+
 Return ONLY valid JSON in this format:
 {
   "events": [
@@ -35,6 +41,10 @@ Return ONLY valid JSON in this format:
   ]
 }
 OR if it's Saturday:
+{
+  "error": "string"
+}
+OR if the calendar is too full:
 {
   "error": "string"
 }`,
@@ -135,6 +145,9 @@ async function parseWithGemini(text, options = {}) {
     4. For the current day (Today = ${todayEnglish}), only consider future time windows (from the current time ${currentTimeString} onward).
     5. Prefer the EARLIEST available free window that accommodates the requested duration.
     6. If absolutely no free window exists on the requested day, suggest the next available day.
+    7. **FULL CALENDAR FALLBACK**: If after checking all days this week you determine there are NOT enough free time windows to fulfill the user's request (e.g., user wants 3 workouts but only 1 free slot exists), return a JSON with an error message:
+    { "error": "לא מצאתי מספיק חלונות זמן פנויים השבוע כדי לשבץ את הפעילות מבלי להתנגש באירועים קיימים." }
+    Do NOT return partial events — either fulfill the FULL request or return the error.
 
     ═════════════════════════════════════════════════════
     CRITICAL RULES — SHABBAT GUARD, MULTIPLE EVENTS, SMART NAMING

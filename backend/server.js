@@ -1710,8 +1710,30 @@ app.post('/api/events/quick-add', aiLimiter, async (req, res) => {
       return res.status(401).json({ success: false, error: 'Authentication required. Provide a Bearer token.' });
     }
 
-    // Parse the text using AI (same engine as /api/parse-schedule)
-    const parsedResult = await parseWithGemini(text);
+    // Get the user's schedule for context-aware AI
+    const effectiveUserId = userId || 'anonymous';
+    const schedule = getUserSchedule(effectiveUserId);
+    const todayName = getTodayDayName();
+
+    // Build busy slots array from existing schedule for conflict-aware AI
+    const busySlots = [];
+    for (const [day, events] of Object.entries(schedule)) {
+      if (Array.isArray(events) && events.length > 0) {
+        for (const ev of events) {
+          if (ev.startTime && ev.endTime) {
+            busySlots.push({
+              day,
+              startTime: ev.startTime,
+              endTime: ev.endTime,
+              title: ev.title || ''
+            });
+          }
+        }
+      }
+    }
+
+    // Parse the text using AI (same engine as /api/parse-schedule, with schedule context)
+    const parsedResult = await parseWithGemini(text, { busySlots, schedule });
     
     // Handle Shabbat block response from AI
     if (parsedResult.isBlocked === true) {
@@ -1730,10 +1752,7 @@ app.post('/api/events/quick-add', aiLimiter, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Could not parse any events from the provided text.' });
     }
 
-    // Get the user's schedule
-    const effectiveUserId = userId || 'anonymous';
-    const schedule = getUserSchedule(effectiveUserId);
-    const todayName = getTodayDayName();
+    // (schedule already loaded above)
 
     const addedEvents = [];
     const shabbatFilteredEvents = [];

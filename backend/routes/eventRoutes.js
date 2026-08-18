@@ -452,8 +452,29 @@ router.post('/siri', async (req, res) => {
       });
     }
 
-    // ── Parse the text using AI ──
-    const parsedResult = await parseWithGemini(text);
+    // ── Get the user's schedule for context-aware AI ──
+    const schedule = getUserSchedule(userId);
+    const todayName = getTodayDayName();
+
+    // Build busy slots array from existing schedule for conflict-aware AI
+    const busySlots = [];
+    for (const [day, events] of Object.entries(schedule)) {
+      if (Array.isArray(events) && events.length > 0) {
+        for (const ev of events) {
+          if (ev.startTime && ev.endTime) {
+            busySlots.push({
+              day,
+              startTime: ev.startTime,
+              endTime: ev.endTime,
+              title: ev.title || ''
+            });
+          }
+        }
+      }
+    }
+
+    // ── Parse the text using AI (with schedule context) ──
+    const parsedResult = await parseWithGemini(text, { busySlots, schedule });
 
     // Handle Shabbat block response from AI
     if (parsedResult.isBlocked === true) {
@@ -470,9 +491,7 @@ router.post('/siri', async (req, res) => {
       });
     }
 
-    // ── Get the user's schedule ──
-    const schedule = getUserSchedule(userId);
-    const todayName = getTodayDayName();
+    // (schedule already loaded above)
 
     const addedEvents = [];
     const shabbatFilteredEvents = [];
