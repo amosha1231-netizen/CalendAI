@@ -24,9 +24,18 @@ const clearJwtToken = () => {
 };
 
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null);
+  const [user, setUser] = useState(() => {
+    try {
+      const savedUser = safeStorage.getItem('calendai-user');
+      return savedUser ? JSON.parse(savedUser) : null;
+    } catch (e) {
+      return null;
+    }
+  });
   const [isPro, setIsPro] = useState(false);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    return Boolean(getJwtToken());
+  });
   const [authLoading, setAuthLoading] = useState(true); // true until first auth check completes
   const [authStatus, setAuthStatus] = useState('checking'); // 'checking' | 'authenticated' | 'guest'
 
@@ -84,19 +93,23 @@ export function AuthProvider({ children }) {
         validateStatus: false
       });
 
-      // ── 401 Unauthorized → clear token, mark as guest ──
+      // ── 401 Unauthorized → clear everything, mark as guest ──
       if (res.status === 401) {
         clearJwtToken();
         safeStorage.removeItem('calendai-isLoggedIn');
+        safeStorage.removeItem('calendai-user');
+        setUser(null);
+        setIsAuthenticated(false);
         setAuthStatus('guest');
         setAuthLoading(false);
         return;
       }
 
-      // ── Any server error (5xx, 4xx) → guest, do NOT retry ──
+      // ── Any server error (5xx, 4xx that is not 401) → token may be valid but server is down/temp error
+      // Do NOT clear token, do NOT log out user. Keep existing state.
       if (res.status >= 400) {
-        const token = getJwtToken();
-        setAuthStatus(token ? 'authenticated' : 'guest');
+        // Keep the token and user data - server might be waking up or having a transient error
+        setAuthStatus('authenticated');
         setAuthLoading(false);
         return;
       }
@@ -108,6 +121,11 @@ export function AuthProvider({ children }) {
         setIsPro(data.user?.isPro === true || data.user?.isPro === 'true');
         setIsAuthenticated(true);
         setAuthStatus('authenticated');
+
+        // Save user data to localStorage for persistence across app restarts
+        try {
+          safeStorage.setItem('calendai-user', JSON.stringify(data.user));
+        } catch (e) {}
 
         // Exchange session for a JWT token to persist login
         try {
@@ -224,21 +242,31 @@ export function AuthProvider({ children }) {
           validateStatus: false
         });
         if (res.status === 200 && res.data) {
-          setUser(res.data.user || res.data);
+          const userData = res.data.user || res.data;
+          setUser(userData);
           setIsAuthenticated(true);
           setAuthStatus('authenticated');
-        } else {
-          // Non-200 response → token invalid, clear and treat as guest
+          // Save user data to localStorage for persistence
+          try {
+            safeStorage.setItem('calendai-user', JSON.stringify(userData));
+          } catch (e) {}
+        } else if (res.status === 401) {
+          // 401 Unauthorized → token expired/invalid, clear and treat as guest
           clearJwtToken();
           safeStorage.removeItem('calendai-isLoggedIn');
+          safeStorage.removeItem('calendai-user');
+          setUser(null);
+          setIsAuthenticated(false);
           setAuthStatus('guest');
+        } else {
+          // Any other server error (5xx, 4xx not 401) → server may be waking up
+          // Keep the existing user session, don't clear anything
+          setAuthStatus('authenticated');
         }
       } catch (err) {
-        console.warn('Auth check failed', err);
-        setIsAuthenticated(false);
-        setUser(null);
-        // Network error → keep the token, but treat as guest for UI purposes
-        setAuthStatus('guest');
+        // Network error → keep existing auth state, don't clear anything
+        console.warn('Auth check failed (network error):', err);
+        setAuthStatus('authenticated');
       } finally {
         setAuthLoading(false);
       }
