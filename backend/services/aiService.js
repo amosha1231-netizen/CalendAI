@@ -17,13 +17,27 @@ function initModel() {
     genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
     model = genAI.getGenerativeModel({
       model: 'gemini-1.5-flash',
-      systemInstruction: `אתה עוזר אישי חכם (Executive Assistant) בעל אינטליגנציה רגשית והגיון בריא. תפקידך לנהל לו"ז יומי ושבועי עבור המשתמש.
+      systemInstruction: `You are an intelligent calendar assistant for the "CalendAI" app.
+Your job is to parse free-text requests in Hebrew and return a JSON array of events to be scheduled.
 
-עקרונות מרכזיים:
-1. **זיקוק כותרת (Clean Core Intent):** חלץ רק את שם הפעילות הנקי. הסר מילות יחס, פעלים, ביטויי זמן ומשך.
-2. **משך זמן אנושי:** מנוחה/הפסקה = 15 דקות. אימון/שיעור/פגישה = 60 דקות. סידור/קפה = 30 דקות. שינה = 8 שעות (23:00-07:00).
-3. **חלונות זמן:** בוקר 07:30-11:00, אחה"צ 13:00-17:00, ערב 18:00-21:30. לעולם אל תקבע בלילה (22:30-07:00).
-4. **מניעת חפיפות:** בדוק מול busySlots לפני קביעת אירוע.`,
+CRITICAL RULES:
+1. SHABBAT GUARD: You are STRICTLY FORBIDDEN from scheduling any events on Saturday (Shabbat). If a user explicitly requests an event on Saturday, do NOT return any events. Instead, return a JSON with an error message:
+{ "error": "שבת שלום! המערכת שומרת שבת ולא ניתן לקבוע אירועים ביום זה. נשמח לתאם ליום חול או למוצאי השבת." }
+
+2. MULTIPLE EVENTS: If the user asks for a recurring or multiple events (e.g., "3 אימונים השבוע בבוקר"), you MUST generate an array of multiple distinct events spread across the upcoming week (e.g., Sunday, Tuesday, Thursday). Do not group them into one event.
+
+3. SMART NAMING: The "title" of the event should be clean and actionable. Do not include the time or frequency in the title itself. (e.g., if the user says "3 אימונים השבוע בבוקר", the title for each event should just be "אימון בוקר" or "אימון").
+
+Return ONLY valid JSON in this format:
+{
+  "events": [
+    { "title": "string", "day": "string (e.g., Sunday)", "startTime": "HH:MM AM/PM", "endTime": "HH:MM AM/PM" }
+  ]
+}
+OR if it's Saturday:
+{
+  "error": "string"
+}`,
       generationConfig: {
         temperature: 0.3,
         responseMimeType: 'application/json'
@@ -121,6 +135,16 @@ async function parseWithGemini(text, options = {}) {
     4. For the current day (Today = ${todayEnglish}), only consider future time windows (from the current time ${currentTimeString} onward).
     5. Prefer the EARLIEST available free window that accommodates the requested duration.
     6. If absolutely no free window exists on the requested day, suggest the next available day.
+
+    ═════════════════════════════════════════════════════
+    CRITICAL RULES — SHABBAT GUARD, MULTIPLE EVENTS, SMART NAMING
+    ═════════════════════════════════════════════════════
+    1. **SHABBAT GUARD**: You are STRICTLY FORBIDDEN from scheduling any events on Saturday (Shabbat). If a user explicitly requests an event on Saturday, do NOT return any events. Instead, return a JSON with an error message:
+    { "error": "שבת שלום! המערכת שומרת שבת ולא ניתן לקבוע אירועים ביום זה. נשמח לתאם ליום חול או למוצאי השבת." }
+
+    2. **MULTIPLE EVENTS**: If the user asks for a recurring or multiple events (e.g., "3 אימונים השבוע בבוקר"), you MUST generate an array of multiple distinct events spread across the upcoming week (e.g., Sunday, Tuesday, Thursday). Do not group them into one event.
+
+    3. **SMART NAMING**: The "title" of the event should be clean and actionable. Do not include the time or frequency in the title itself. (e.g., if the user says "3 אימונים השבוע בבוקר", the title for each event should just be "אימון בוקר" or "אימון").
 
     ═════════════════════════════════════════════════════
     SYSTEM INSTRUCTIONS
@@ -272,14 +296,10 @@ async function parseWithGemini(text, options = {}) {
 
     **What to do when a user requests a Shabbat event**:
     - If ANY parsed event falls within Shabbat (Friday after 16:00 or any time Saturday), you MUST NOT return that event.
-    - Instead, include the following blocking structure in the JSON output:
+    - Instead, return ONLY:
+    { "error": "שבת שלום! המערכת שומרת שבת ולא ניתן לקבוע אירועים ביום זה. נשמח לתאם ליום חול או למוצאי השבת." }
 
-    {
-      "isBlocked": true,
-      "blockedMessage": "האפליקציה אינה קובעת פגישות במהלך השבת. נשמח לתאם מועד לפני כניסת השבת או במוצאי השבת."
-    }
-
-    When isBlocked is true, do NOT include an "events" array (or include an empty one). The system will recognize the isBlocked flag and display the blockedMessage to the user.
+    Return ONLY this error object. Do NOT include an "events" array or any other fields.
 
     **Detection tips**:
     - If the user says "שבת", "יום שבת", "Saturday", "שישי בערב" (Friday evening), these are all shabbat-time indicators.
@@ -714,7 +734,17 @@ async function parseWithGemini(text, options = {}) {
       }));
     }
 
-    // Handle Shabbat block response
+    // Handle Shabbat error response (new format: { "error": "..." })
+    if (parsed.error && typeof parsed.error === 'string') {
+      return {
+        isBlocked: true,
+        blockedMessage: parsed.error,
+        events: [],
+        replyMessage: parsed.error
+      };
+    }
+
+    // Handle Shabbat block response (legacy format: { "isBlocked": true, "blockedMessage": "..." })
     if (parsed.isBlocked === true) {
       return {
         isBlocked: true,
@@ -727,6 +757,19 @@ async function parseWithGemini(text, options = {}) {
     // Handle the new structure with reasoning field
     if (parsed.reasoning && parsed.events && parsed.replyMessage) {
       return parsed;
+    }
+
+    // Handle simple format: just { "events": [...] } without reasoning/replyMessage
+    if (parsed.events && Array.isArray(parsed.events) && parsed.events.length > 0) {
+      const count = parsed.events.length;
+      return {
+        reasoning: isEnglish ? `Parsed ${count} event(s) from the request.` : `נ przeanalizowano ${count} אירועים מהבקשה.`,
+        replyMessage: isEnglish ? `Added ${count} new event(s).` : `נוספו ${count} אירועים חדשים.`,
+        events: parsed.events.map(ev => ({
+          ...ev,
+          title: cleanTitle(ev.title || text)
+        }))
+      };
     }
 
     // Graceful fallback: if the model returned events in an unexpected format
