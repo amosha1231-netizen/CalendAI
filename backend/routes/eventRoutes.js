@@ -1,5 +1,6 @@
 // ──────────────────────────────────────────────
 // Event Routes - Siri / iOS Shortcuts Integration
+// Multi-Tenancy Isolation: All events are scoped to the authenticated user.
 // ──────────────────────────────────────────────
 const express = require('express');
 const router = express.Router();
@@ -34,6 +35,33 @@ const userSchema = new mongoose.Schema({
 
 // Use existing model if already compiled, otherwise create it
 const User = mongoose.models.User || mongoose.model('User', userSchema);
+
+// ── Event Model (Multi-Tenancy Isolated) ──
+const eventSchema = new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+  title: { type: String, required: true },
+  day: { type: String, required: true }, // Sunday, Monday, ...
+  startTime: { type: String },
+  endTime: { type: String },
+  recurrence: { type: String, default: 'once' },
+  location: { type: String, default: 'jerusalem' },
+  eventType: { type: String, default: 'activity' },
+  duration: { type: Number, default: 60 },
+  isSleep: { type: Boolean, default: false },
+  isReminder: { type: Boolean, default: false },
+  reminderMinutesBefore: { type: Number, default: 0 },
+  targetDate: { type: Date },
+  createdMonth: { type: Number },
+  hasAdvice: { type: Boolean, default: false },
+  aiAdvice: { type: String },
+  guestName: { type: String },
+  bookingId: { type: String },
+  recurrenceEndType: { type: String, default: 'never' },
+  recurrenceEndDate: { type: String },
+  createdAt: { type: Date, default: Date.now }
+});
+
+const Event = mongoose.models.Event || mongoose.model('Event', eventSchema);
 
 // ── Helper: Check Shabbat Block ──
 function isShabbatTime(date) {
@@ -121,10 +149,246 @@ function syncTodayWithCurrentDay(schedule) {
   return schedule;
 }
 
+// ── Helper: Extract authenticated user ID from request ──
+// Supports both JWT Bearer tokens and session-based (passport) auth.
+function extractUserId(req) {
+  // 1. JWT Bearer token
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    try {
+      const token = authHeader.split(' ')[1];
+      const decoded = jwt.verify(token, JWT_SECRET);
+      if (decoded && decoded.id) return decoded.id;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  // 2. Session-based auth (passport)
+  if (req.isAuthenticated && req.isAuthenticated()) {
+    const sessionUser = req.session?.passport?.user;
+    const userId = sessionUser?._id || sessionUser?.id || sessionUser?.googleId;
+    if (userId) return userId;
+  }
+
+  return null;
+}
+
+// ──────────────────────────────────────────────
+// GET /api/events
+// Fetch ALL events for the authenticated user, sorted by startTime.
+// Multi-Tenancy: Events are strictly filtered by userId.
+// ──────────────────────────────────────────────
+router.get('/', async (req, res) => {
+  try {
+    const userId = extractUserId(req);
+    if (!userId) {
+      return res.status(401).json({ error: 'Authentication required. Please log in.' });
+    }
+
+    let query = { userId };
+
+    // Optional day filter
+    if (req.query.day) {
+      query.day = req.query.day;
+    }
+
+    const events = await Event.find(query).sort({ startTime: 1 });
+    res.json({ events });
+  } catch (error) {
+    console.error('[GET /api/events] Error:', error);
+    res.status(500).json({ error: 'Failed to fetch events.' });
+  }
+});
+
+// ──────────────────────────────────────────────
+// POST /api/events
+// Create a new event. The event is ALWAYS saved with the authenticated user's ID.
+// ──────────────────────────────────────────────
+router.post('/', async (req, res) => {
+  try {
+    const userId = extractUserId(req);
+    if (!userId) {
+      return res.status(401).json({ error: 'Authentication required. Please log in.' });
+    }
+
+    const { title, day, startTime, endTime, recurrence, location, eventType, duration, isSleep, reminderMinutesBefore, targetDate } = req.body;
+
+    if (!title || !day) {
+      return res.status(400).json({ error: 'title and day are required.' });
+    }
+
+    // Check Shabbat block if startTime is provided
+    if (startTime) {
+      const dayIndex = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].indexOf(day);
+      if (dayIndex >= 0) {
+        const now = new Date();
+        const eventDate = new Date(now);
+        eventDate.setDate(now.getDate() + ((dayIndex + 7 - now.getDay()) % 7));
+
+        const timeMatch = startTime.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+        if (timeMatch) {
+          let hours = parseInt(timeMatch[1], 10);
+          const minutes = parseInt(timeMatch[2], 10);
+          if (timeMatch[3].toUpperCase() === 'PM' && hours !== 12) hours += 12;
+          if (timeMatch[3].toUpperCase() === 'AM' && hours === 12) hours = 0;
+          eventDate.setHours(hours, minutes, 0, 0);
+
+          const shabbatCheck = checkShabbatBlock(eventDate);
+          if (shabbatCheck.isBlocked) {
+            return res.status(400).json({ isBlocked: true, blockedMessage: shabbatCheck.message });
+          }
+        }
+      }
+    }
+
+    // ALWAYS bind the event to the authenticated user - never trust client-provided userId
+    const event = await Event.create({
+      userId: new mongoose.Types.ObjectId(userId),
+      title,
+      day,
+      startTime: startTime || '',
+      endTime: endTime || startTime || '',
+      recurrence: recurrence || 'once',
+      location: location || 'jerusalem',
+      eventType: eventType || 'activity',
+      duration: duration || 60,
+      isSleep: isSleep || false,
+      reminderMinutesBefore: reminderMinutesBefore || 0,
+      targetDate: targetDate ? new Date(targetDate) : undefined
+    });
+
+    // Also sync to the user's schedule object for backward compatibility
+    try {
+      const user = await User.findById(userId);
+      if (user && user.schedule) {
+        const schedule = user.schedule;
+        const actualDay = day === 'Today' ? getTodayDayName() : day;
+        if (!schedule[actualDay]) schedule[actualDay] = [];
+        schedule[actualDay].push({
+          _id: event._id,
+          title: event.title,
+          day: actualDay,
+          startTime: event.startTime,
+          endTime: event.endTime,
+          recurrence: event.recurrence,
+          location: event.location,
+          eventType: event.eventType,
+          duration: event.duration,
+          isSleep: event.isSleep,
+          reminderMinutesBefore: event.reminderMinutesBefore
+        });
+        syncTodayWithCurrentDay(schedule);
+        await User.findByIdAndUpdate(userId, { schedule });
+      }
+    } catch (syncErr) {
+      console.error('[POST /api/events] Failed to sync to schedule:', syncErr.message);
+    }
+
+    res.status(201).json({ ok: true, event });
+  } catch (error) {
+    console.error('[POST /api/events] Error:', error);
+    res.status(500).json({ error: 'Failed to create event.' });
+  }
+});
+
+// ──────────────────────────────────────────────
+// PUT /api/events/:eventId
+// Update an event. Only the owner can update it.
+// ──────────────────────────────────────────────
+router.put('/:eventId', async (req, res) => {
+  try {
+    const userId = extractUserId(req);
+    if (!userId) {
+      return res.status(401).json({ error: 'Authentication required. Please log in.' });
+    }
+
+    const { eventId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(eventId)) {
+      return res.status(400).json({ error: 'Invalid event ID.' });
+    }
+
+    const updates = { ...req.body };
+    delete updates.userId; // Never allow changing ownership
+    delete updates._id;
+
+    // Find the event - MUST match both _id AND userId (ownership check)
+    const event = await Event.findOneAndUpdate(
+      { _id: eventId, userId: new mongoose.Types.ObjectId(userId) },
+      { $set: updates },
+      { new: true }
+    );
+
+    if (!event) {
+      return res.status(404).json({ error: 'Event not found or you do not have permission to edit it.' });
+    }
+
+    res.json({ ok: true, event });
+  } catch (error) {
+    console.error('[PUT /api/events/:eventId] Error:', error);
+    res.status(500).json({ error: 'Failed to update event.' });
+  }
+});
+
+// ──────────────────────────────────────────────
+// DELETE /api/events/:eventId
+// Delete an event. Ownership is strictly enforced:
+// Event is only deleted if { _id: eventId, userId: req.user._id } matches.
+// ──────────────────────────────────────────────
+router.delete('/:eventId', async (req, res) => {
+  try {
+    const userId = extractUserId(req);
+    if (!userId) {
+      return res.status(401).json({ error: 'Authentication required. Please log in.' });
+    }
+
+    const { eventId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(eventId)) {
+      return res.status(400).json({ error: 'Invalid event ID.' });
+    }
+
+    // Multi-Tenancy: delete ONLY if the event belongs to this user
+    const deleted = await Event.findOneAndDelete({
+      _id: eventId,
+      userId: new mongoose.Types.ObjectId(userId)
+    });
+
+    if (!deleted) {
+      return res.status(404).json({ error: 'Event not found or you do not have permission to delete it.' });
+    }
+
+    // Also remove from the user's schedule array
+    try {
+      const user = await User.findById(userId);
+      if (user && user.schedule) {
+        const schedule = user.schedule;
+        for (const dayKey of Object.keys(schedule)) {
+          if (Array.isArray(schedule[dayKey])) {
+            schedule[dayKey] = schedule[dayKey].filter(ev => {
+              const evId = ev._id ? ev._id.toString() : ev.id;
+              return evId !== eventId;
+            });
+          }
+        }
+        syncTodayWithCurrentDay(schedule);
+        await User.findByIdAndUpdate(userId, { schedule });
+      }
+    } catch (syncErr) {
+      console.error('[DELETE /api/events/:eventId] Failed to sync schedule:', syncErr.message);
+    }
+
+    res.json({ ok: true, message: 'Event deleted.' });
+  } catch (error) {
+    console.error('[DELETE /api/events/:eventId] Error:', error);
+    res.status(500).json({ error: 'Failed to delete event.' });
+  }
+});
+
 // ──────────────────────────────────────────────
 // POST /api/events/siri
 // Siri / iOS Shortcuts endpoint: accepts text + userEmail,
 // parses with AI, saves to schedule, returns voice-friendly response.
+// Multi-Tenancy: Events are saved under the userId resolved from the email.
 // ──────────────────────────────────────────────
 router.post('/siri', async (req, res) => {
   try {
@@ -142,9 +406,9 @@ router.post('/siri', async (req, res) => {
       });
     }
 
-    // ── Find user by email ──
+    // ── Find user by email - events are ALWAYS tied to the found user's ID ──
     let user = null;
-    let userId = 'anonymous';
+    let userId = null;
     try {
       user = await User.findOne({ email: userEmail.toLowerCase().trim() });
       if (user) {
@@ -152,7 +416,12 @@ router.post('/siri', async (req, res) => {
       }
     } catch (err) {
       console.error('[Siri Route] Error finding user:', err.message);
-      // Continue with anonymous user
+    }
+
+    if (!userId) {
+      return res.json({
+        response: 'לא נמצא משתמש עם האימייל הזה. אנא וודא שהאימייל מוגדר נכון ב-iCloud Shortcut.'
+      });
     }
 
     // ── Parse the text using AI ──
@@ -220,14 +489,36 @@ router.post('/siri', async (req, res) => {
         ...event,
         day,
         recurrence: eventRecurrence,
-        location: 'jerusalem'
+        location: 'jerusalem',
+        userId: userId
       };
 
-      // Add to schedule
+      // Add to schedule (per-user schedule map, keyed by userId)
       if (schedule[day]) {
         schedule[day].push(eventWithRecurrence);
       } else {
         schedule['Today'].push(eventWithRecurrence);
+      }
+
+      // Also save to the Event collection with strict userId binding
+      try {
+        const dbEvent = await Event.create({
+          userId: new mongoose.Types.ObjectId(userId),
+          title: event.title || 'אירוע',
+          day,
+          startTime: event.startTime || '',
+          endTime: event.endTime || event.startTime || '',
+          recurrence: eventRecurrence,
+          location: 'jerusalem',
+          eventType: event.eventType || 'activity',
+          duration: event.duration || 60,
+          isSleep: event.isSleep || false,
+          targetDate: event.targetDate ? new Date(event.targetDate) : undefined,
+          createdMonth: event.createdMonth
+        });
+        eventWithRecurrence._id = dbEvent._id;
+      } catch (dbErr) {
+        console.error('[Siri Route] Failed to save event to DB:', dbErr.message);
       }
 
       addedEvents.push(eventWithRecurrence);

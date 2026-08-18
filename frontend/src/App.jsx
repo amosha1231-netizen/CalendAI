@@ -186,6 +186,12 @@ function AppRoutes() {
   });
   const scheduleHistoryRef = useRef([]);
 
+  // ── Multi-Event Day View State ──
+  // Tracks which days have "show all" expanded (for the weekly cards)
+  const [expandedDays, setExpandedDays] = useState({});
+  // Tracks the day being viewed in the Day Detail Modal
+  const [dayDetailModal, setDayDetailModal] = useState(null);
+
   // Notification / Reminder State
   function getInitialNotificationPerm() {
     try {
@@ -1134,10 +1140,50 @@ function AppRoutes() {
 
   const allLocationsInEvents = [...new Set(Object.values(schedule).flat().map(e => e.location).filter(Boolean))];
 
+  // ── Helper: parse time string "HH:MM AM/PM" to minutes for sorting ──
+  const timeToSortMinutes = (timeStr) => {
+    if (!timeStr) return 0;
+    const match = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+    if (!match) return 0;
+    let hours = parseInt(match[1], 10);
+    const minutes = parseInt(match[2], 10);
+    const meridiem = match[3]?.toUpperCase();
+    if (meridiem === 'PM' && hours !== 12) hours += 12;
+    if (meridiem === 'AM' && hours === 12) hours = 0;
+    return hours * 60 + minutes;
+  };
+
+  // ── Group and sort events by day, sorted by startTime within each day ──
+  const getSortedDayEvents = (dayKey) => {
+    const dayEvents = getFilteredEvents(dayKey);
+    return [...dayEvents].sort((a, b) => {
+      const aMin = timeToSortMinutes(a.startTime);
+      const bMin = timeToSortMinutes(b.startTime);
+      return aMin - bMin;
+    });
+  };
+
   const getFilteredEvents = (dayKey) => {
     const dayEvents = schedule[dayKey] || [];
     if (locationFilter === "all") return dayEvents;
     return dayEvents.filter(e => e.location === locationFilter);
+  };
+
+  // ── Toggle expanded state for a specific day ──
+  const toggleDayExpanded = (dayKey) => {
+    setExpandedDays(prev => ({
+      ...prev,
+      [dayKey]: !prev[dayKey]
+    }));
+  };
+
+  // ── Open the Day Detail Modal for a specific day ──
+  const openDayDetail = (dayKey) => {
+    setDayDetailModal({
+      dayKey,
+      dayLabel: dayTranslations[dayKey] || dayKey,
+      events: getSortedDayEvents(dayKey)
+    });
   };
 
   // ── Dedicated OAuth callback route ──
@@ -1500,13 +1546,22 @@ function AppRoutes() {
             {orderedDayKeys.map(dayKey => {
               if (dayKey === "Today" && (!schedule[dayKey] || schedule[dayKey].length === 0)) return null;
               const dayEvents = getFilteredEvents(dayKey);
+              const sortedDayEvents = getSortedDayEvents(dayKey);
               const isTodayColumn = dayKey === todayName;
+              const maxVisible = 2;
+              const isExpanded = expandedDays[dayKey] || false;
+              const visibleEvents = isExpanded ? sortedDayEvents : sortedDayEvents.slice(0, maxVisible);
+              const hasMoreThanMax = sortedDayEvents.length > maxVisible;
               return (
                 <div key={dayKey} className={`border rounded-xl p-4 flex flex-col min-h-[150px] relative ${isTodayColumn ? 'today-column bg-blue-50 border-blue-400 ring-2 ring-blue-400 shadow-lg shadow-blue-100/50' : 'bg-slate-50 border-slate-200'}`}>
                   {isTodayColumn && (
                     <div className="today-badge">היום / Today</div>
                   )}
-                  <div className={`font-bold text-slate-700 mb-3 border-b pb-1 text-center bg-white rounded shadow-sm py-1 ${isTodayColumn ? 'border-blue-300' : ''}`}>
+                  <div
+                    className={`font-bold text-slate-700 mb-3 border-b pb-1 text-center bg-white rounded shadow-sm py-1 cursor-pointer hover:bg-slate-50 transition ${isTodayColumn ? 'border-blue-300' : ''}`}
+                    onClick={() => openDayDetail(dayKey)}
+                    title={t.dayDetailClick || 'לחץ להצגת כל האירועים'}
+                  >
                     {dayTranslations[dayKey]}
                     {dayEvents.length > 0 && <span className="text-xs text-slate-400 mr-1">({dayEvents.length})</span>}
                   </div>
@@ -1525,45 +1580,77 @@ function AppRoutes() {
                         <p className="text-xs text-slate-300 text-center my-auto font-light">{t.noEvents}</p>
                       )
                     ) : (
-                      dayEvents.map((event, index) => (
-                        <div key={index}
-                          className={`group relative bg-white p-3 rounded-lg shadow-xs border-r-4 flex flex-col gap-1 hover:shadow-md transition cursor-pointer ${event.reminderMinutesBefore > 0 ? 'border-amber-400 bg-amber-50/20' : event.isSleep ? 'border-indigo-500 bg-indigo-50/30' : 'border-blue-500'}`}
-                          onClick={() => handleOpenEditModal(dayKey, index)}>
-                          <button onClick={e => { e.stopPropagation(); handleRemoveEvent(dayKey, index); }}
-                            className="absolute -top-2 -left-2 opacity-0 group-hover:opacity-100 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center transition">
-                            <Trash2 className="w-3 h-3" />
+                      <>
+                        {visibleEvents.map((event, index) => {
+                          // Find the actual index in the original schedule array for edit/delete
+                          const actualIndex = schedule[dayKey]?.findIndex(e => e === event);
+                          return (
+                            <div key={index}
+                              className={`group relative bg-white p-3 rounded-lg shadow-xs border-r-4 flex flex-col gap-1 hover:shadow-md transition cursor-pointer ${event.reminderMinutesBefore > 0 ? 'border-amber-400 bg-amber-50/20' : event.isSleep ? 'border-indigo-500 bg-indigo-50/30' : 'border-blue-500'}`}
+                              onClick={() => actualIndex >= 0 && handleOpenEditModal(dayKey, actualIndex)}>
+                              <button onClick={e => { e.stopPropagation(); if (actualIndex >= 0) handleRemoveEvent(dayKey, actualIndex); }}
+                                className="absolute -top-2 -left-2 opacity-0 group-hover:opacity-100 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center transition">
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                              <div className="font-semibold text-sm text-slate-800 flex items-center gap-1.5">
+                                {event.isSleep && <Moon className="w-3.5 h-3.5 text-indigo-500" />}
+                                {event.reminderMinutesBefore > 0 && <Bell className="w-3.5 h-3.5 text-amber-500" />}
+                                {event.title}
+                                <Edit3 className="w-3 h-3 text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity mr-auto" />
+                              </div>
+                              <div className="flex items-center gap-1 text-xs text-slate-500 mt-1">
+                                <Clock className="w-3 h-3 text-slate-400" />
+                                <span dir="ltr">{event.startTime} - {event.endTime}</span>
+                                {event.isSleep && <span className="text-[10px] text-indigo-500 mr-1">{t.sleepLabel}</span>}
+                              </div>
+                              {event.reminderMinutesBefore > 0 && (
+                                <div className="flex items-center gap-1 text-[10px] text-amber-600">
+                                  <BellRing className="w-2.5 h-2.5" />
+                                  <span>{t.reminderColon} {event.reminderMinutesBefore} {t.reminderMinutes}</span>
+                                </div>
+                              )}
+                              {event.location && (
+                                <div className="flex items-center gap-1 text-[10px] text-slate-400 mt-0.5">
+                                  <MapPin className="w-2.5 h-2.5" />
+                                  <span>{LOCATION_LABELS[event.location] || event.location}</span>
+                                </div>
+                              )}
+                              {event.recurrence && <span className="text-[10px] text-blue-500 font-medium">{recurrenceLabels[event.recurrence] || event.recurrence}</span>}
+                              {event.hasAdvice && event.aiAdvice && (
+                                <div className="mt-1.5 bg-amber-50 border border-amber-200 rounded-lg p-2 text-xs text-amber-900">
+                                  <div className="flex items-start gap-1.5"><span className="text-sm">💡</span><span>{event.aiAdvice}</span></div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                        {hasMoreThanMax && (
+                          <div className="flex flex-col gap-1">
+                            {!isExpanded && (
+                              <button
+                                onClick={() => toggleDayExpanded(dayKey)}
+                                className="w-full text-center px-3 py-2 text-xs rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition font-medium"
+                              >
+                                {t.showAllEvents ? t.showAllEvents.replace('{count}', sortedDayEvents.length) : `הצג הכל (${sortedDayEvents.length} אירועים)`}
+                              </button>
+                            )}
+                            <button
+                              onClick={() => openDayDetail(dayKey)}
+                              className="w-full text-center px-3 py-1.5 text-xs rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition"
+                            >
+                              {t.dayDetailView || 'פירוט יומי מלא'}
+                            </button>
+                          </div>
+                        )}
+                        {isExpanded && !hasMoreThanMax && (
+                          <button
+                            onClick={() => openDayDetail(dayKey)}
+                            className="w-full text-center px-3 py-1.5 text-xs rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition"
+                          >
+                            {t.dayDetailView || 'פירוט יומי מלא'}
                           </button>
-                          <div className="font-semibold text-sm text-slate-800 flex items-center gap-1.5">
-                            {event.isSleep && <Moon className="w-3.5 h-3.5 text-indigo-500" />}
-                            {event.reminderMinutesBefore > 0 && <Bell className="w-3.5 h-3.5 text-amber-500" />}
-                            {event.title}
-                            <Edit3 className="w-3 h-3 text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity mr-auto" />
-                          </div>
-                          <div className="flex items-center gap-1 text-xs text-slate-500 mt-1">
-                            <Clock className="w-3 h-3 text-slate-400" />
-                            <span dir="ltr">{event.startTime} - {event.endTime}</span>
-                            {event.isSleep && <span className="text-[10px] text-indigo-500 mr-1">{t.sleepLabel}</span>}
-                          </div>
-                          {event.reminderMinutesBefore > 0 && (
-                            <div className="flex items-center gap-1 text-[10px] text-amber-600">
-                              <BellRing className="w-2.5 h-2.5" />
-                              <span>{t.reminderColon} {event.reminderMinutesBefore} {t.reminderMinutes}</span>
-                            </div>
-                          )}
-                          {event.location && (
-                            <div className="flex items-center gap-1 text-[10px] text-slate-400 mt-0.5">
-                              <MapPin className="w-2.5 h-2.5" />
-                              <span>{LOCATION_LABELS[event.location] || event.location}</span>
-                            </div>
-                          )}
-                          {event.recurrence && <span className="text-[10px] text-blue-500 font-medium">{recurrenceLabels[event.recurrence] || event.recurrence}</span>}
-                          {event.hasAdvice && event.aiAdvice && (
-                            <div className="mt-1.5 bg-amber-50 border border-amber-200 rounded-lg p-2 text-xs text-amber-900">
-                              <div className="flex items-start gap-1.5"><span className="text-sm">💡</span><span>{event.aiAdvice}</span></div>
-                            </div>
-                          )}
-                        </div>
-                      ))
+                        )}
+                      </>
                     )}
                   </div>
                 </div>
@@ -1806,6 +1893,106 @@ function AppRoutes() {
               <button onClick={handleEditEvent} disabled={editLoading}
                 className="flex items-center gap-2 px-5 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:bg-blue-400 transition">
                 {editLoading ? <><Loader2 className="w-4 h-4 animate-spin" /> {t.update}</> : <><Check className="w-4 h-4" /> {t.saveChanges}</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Day Detail Modal ── */}
+      {dayDetailModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" onClick={() => setDayDetailModal(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4 shrink-0">
+              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                <CalendarDays className="w-5 h-5 text-blue-600" />
+                {t.dayDetailTitle || 'פירוט יומי'}: {dayDetailModal.dayLabel}
+                <span className="text-sm font-normal text-slate-400">({dayDetailModal.events.length} {t.dayDetailEvents || 'אירועים'})</span>
+              </h3>
+              <button onClick={() => setDayDetailModal(null)} className="p-1 rounded-full hover:bg-slate-100">
+                <X className="w-5 h-5 text-slate-500" />
+              </button>
+            </div>
+
+            {dayDetailModal.events.length === 0 ? (
+              <div className="flex-1 flex items-center justify-center">
+                <p className="text-sm text-slate-400">{t.noEvents}</p>
+              </div>
+            ) : (
+              <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+                {dayDetailModal.events.map((event, index) => {
+                  // Find the actual index in the original schedule array for edit/delete
+                  const actualIndex = schedule[dayDetailModal.dayKey]?.findIndex(e => e === event);
+                  return (
+                    <div key={index}
+                      className={`group relative bg-white p-4 rounded-xl border-r-4 flex flex-col gap-2 hover:shadow-md transition cursor-pointer ${
+                        event.reminderMinutesBefore > 0 ? 'border-amber-400 bg-amber-50/20' :
+                        event.isSleep ? 'border-indigo-500 bg-indigo-50/30' :
+                        'border-blue-500'
+                      }`}
+                      onClick={() => { if (actualIndex >= 0) { setDayDetailModal(null); handleOpenEditModal(dayDetailModal.dayKey, actualIndex); } }}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="font-semibold text-sm text-slate-800 flex items-center gap-1.5 flex-1 min-w-0">
+                          {event.isSleep && <Moon className="w-3.5 h-3.5 text-indigo-500 shrink-0" />}
+                          {event.reminderMinutesBefore > 0 && <Bell className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
+                          <span className="truncate">{event.title}</span>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          {actualIndex >= 0 && (
+                            <button
+                              onClick={e => { e.stopPropagation(); handleRemoveEvent(dayDetailModal.dayKey, actualIndex); setDayDetailModal(prev => prev ? { ...prev, events: prev.events.filter((_, i) => i !== index) } : null); }}
+                              className="p-1.5 rounded-lg bg-red-50 text-red-500 hover:bg-red-100 transition opacity-0 group-hover:opacity-100"
+                              title={t.delete || 'מחק'}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          <Edit3 className="w-3.5 h-3.5 text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity" />
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1 text-xs text-slate-500">
+                        <Clock className="w-3 h-3 text-slate-400" />
+                        <span dir="ltr" className="font-medium">{event.startTime} - {event.endTime}</span>
+                        {event.isSleep && <span className="text-[10px] text-indigo-500 mr-1 bg-indigo-100 px-1.5 py-0.5 rounded">{t.sleepLabel}</span>}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-slate-400">
+                        {event.location && (
+                          <span className="flex items-center gap-1">
+                            <MapPin className="w-2.5 h-2.5" />
+                            {LOCATION_LABELS[event.location] || event.location}
+                          </span>
+                        )}
+                        {event.recurrence && (
+                          <span className="text-blue-500 font-medium">{recurrenceLabels[event.recurrence] || event.recurrence}</span>
+                        )}
+                        {event.reminderMinutesBefore > 0 && (
+                          <span className="flex items-center gap-1 text-amber-600">
+                            <BellRing className="w-2.5 h-2.5" />
+                            {t.reminderColon} {event.reminderMinutesBefore} {t.reminderMinutes}
+                          </span>
+                        )}
+                      </div>
+                      {event.hasAdvice && event.aiAdvice && (
+                        <div className="bg-amber-50 border border-amber-200 rounded-lg p-2 text-xs text-amber-900">
+                          <div className="flex items-start gap-1.5"><span className="text-sm">💡</span><span>{event.aiAdvice}</span></div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <div className="mt-4 pt-3 border-t border-slate-100 shrink-0 flex items-center justify-between">
+              <p className="text-xs text-slate-400">
+                {t.dayDetailTotal || 'סה"כ'} {dayDetailModal.events.length} {t.dayDetailEvents || 'אירועים'}
+              </p>
+              <button
+                onClick={() => setDayDetailModal(null)}
+                className="px-4 py-2 text-sm text-slate-600 hover:text-slate-800 bg-slate-50 hover:bg-slate-100 rounded-lg transition"
+              >
+                {t.close || 'סגור'}
               </button>
             </div>
           </div>
