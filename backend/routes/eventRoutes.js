@@ -86,6 +86,18 @@ function checkShabbatBlock(startDate) {
   return { isBlocked: false, message: '' };
 }
 
+/**
+ * Day-based Shabbat guard: checks if the event day name is Saturday (שבת).
+ * This is a hard guard that works regardless of time-based checks.
+ * @param {string} day - The day name (e.g., "Saturday", "שבת")
+ * @returns {boolean} - True if the day is Shabbat/Saturday.
+ */
+function isShabbat(day) {
+  if (!day) return false;
+  const d = day.toLowerCase();
+  return d.includes('שבת') || d.includes('saturday');
+}
+
 // ── Helper: Load schedule from User model or file ──
 const fs = require('fs');
 const path = require('path');
@@ -218,6 +230,14 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'title and day are required.' });
     }
 
+    // ── HARD SHABBAT GUARD: Block event creation on Saturday ──
+    if (isShabbat(day)) {
+      return res.status(400).json({
+        isBlocked: true,
+        blockedMessage: 'שבת שלום 🕯️ המערכת אינה מאפשרת קביעת פעילויות בשבת. נשמח לתאם למוצאי השבת או ליום חול.'
+      });
+    }
+
     // Check Shabbat block if startTime is provided
     if (startTime) {
       const dayIndex = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].indexOf(day);
@@ -311,6 +331,14 @@ router.put('/:eventId', async (req, res) => {
     const updates = { ...req.body };
     delete updates.userId; // Never allow changing ownership
     delete updates._id;
+
+    // ── HARD SHABBAT GUARD: Block updating event to Saturday ──
+    if (updates.day && isShabbat(updates.day)) {
+      return res.status(400).json({
+        isBlocked: true,
+        blockedMessage: 'שבת שלום 🕯️ המערכת אינה מאפשרת קביעת פעילויות בשבת. נשמח לתאם למוצאי השבת או ליום חול.'
+      });
+    }
 
     // Find the event - MUST match both _id AND userId (ownership check)
     const event = await Event.findOneAndUpdate(
@@ -447,11 +475,19 @@ router.post('/siri', async (req, res) => {
     const todayName = getTodayDayName();
 
     const addedEvents = [];
+    const shabbatFilteredEvents = [];
 
     for (const event of parsedEvents) {
       let day = event.day || todayName;
       if (day === 'Today') {
         day = todayName;
+      }
+
+      // ── HARD SHABBAT GUARD: Filter out any event scheduled on Saturday ──
+      if (isShabbat(day)) {
+        console.warn(`[Siri Shabbat Guard] Blocked event "${event.title}" with day "${day}".`);
+        shabbatFilteredEvents.push(event);
+        continue;
       }
 
       // Check Shabbat block for the event
@@ -522,6 +558,13 @@ router.post('/siri', async (req, res) => {
       }
 
       addedEvents.push(eventWithRecurrence);
+    }
+
+    // If ALL events were filtered out for Shabbat, return a friendly message
+    if (addedEvents.length === 0 && shabbatFilteredEvents.length > 0) {
+      return res.json({
+        response: 'שבת שלום 🕯️ המערכת אינה מאפשרת קביעת פעילויות בשבת. נשמח לתאם למוצאי השבת או ליום חול.'
+      });
     }
 
     syncTodayWithCurrentDay(schedule);
