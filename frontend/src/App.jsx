@@ -1512,7 +1512,18 @@ function AppRoutes() {
                   </div>
                   <div className="flex-1 flex flex-col gap-2">
                     {dayEvents.length === 0 ? (
-                      <p className="text-xs text-slate-300 text-center my-auto font-light">{t.noEvents}</p>
+                      dayKey === 'Saturday' ? (
+                        <div className="text-center py-4 px-3 bg-blue-50/50 dark:bg-slate-800/50 rounded-xl border border-blue-100 dark:border-slate-700/50">
+                          <p className="text-base font-semibold text-blue-900 dark:text-blue-200">
+                            שבת שלום 🕯️🕯️
+                          </p>
+                          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                            נחזור לפעילות במוצאי השבת
+                          </p>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-slate-300 text-center my-auto font-light">{t.noEvents}</p>
+                      )
                     ) : (
                       dayEvents.map((event, index) => (
                         <div key={index}
