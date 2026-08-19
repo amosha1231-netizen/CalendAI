@@ -963,7 +963,7 @@ app.post('/api/auth/register', async (req, res) => {
         displayName: user.displayName
       },
       JWT_SECRET,
-      { expiresIn: '90d' }
+      { expiresIn: '7d' }
     );
 
     res.status(201).json({
@@ -1017,7 +1017,7 @@ app.post('/api/auth/login', async (req, res) => {
         displayName: user.displayName
       },
       JWT_SECRET,
-      { expiresIn: '90d' }
+      { expiresIn: '7d' }
     );
 
     res.json({
@@ -1061,7 +1061,7 @@ app.post('/api/auth/token', (req, res) => {
       photo: sessionUser.photo
     },
     JWT_SECRET,
-    { expiresIn: '90d' }
+    { expiresIn: '7d' }
   );
   res.json({ token, user: sessionUser });
 });

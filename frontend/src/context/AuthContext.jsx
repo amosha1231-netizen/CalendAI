@@ -236,6 +236,27 @@ export function AuthProvider({ children }) {
         setAuthLoading(false);
         return;
       }
+
+      // ── IMMEDIATE PERSISTENCE: Token exists → mark auth as true right away ──
+      // This prevents the flash of "loading" state on every page refresh.
+      // The user data will be fetched in the background and updated when ready.
+      setIsAuthenticated(true);
+      setAuthLoading(false);
+      setAuthStatus('authenticated');
+
+      // Try to restore cached user data from localStorage for instant display
+      try {
+        const cachedUser = safeStorage.getItem('calendai-user');
+        if (cachedUser) {
+          const parsed = JSON.parse(cachedUser);
+          setUser(parsed);
+          setIsPro(parsed?.isPro === true || parsed?.isPro === 'true');
+        }
+      } catch (e) {}
+
+      // ── Background fetch: refresh user data from server ──
+      // This runs asynchronously — the UI is already marked as authenticated
+      // so the user sees the dashboard immediately while data refreshes in the background.
       try {
         const res = await api.get(`/api/auth/me?t=${Date.now()}`, {
           cache: 'no-store',
@@ -258,17 +279,13 @@ export function AuthProvider({ children }) {
           setUser(null);
           setIsAuthenticated(false);
           setAuthStatus('guest');
-        } else {
-          // Any other server error (5xx, 4xx not 401) → server may be waking up
-          // Keep the existing user session, don't clear anything
-          setAuthStatus('authenticated');
         }
+        // On any other status (5xx, etc.) — keep the optimistic auth state;
+        // the user stays logged in with cached data until the server recovers.
       } catch (err) {
         // Network error → keep existing auth state, don't clear anything
         console.warn('Auth check failed (network error):', err);
-        setAuthStatus('authenticated');
-      } finally {
-        setAuthLoading(false);
+        // auth state remains 'authenticated' from the optimistic set above
       }
     };
 
