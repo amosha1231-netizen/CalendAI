@@ -3204,6 +3204,10 @@ app.get('/api/schedule/analytics', async (req, res) => {
 const eventRoutes = require('./routes/eventRoutes');
 app.use('/api/events', eventRoutes);
 
+// ── Lemon Squeezy Payment Routes ──
+const paymentRoutes = require('./routes/paymentRoutes');
+app.use('/api/payments', paymentRoutes);
+
 // ──────────────────────────────────────────────
 // 11. Health & Fallback
 // ──────────────────────────────────────────────

@@ -222,6 +222,42 @@ function AppRoutes() {
   // ── AI Credits (PAYG) State ──
   const [showCreditsModal, setShowCreditsModal] = useState(false);
   const [creditsError, setCreditsError] = useState("");
+  const [checkoutLoading, setCheckoutLoading] = useState(false);
+
+  // ── Lemon Squeezy Checkout Handler ──
+  const handleBuyCredits = useCallback(async () => {
+    if (!user) {
+      setShowLoginPrompt(true);
+      return;
+    }
+    setCheckoutLoading(true);
+    setError("");
+    try {
+      const token = safeStorage.getItem('token') || safeStorage.getItem('calendai-jwt');
+      const res = await fetch(`${API_BASE}/api/payments/create-checkout`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
+        credentials: "include"
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || lang === 'he' ? 'שגיאה ביצירת דף התשלום.' : 'Failed to create checkout session.');
+      }
+      if (data.url) {
+        // Redirect to Lemon Squeezy checkout page
+        window.location.href = data.url;
+      } else {
+        throw new Error('Invalid response from server.');
+      }
+    } catch (err) {
+      console.error('Checkout error:', err);
+      setError(err.message);
+      setCheckoutLoading(false);
+    }
+  }, [user, lang, setShowLoginPrompt, setError]);
 
   // Meeting Wizard State
   const [showWizard, setShowWizard] = useState(false);
@@ -1447,9 +1483,22 @@ function AppRoutes() {
             />
             {/* ── AI Credits Balance (PAYG) — subtle badge ── */}
             {user && user.aiCredits !== undefined && user.aiCredits !== null && (
-              <div className={`absolute top-2 ${isRTL ? 'left-2' : 'right-2'} flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded-full ${user.aiCredits > 0 ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-red-50 text-red-600 border border-red-200'}`}>
-                <span className="text-xs">⚡</span>
-                <span dir="rtl">{user.aiCredits > 0 ? `נותרו לך ${user.aiCredits} פעולות AI` : 'נגמרו הקרדיטים!'}</span>
+              <div className={`absolute top-2 ${isRTL ? 'left-2' : 'right-2'} flex items-center gap-2`}>
+                <div className={`flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded-full ${user.aiCredits > 0 ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-red-50 text-red-600 border border-red-200'}`}>
+                  <span className="text-xs">⚡</span>
+                  <span dir="rtl">{user.aiCredits > 0 ? `נותרו לך ${user.aiCredits} פעולות AI` : 'נגמרו הקרדיטים!'}</span>
+                </div>
+                <button
+                  onClick={handleBuyCredits}
+                  disabled={checkoutLoading}
+                  className="flex items-center gap-1 text-[11px] font-medium px-2.5 py-1 rounded-full bg-gradient-to-r from-purple-600 to-indigo-600 text-white border border-purple-500 hover:from-purple-700 hover:to-indigo-700 transition shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {checkoutLoading ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <span>⚡ {lang === 'he' ? 'רכוש 100 קרדיטים' : 'Buy 100 credits'}</span>
+                  )}
+                </button>
               </div>
             )}
             {!inputText && (
