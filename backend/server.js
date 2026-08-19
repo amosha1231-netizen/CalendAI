@@ -108,6 +108,7 @@ const userSchema = new mongoose.Schema({
   photo: { type: String },
   isPro: { type: Boolean, default: false },
   stripeCustomerId: { type: String },
+  aiCredits: { type: Number, default: 15 }, // Freemium: 15 free AI credits for new users
   schedule: {
     type: mongoose.Schema.Types.Mixed,
     default: {
@@ -289,7 +290,8 @@ if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET &&
             displayName: dbUser.displayName,
             photo: dbUser.photo,
             isPro: dbUser.isPro,
-            stripeCustomerId: dbUser.stripeCustomerId
+            stripeCustomerId: dbUser.stripeCustomerId,
+            aiCredits: dbUser.aiCredits
           };
         }
       } else {
@@ -303,7 +305,8 @@ if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET &&
             displayName: dbUser.displayName,
             photo: dbUser.photo,
             isPro: dbUser.isPro,
-            stripeCustomerId: dbUser.stripeCustomerId
+            stripeCustomerId: dbUser.stripeCustomerId,
+            aiCredits: dbUser.aiCredits
           };
         }
       }
@@ -353,11 +356,74 @@ function getDefaultSchedule() {
 }
 
 function getUserId(req) {
+  // 1. JWT Bearer token auth (email/password users)
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    try {
+      const token = authHeader.split(' ')[1];
+      const decoded = jwt.verify(token, JWT_SECRET);
+      if (decoded && decoded.id) return decoded.id;
+    } catch (err) {
+      // Invalid token - fall through to session check
+    }
+  }
+  // 2. Session-based auth (passport / Google OAuth)
   if (req.isAuthenticated && req.isAuthenticated()) {
     const fullUser = req.session?.passport?.user;
     return fullUser?._id || fullUser?.id || fullUser?.googleId || 'anonymous';
   }
   return 'anonymous';
+}
+
+// ──────────────────────────────────────────────
+// AI Credit System (Pay As You Go / PAYG)
+// ──────────────────────────────────────────────
+
+/**
+ * Check if the user has AI credits remaining.
+ * Anonymous/guest users are NOT subject to credit enforcement —
+ * guest usage limits are handled on the frontend.
+ * @returns {Promise<{allowed: boolean, credits: number|null, error?: string}>}
+ */
+async function checkAICredits(userId) {
+  if (!mongoose.Types.ObjectId.isValid(userId)) {
+    return { allowed: true, credits: null };
+  }
+  try {
+    const user = await User.findById(userId);
+    if (!user) return { allowed: true, credits: null };
+    const credits = user.aiCredits;
+    if (credits === undefined || credits === null || credits > 0) {
+      return { allowed: true, credits };
+    }
+    return {
+      allowed: false,
+      credits: 0,
+      error: 'נגמרו לך הקרדיטים! אנא רכוש חבילת פעולות נוספת כדי להמשיך להשתמש ב-AI.'
+    };
+  } catch (err) {
+    console.error('Failed to check AI credits:', err.message);
+    return { allowed: true, credits: null }; // Fail-open on DB errors
+  }
+}
+
+/**
+ * Deduct 1 AI credit from the user. Only called AFTER a successful AI request.
+ * @returns {Promise<number|null>} The remaining credits, or null if not applicable.
+ */
+async function deductAICredit(userId) {
+  if (!mongoose.Types.ObjectId.isValid(userId)) return null;
+  try {
+    const updated = await User.findByIdAndUpdate(
+      userId,
+      { $inc: { aiCredits: -1 } },
+      { new: true }
+    );
+    return updated?.aiCredits ?? null;
+  } catch (err) {
+    console.error('Failed to deduct AI credit:', err.message);
+    return null;
+  }
 }
 
 function getUserSchedule(userId) {
@@ -905,7 +971,8 @@ app.get('/api/auth/me', async (req, res) => {
         displayName: dbUser.displayName,
         photo: dbUser.photo,
         isPro: dbUser.isPro,
-        stripeCustomerId: dbUser.stripeCustomerId
+        stripeCustomerId: dbUser.stripeCustomerId,
+        aiCredits: dbUser.aiCredits
       };
     }
   } catch (err) {
@@ -972,7 +1039,8 @@ app.post('/api/auth/register', async (req, res) => {
       user: {
         id: user._id,
         email: user.email,
-        displayName: user.displayName
+        displayName: user.displayName,
+        aiCredits: user.aiCredits
       }
     });
   } catch (err) {
@@ -1026,7 +1094,8 @@ app.post('/api/auth/login', async (req, res) => {
       user: {
         id: user._id,
         email: user.email,
-        displayName: user.displayName
+        displayName: user.displayName,
+        aiCredits: user.aiCredits
       }
     });
   } catch (err) {
@@ -1522,6 +1591,13 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
 
   try {
     const userId = getUserId(req);
+    
+    // ── PAYG CREDIT CHECK: Block if user has no AI credits left ──
+    const creditCheck = await checkAICredits(userId);
+    if (!creditCheck.allowed) {
+      return res.status(402).json({ error: creditCheck.error });
+    }
+    
     const schedule = getUserSchedule(userId);
     const todayName = getTodayDayName();
 
@@ -1651,6 +1727,9 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
       await saveScheduleToMongo(userId, schedule);
     }
 
+    // ── PAYG CREDIT DEDUCTION: Only charge AFTER a successful AI response ──
+    await deductAICredit(userId);
+
     res.json({ 
       events: addedEvents,
       replyMessage: replyMessage || `נוספו ${addedEvents.length} אירועים.`,
@@ -1708,6 +1787,12 @@ app.post('/api/events/quick-add', aiLimiter, async (req, res) => {
       userData = sessionUser;
     } else {
       return res.status(401).json({ success: false, error: 'Authentication required. Provide a Bearer token.' });
+    }
+
+    // ── PAYG CREDIT CHECK: Block if user has no AI credits left ──
+    const creditCheck = await checkAICredits(userId);
+    if (!creditCheck.allowed) {
+      return res.status(402).json({ success: false, error: creditCheck.error });
     }
 
     // Get the user's schedule for context-aware AI
@@ -1823,6 +1908,9 @@ app.post('/api/events/quick-add', aiLimiter, async (req, res) => {
       message = replyMessage || `${eventCount} אירועים נוספו בהצלחה.`;
     }
 
+    // ── PAYG CREDIT DEDUCTION: Only charge AFTER a successful AI response ──
+    await deductAICredit(userId);
+
     res.json({
       success: true,
       message,
@@ -1936,6 +2024,13 @@ app.post('/api/reschedule', aiLimiter, async (req, res) => {
 
   try {
     const userId = getUserId(req);
+    
+    // ── PAYG CREDIT CHECK: Block if user has no AI credits left ──
+    const creditCheck = await checkAICredits(userId);
+    if (!creditCheck.allowed) {
+      return res.status(402).json({ error: creditCheck.error });
+    }
+    
     const currentSchedule = getUserSchedule(userId);
     const result = await rescheduleWithGemini(currentSchedule, effectiveReason);
 
@@ -1946,6 +2041,9 @@ app.post('/api/reschedule', aiLimiter, async (req, res) => {
     if (mongoose.Types.ObjectId.isValid(userId)) {
       await saveScheduleToMongo(userId, result.newSchedule);
     }
+
+    // ── PAYG CREDIT DEDUCTION: Only charge AFTER a successful AI response ──
+    await deductAICredit(userId);
 
     res.json({
       summary: result.summary,

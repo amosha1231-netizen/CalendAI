@@ -29,6 +29,7 @@ const userSchema = new mongoose.Schema({
   photo: { type: String },
   isPro: { type: Boolean, default: false },
   stripeCustomerId: { type: String },
+  aiCredits: { type: Number, default: 15 }, // Freemium: 15 free AI credits for new users
   schedule: { type: mongoose.Schema.Types.Mixed, default: {} },
   createdAt: { type: Date, default: Date.now }
 });

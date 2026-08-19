@@ -219,6 +219,9 @@ function AppRoutes() {
     } catch { return 0; }
   });
   const [showGuestLimitModal, setShowGuestLimitModal] = useState(false);
+  // ── AI Credits (PAYG) State ──
+  const [showCreditsModal, setShowCreditsModal] = useState(false);
+  const [creditsError, setCreditsError] = useState("");
 
   // Meeting Wizard State
   const [showWizard, setShowWizard] = useState(false);
@@ -564,6 +567,27 @@ function AppRoutes() {
     }
   }, []);
 
+  // ── Refresh user data (aiCredits balance) from the server ──
+  const refreshUserCredits = useCallback(async () => {
+    if (!user) return;
+    try {
+      const token = safeStorage.getItem('token') || safeStorage.getItem('calendai-jwt');
+      const res = await fetch(`${API_BASE}/api/auth/me?t=${Date.now()}`, {
+        credentials: "include",
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.user) {
+          setUser(data.user);
+          try { safeStorage.setItem('calendai-user', JSON.stringify(data.user)); } catch (e) {}
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to refresh user credits:", e);
+    }
+  }, [user, setUser]);
+
   // Save the current schedule state to the undo history stack
   const saveScheduleState = useCallback(() => {
     scheduleHistoryRef.current.push(JSON.parse(JSON.stringify(schedule)));
@@ -906,6 +930,12 @@ function AppRoutes() {
           setInputText("");
           return;
         }
+        // ── PAYG 402: Out of AI credits — show the purchase modal ──
+        if (res.status === 402) {
+          setCreditsError(errorData.error || 'נגמרו לך הקרדיטים! אנא רכוש חבילת פעולות נוספת כדי להמשיך להשתמש ב-AI.');
+          setShowCreditsModal(true);
+          return;
+        }
         throw new Error(t.failedRequest + " " + res.status);
       }
       const data = await res.json();
@@ -922,6 +952,8 @@ function AppRoutes() {
       if (data.conflicts?.length > 0) setConflicts(data.conflicts);
       else setConflicts([]);
       await fetchSchedule();
+      // Refresh AI credits balance from server after a successful AI call
+      refreshUserCredits();
       setSuccess(data.replyMessage || `${t.successAdded} ${data.events?.length || 0} ${t.successEvents}`);
       setInputText("");
 
@@ -1413,6 +1445,13 @@ function AppRoutes() {
               rows="4" placeholder=" "
               onKeyDown={e => { if (e.key === 'Enter' && e.ctrlKey) handleParse(); }}
             />
+            {/* ── AI Credits Balance (PAYG) — subtle badge ── */}
+            {user && user.aiCredits !== undefined && user.aiCredits !== null && (
+              <div className={`absolute top-2 ${isRTL ? 'left-2' : 'right-2'} flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded-full ${user.aiCredits > 0 ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-red-50 text-red-600 border border-red-200'}`}>
+                <span className="text-xs">⚡</span>
+                <span dir="rtl">{user.aiCredits > 0 ? `נותרו לך ${user.aiCredits} פעולות AI` : 'נגמרו הקרדיטים!'}</span>
+              </div>
+            )}
             {!inputText && (
               <div className={`absolute top-4 ${isRTL ? 'right-4' : 'left-4'} pointer-events-none overflow-hidden text-slate-400`} style={{ height: '1.75rem', width: 'calc(100% - 2rem)' }}>
                 <div className={isTransitioning ? 'transition-transform duration-500 ease-in-out' : ''} style={{ transform: `translateY(-${placeholderIndex * 1.75}rem)` }}>
@@ -2165,6 +2204,32 @@ function AppRoutes() {
               {t.loginWithGoogle}
             </button>
             <button onClick={() => setShowLoginPrompt(false)} className="w-full mt-3 text-sm text-slate-400 hover:text-slate-600 py-2 transition">
+              {t.cancel}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── AI Credits Exhausted Modal (PAYG / 402) ── */}
+      {showCreditsModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-[9999]" onClick={() => setShowCreditsModal(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center" onClick={e => e.stopPropagation()}>
+            <div className="w-16 h-16 bg-gradient-to-br from-red-400 to-orange-500 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
+              <AlertTriangle className="w-8 h-8 text-white" />
+            </div>
+            <h3 className="text-lg font-bold text-slate-800 mb-2">{lang === 'he' ? 'נגמרו לך הקרדיטים!' : 'You are out of credits!'}</h3>
+            <p className="text-sm text-slate-500 mb-6">
+              {creditsError || (lang === 'he'
+                ? 'נגמרו לך הקרדיטים! אנא רכוש חבילת פעולות נוספת כדי להמשיך להשתמש ב-AI.'
+                : 'You ran out of credits! Please purchase an additional action pack to continue using the AI.')}
+            </p>
+            <button
+              onClick={() => setShowCreditsModal(false)}
+              className="w-full px-4 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition shadow-lg"
+            >
+              {lang === 'he' ? 'הבנתי' : 'Got it'}
+            </button>
+            <button onClick={() => setShowCreditsModal(false)} className="w-full mt-3 text-sm text-slate-400 hover:text-slate-600 py-2 transition">
               {t.cancel}
             </button>
           </div>
