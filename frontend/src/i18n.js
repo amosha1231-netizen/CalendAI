@@ -73,13 +73,13 @@ const translations = {
       'תארגן לי זמן להכין אוכל ברביעי בערב',
       'קבע לי פגישת עבודה ביום שני ב-10:00',
       'תזכיר לי לשלם חשבונות בראשון בערב',
-      'תארגן לי זמן ללימודים פעמיים השבוע'
+      'תמצא לי זמן לשיעור תורה בשני בערב'
     ],
 
     // Suggestion Chips
     suggestionChips: [
       'זמן איכות עם המשפחה',
-      'תמצא לי זמן לשיעור תורה בשני בערב',
+      'תארגן לי זמן ללימודים פעמיים השבוע',
       '3 אימונים השבוע בבוקר',
       'הכנת אוכל ברביעי בערב',
       'פגישת עבודה ביום שני',
@@ -549,13 +549,13 @@ const translations = {
       'Arrange time to prepare food on Wednesday evening',
       'Set a work meeting on Monday at 10:00',
       'Remind me to pay bills on Sunday evening',
-      'Arrange study time twice this week'
+      'Find me time for a Torah lesson Monday evening'
     ],
 
     // Suggestion Chips
     suggestionChips: [
       'Quality time with family',
-      'Find me time for a Torah lesson Monday evening',
+      'Arrange study time twice this week',
       '3 workouts this week morning',
       'Prepare food Wednesday evening',
       'Work meeting Monday',
