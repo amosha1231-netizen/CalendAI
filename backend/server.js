@@ -30,7 +30,7 @@ const fs = require('fs');
 const path = require('path');
 const rateLimit = require('express-rate-limit');
 
-dotenv.config();
+dotenv.config({ path: path.join(__dirname, '.env') });
 
 // ──────────────────────────────────────────────
 // Safe module initialization (never crash on missing deps)
@@ -1728,13 +1728,14 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
     }
 
     // ── PAYG CREDIT DEDUCTION: Only charge AFTER a successful AI response ──
-    await deductAICredit(userId);
+    const remainingCredits = await deductAICredit(userId);
 
     res.json({ 
       events: addedEvents,
       replyMessage: replyMessage || `נוספו ${addedEvents.length} אירועים.`,
       totalEvents: Object.values(schedule).reduce((sum, arr) => sum + arr.length, 0),
-      conflicts: conflictWarnings.length > 0 ? conflictWarnings : undefined
+      conflicts: conflictWarnings.length > 0 ? conflictWarnings : undefined,
+      aiCredits: remainingCredits
     });
   } catch (error) {
     console.error(error);
@@ -1909,13 +1910,14 @@ app.post('/api/events/quick-add', aiLimiter, async (req, res) => {
     }
 
     // ── PAYG CREDIT DEDUCTION: Only charge AFTER a successful AI response ──
-    await deductAICredit(userId);
+    const remainingCredits = await deductAICredit(userId);
 
     res.json({
       success: true,
       message,
       events: addedEvents,
-      count: eventCount
+      count: eventCount,
+      aiCredits: remainingCredits
     });
 
   } catch (error) {
@@ -2043,11 +2045,12 @@ app.post('/api/reschedule', aiLimiter, async (req, res) => {
     }
 
     // ── PAYG CREDIT DEDUCTION: Only charge AFTER a successful AI response ──
-    await deductAICredit(userId);
+    const remainingCredits = await deductAICredit(userId);
 
     res.json({
       summary: result.summary,
-      newSchedule: result.newSchedule
+      newSchedule: result.newSchedule,
+      aiCredits: remainingCredits
     });
   } catch (error) {
     console.error('Gemini reschedule failed, using fallback:', error.message);

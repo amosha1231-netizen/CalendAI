@@ -987,9 +987,21 @@ function AppRoutes() {
       }
       if (data.conflicts?.length > 0) setConflicts(data.conflicts);
       else setConflicts([]);
+      // ── Update aiCredits immediately from the response ──
+      if (data.aiCredits !== undefined && data.aiCredits !== null) {
+        setUser(prev => prev ? { ...prev, aiCredits: data.aiCredits } : prev);
+        try {
+          const stored = JSON.parse(safeStorage.getItem('calendai-user') || 'null');
+          if (stored) {
+            stored.aiCredits = data.aiCredits;
+            safeStorage.setItem('calendai-user', JSON.stringify(stored));
+          }
+        } catch (e) {}
+      } else {
+        // Fallback: refresh from server if aiCredits not in response
+        refreshUserCredits();
+      }
       await fetchSchedule();
-      // Refresh AI credits balance from server after a successful AI call
-      refreshUserCredits();
       setSuccess(data.replyMessage || `${t.successAdded} ${data.events?.length || 0} ${t.successEvents}`);
       setInputText("");
 
