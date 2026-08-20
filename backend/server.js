@@ -107,6 +107,8 @@ const userSchema = new mongoose.Schema({
   password: { type: String },
   displayName: { type: String },
   photo: { type: String },
+  googleAccessToken: { type: String },
+  googleRefreshToken: { type: String },
   isPro: { type: Boolean, default: false },
   stripeCustomerId: { type: String },
   aiCredits: { type: Number, default: 15 }, // Freemium: 15 free AI credits for new users
@@ -216,7 +218,7 @@ app.use(session({
     secure: isProduction,
     sameSite: isProduction ? 'none' : 'lax',
     httpOnly: true,
-    maxAge: 24 * 60 * 60 * 1000
+    maxAge: 30 * 24 * 60 * 60 * 1000
   }
 }));
 
@@ -266,6 +268,16 @@ if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET &&
           });
         }
       }
+
+      // Save Google tokens to the user model for Calendar API access
+      if (accessToken) {
+        user.googleAccessToken = accessToken;
+      }
+      if (refreshToken) {
+        user.googleRefreshToken = refreshToken;
+      }
+      await user.save();
+
       return done(null, { ...user.toObject(), accessToken });
     } catch (err) {
       console.error('=== GOOGLE STRATEGY ERROR ===');
@@ -850,7 +862,7 @@ function mergeGaps(schedule) {
 
 const OAUTH_SCOPES = process.env.OAUTH_SCOPES
   ? process.env.OAUTH_SCOPES.split(',').map(s => s.trim())
-  : ['profile', 'email'];
+  : ['profile', 'email', 'https://www.googleapis.com/auth/calendar'];
 
 app.get('/api/auth/google',
   (req, res, next) => {
@@ -905,7 +917,7 @@ app.get('/api/auth/google/callback',
       try {
         // Create a JWT token with 7-day expiry containing the user's _id
         const jwtSecret = process.env.JWT_SECRET || 'calendai_secret';
-        const token = jwt.sign({ id: user._id || user.id }, jwtSecret, { expiresIn: '7d' });
+        const token = jwt.sign({ id: user._id || user.id }, jwtSecret, { expiresIn: '30d' });
 
         console.log("Generated JWT Token:", token ? "SUCCESS" : "FAILED");
         console.log('=== GOOGLE CALLBACK: JWT CREATED ===');
@@ -1039,7 +1051,7 @@ app.post('/api/auth/register', async (req, res) => {
         displayName: user.displayName
       },
       JWT_SECRET,
-      { expiresIn: '7d' }
+      { expiresIn: '30d' }
     );
 
     res.status(201).json({
@@ -1094,7 +1106,7 @@ app.post('/api/auth/login', async (req, res) => {
         displayName: user.displayName
       },
       JWT_SECRET,
-      { expiresIn: '7d' }
+      { expiresIn: '30d' }
     );
 
     res.json({
@@ -1139,7 +1151,7 @@ app.post('/api/auth/token', (req, res) => {
       photo: sessionUser.photo
     },
     JWT_SECRET,
-    { expiresIn: '7d' }
+    { expiresIn: '30d' }
   );
   res.json({ token, user: sessionUser });
 });
@@ -1739,6 +1751,12 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
     // ── PAYG CREDIT DEDUCTION: Only charge AFTER a successful AI response ──
     const remainingCredits = await deductAICredit(userId);
 
+    // ── GOOGLE CALENDAR SYNC: Automatically sync each added event to Google Calendar ──
+    // This is non-blocking — failures are logged but never crash the response.
+    for (const ev of addedEvents) {
+      syncEventToGoogleCalendar(userId, ev, locationId).catch(() => {});
+    }
+
     res.json({ 
       events: addedEvents,
       replyMessage: replyMessage || `נוספו ${addedEvents.length} אירועים.`,
@@ -1921,6 +1939,12 @@ app.post('/api/events/quick-add', aiLimiter, async (req, res) => {
     // ── PAYG CREDIT DEDUCTION: Only charge AFTER a successful AI response ──
     const remainingCredits = await deductAICredit(userId);
 
+    // ── GOOGLE CALENDAR SYNC: Automatically sync each added event to Google Calendar ──
+    // This is non-blocking — failures are logged but never crash the response.
+    for (const ev of addedEvents) {
+      syncEventToGoogleCalendar(userId, ev, DEFAULT_LOCATION_ID).catch(() => {});
+    }
+
     res.json({
       success: true,
       message,
@@ -1938,6 +1962,121 @@ app.post('/api/events/quick-add', aiLimiter, async (req, res) => {
 // ──────────────────────────────────────────────
 // 9. Google Calendar Integration
 // ──────────────────────────────────────────────
+
+/**
+ * Helper: Sync an event to the user's Google Calendar using stored tokens.
+ * Uses the user's googleAccessToken and googleRefreshToken from the database.
+ * This is called automatically after AI event creation.
+ * Wrapped in try/catch so failures never crash the app.
+ * @param {string} userId - The MongoDB ObjectId of the user
+ * @param {Object} event - The event object with title, day, startTime, endTime, recurrence
+ * @param {string} locationId - Optional location ID for timezone
+ * @returns {Promise<{success: boolean, error?: string}>}
+ */
+async function syncEventToGoogleCalendar(userId, event, locationId) {
+  // Only sync for logged-in users with valid ObjectId
+  if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
+    return { success: false, error: 'Not a logged-in user' };
+  }
+  try {
+    const user = await User.findById(userId).lean();
+    if (!user || !user.googleAccessToken) {
+      return { success: false, error: 'No Google token stored' };
+    }
+
+    const locId = locationId || DEFAULT_LOCATION_ID;
+    const locData = LOCATIONS.find(loc => loc.id === locId);
+    const timeZone = locData ? locData.timezone : 'Asia/Jerusalem';
+
+    // Create OAuth2 client with stored tokens
+    const oauth2Client = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_CLIENT_SECRET,
+      process.env.GOOGLE_CALLBACK_URL
+    );
+    oauth2Client.setCredentials({
+      access_token: user.googleAccessToken,
+      refresh_token: user.googleRefreshToken || undefined
+    });
+
+    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+
+    // Parse the event's day and time into a Date object
+    const dayMap = { Sunday: 0, Monday: 1, Tuesday: 2, Wednesday: 3, Thursday: 4, Friday: 5, Saturday: 6 };
+    const targetDay = dayMap[event.day];
+    if (targetDay === undefined) {
+      return { success: false, error: 'Invalid day for Google Calendar event.' };
+    }
+
+    const today = new Date();
+    const eventDate = new Date(today);
+    // Calculate the next occurrence of the target day
+    eventDate.setDate(today.getDate() + ((targetDay + 7 - today.getDay()) % 7));
+
+    // Parse start/end times from "HH:MM AM/PM" format
+    const startMatch = event.startTime && event.startTime.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+    const endMatch = event.endTime && event.endTime.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+    if (!startMatch) return { success: false, error: 'Invalid startTime format' };
+
+    let startHour = parseInt(startMatch[1], 10);
+    const startMinute = parseInt(startMatch[2], 10);
+    if (startMatch[3].toUpperCase() === 'PM' && startHour !== 12) startHour += 12;
+    if (startMatch[3].toUpperCase() === 'AM' && startHour === 12) startHour = 0;
+
+    const startDateTime = new Date(eventDate);
+    startDateTime.setHours(startHour, startMinute, 0, 0);
+
+    let endDateTime;
+    if (endMatch) {
+      let endHour = parseInt(endMatch[1], 10);
+      const endMinute = parseInt(endMatch[2], 10);
+      if (endMatch[3].toUpperCase() === 'PM' && endHour !== 12) endHour += 12;
+      if (endMatch[3].toUpperCase() === 'AM' && endHour === 12) endHour = 0;
+      endDateTime = new Date(eventDate);
+      endDateTime.setHours(endHour, endMinute, 0, 0);
+    } else {
+      // Default to 1 hour if no endTime
+      endDateTime = new Date(startDateTime.getTime() + 60 * 60 * 1000);
+    }
+
+    // Build request body
+    const requestBody = {
+      summary: event.title || 'CalendAI Event',
+      description: event.description || `Created by CalendAI for ${event.day}`,
+      start: { dateTime: startDateTime.toISOString(), timeZone },
+      end: { dateTime: endDateTime.toISOString(), timeZone },
+    };
+
+    // Build RRULE for recurring events
+    if (event.recurrence) {
+      let freq = null;
+      switch (event.recurrence) {
+        case 'daily': freq = 'DAILY'; break;
+        case 'weekly': freq = 'WEEKLY'; break;
+        case 'monthly': freq = 'MONTHLY'; break;
+        case 'yearly': freq = 'YEARLY'; break;
+        case 'forever': freq = 'DAILY'; break;
+      }
+      if (freq) {
+        requestBody.recurrence = [`RRULE:FREQ=${freq}`];
+      }
+    }
+
+    await calendar.events.insert({
+      calendarId: 'primary',
+      requestBody,
+    });
+
+    return { success: true };
+  } catch (error) {
+    // Log but never crash - event is already saved locally
+    console.error('Google Calendar sync failed (non-fatal):', error.message);
+    if (error.code === 401 || error.code === 403) {
+      console.warn('Google token may be expired for user:', userId);
+    }
+    return { success: false, error: error.message };
+  }
+}
 
 // POST /api/add-to-google-calendar - Add an event to the user's Google Calendar
 app.post('/api/add-to-google-calendar', async (req, res) => {
