@@ -484,6 +484,15 @@ router.post('/siri', async (req, res) => {
       });
     }
 
+    // Handle CONFLICT response: user requested a time that is already taken.
+    // The server MUST NOT save any event and MUST NOT deduct an AI credit.
+    if (parsedResult.hasConflict === true) {
+      return res.json({
+        hasConflict: true,
+        response: parsedResult.conflictMessage || 'יש כבר פעילות בזמן הזה. האם להוסיף בכל זאת או לקבוע לזמן אחר?'
+      });
+    }
+
     const { events: parsedEvents, replyMessage } = parsedResult;
 
     if (!parsedEvents || parsedEvents.length === 0) {

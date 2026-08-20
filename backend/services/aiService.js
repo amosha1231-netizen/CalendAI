@@ -34,6 +34,16 @@ Current Schedule: [Existing events will be injected here dynamically]
 5. FULL CALENDAR FALLBACK: If you determine there are not enough free time windows this week to fulfill the user's request without conflicting with existing events, return a JSON with an error message:
 { "error": "לא מצאתי מספיק חלונות זמן פנויים השבוע כדי לשבץ את הפעילות מבלי להתנגש באירועים קיימים." }
 
+6. OVERLAP PROTECTION: Find available free slots that DO NOT overlap with existing events. Do not default to 09:00 AM if it is taken.
+
+7. CONFLICT HANDLING: If the user specifically requests a time that is already taken, DO NOT generate the event. Return JSON:
+{ "hasConflict": true, "message": "יש כבר פעילות בזמן הזה. האם להוסיף בכל זאת או לקבוע לזמן אחר?" }
+This response MUST have hasConflict=true and MUST NOT contain an "events" array.
+
+8. HUMAN LOGIC & SLEEP: Unless explicitly stated, DO NOT schedule events between 23:00 and 08:00 (sleep hours). Schedule meals at culturally appropriate times.
+
+9. BEHAVIORAL MATCHING: Analyze the user's schedule to understand their daily habits. Place floating activities (like "workout" or "study") close to similar past activities or in logical blocks that feel natural for a human.
+
 Return ONLY valid JSON in this format:
 {
   "events": [
@@ -47,6 +57,11 @@ OR if it's Saturday:
 OR if the calendar is too full:
 {
   "error": "string"
+}
+OR if the requested time conflicts with an existing event:
+{
+  "hasConflict": true,
+  "message": "string"
 }`,
       generationConfig: {
         temperature: 0.3,
@@ -141,11 +156,17 @@ async function parseWithGemini(text, options = {}) {
     ═════════════════════════════════════════════════════
     1. YOU MUST NEVER create an event that overlaps with any existing busy slot listed above.
     2. Check every proposed event time against the busy slots BEFORE including it in the output.
-    3. If the user's requested time is busy, find the FIRST available free window in the schedule.
-    4. For the current day (Today = ${todayEnglish}), only consider future time windows (from the current time ${currentTimeString} onward).
-    5. Prefer the EARLIEST available free window that accommodates the requested duration.
-    6. If absolutely no free window exists on the requested day, suggest the next available day.
-    7. **FULL CALENDAR FALLBACK**: If after checking all days this week you determine there are NOT enough free time windows to fulfill the user's request (e.g., user wants 3 workouts but only 1 free slot exists), return a JSON with an error message:
+    3. **OVERLAP PROTECTION**: Find available free slots that DO NOT overlap with existing events. Do not default to 09:00 AM if it is taken — check the busy slots first and pick a genuinely free window.
+    4. **CONFLICT HANDLING (CRITICAL)**: If the user SPECIFICALLY requests a time (e.g., "קבע לי ב-9:00", "at 09:00 AM", "בשעה 19:00") that is ALREADY TAKEN per the busy slots above, DO NOT generate the event and DO NOT silently move it. Instead, return ONLY this JSON:
+    { "hasConflict": true, "message": "יש כבר פעילות בזמן הזה. האם להוסיף בכל זאת או לקבוע לזמן אחר?" }
+    This response MUST have hasConflict=true, MUST NOT contain an "events" array, and MUST NOT contain "reasoning" or "replyMessage".
+    - If the user did NOT specify an exact time (e.g., just "אימון בבוקר" / "workout in the morning"), then find the FIRST available free window that does NOT overlap with busy slots.
+    5. **HUMAN LOGIC & SLEEP (CRITICAL)**: Unless the user EXPLICITLY states otherwise, DO NOT schedule events between 23:00 and 08:00 (sleep hours). Schedule meals at culturally appropriate times (breakfast ~08:00, lunch ~13:00, dinner ~19:00).
+    6. **BEHAVIORAL MATCHING (CRITICAL)**: Analyze the user's existing schedule above to understand their daily habits. Place floating activities (like "workout" or "study") close to similar past activities OR in logical blocks that feel natural for a human. For example, if the user already works out at 07:30 AM on Sundays and Wednesdays, place a new workout near those times. If the user studies in the evening, place new study sessions in the evening.
+    7. For the current day (Today = ${todayEnglish}), only consider future time windows (from the current time ${currentTimeString} onward).
+    8. Prefer the EARLIEST available free window that accommodates the requested duration.
+    9. If absolutely no free window exists on the requested day, suggest the next available day.
+    10. **FULL CALENDAR FALLBACK**: If after checking all days this week you determine there are NOT enough free time windows to fulfill the user's request (e.g., user wants 3 workouts but only 1 free slot exists), return a JSON with an error message:
     { "error": "לא מצאתי מספיק חלונות זמן פנויים השבוע כדי לשבץ את הפעילות מבלי להתנגש באירועים קיימים." }
     Do NOT return partial events — either fulfill the FULL request or return the error.
 
@@ -764,6 +785,17 @@ async function parseWithGemini(text, options = {}) {
         blockedMessage: parsed.blockedMessage || 'האפליקציה אינה קובעת פגישות במהלך השבת. נשמח לתאם מועד לפני כניסת השבת או במוצאי השבת.',
         events: [],
         replyMessage: parsed.blockedMessage || 'האפליקציה אינה קובעת פגישות במהלך השבת. נשמח לתאם מועד לפני כניסת השבת או במוצאי השבת.'
+      };
+    }
+
+    // Handle CONFLICT response: user requested a time that is already taken.
+    // The server MUST NOT save any event and MUST NOT deduct an AI credit.
+    if (parsed.hasConflict === true) {
+      return {
+        hasConflict: true,
+        conflictMessage: parsed.message || 'יש כבר פעילות בזמן הזה. האם להוסיף בכל זאת או לקבוע לזמן אחר?',
+        events: [],
+        replyMessage: parsed.message || 'יש כבר פעילות בזמן הזה. האם להוסיף בכל זאת או לקבוע לזמן אחר?'
       };
     }
 

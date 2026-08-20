@@ -966,6 +966,13 @@ function AppRoutes() {
           setInputText("");
           return;
         }
+        // ── CONFLICT 409: User requested a time that is already taken ―
+        // Show the conflict message prominently as a bold error.
+        if (res.status === 409 && errorData.hasConflict === true) {
+          setError(errorData.conflictMessage || errorData.replyMessage || 'יש כבר פעילות בזמן הזה. האם להוסיף בכל זאת או לקבוע לזמן אחר?');
+          // Do NOT clear the input text — the user may want to modify their request.
+          return;
+        }
         // ── PAYG 402: Out of AI credits — show the purchase modal ──
         if (res.status === 402) {
           setCreditsError(errorData.error || 'נגמרו לך הקרדיטים! אנא רכוש חבילת פעולות נוספת כדי להמשיך להשתמש ב-AI.');

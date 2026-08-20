@@ -1651,6 +1651,17 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
       });
     }
 
+    // Handle CONFLICT response: user requested a time that is already taken.
+    // The server MUST NOT save any event and MUST NOT deduct an AI credit.
+    if (parsedResult.hasConflict === true) {
+      return res.status(409).json({
+        hasConflict: true,
+        conflictMessage: parsedResult.conflictMessage || 'יש כבר פעילות בזמן הזה. האם להוסיף בכל זאת או לקבוע לזמן אחר?',
+        replyMessage: parsedResult.replyMessage || 'יש כבר פעילות בזמן הזה. האם להוסיף בכל זאת או לקבוע לזמן אחר?',
+        events: []
+      });
+    }
+
     const { events: parsedEvents, replyMessage } = parsedResult;
 
     const locationId = location || DEFAULT_LOCATION_ID;
@@ -1855,6 +1866,18 @@ app.post('/api/events/quick-add', aiLimiter, async (req, res) => {
         isBlocked: true,
         blockedMessage: parsedResult.blockedMessage || 'האפליקציה אינה קובעת פגישות במהלך השבת. נשמח לתאם מועד לפני כניסת השבת או במוצאי השבת.',
         message: parsedResult.blockedMessage || 'האפליקציה אינה קובעת פגישות במהלך השבת. נשמח לתאם מועד לפני כניסת השבת או במוצאי השבת.',
+        events: []
+      });
+    }
+
+    // Handle CONFLICT response: user requested a time that is already taken.
+    // The server MUST NOT save any event and MUST NOT deduct an AI credit.
+    if (parsedResult.hasConflict === true) {
+      return res.status(409).json({
+        success: false,
+        hasConflict: true,
+        conflictMessage: parsedResult.conflictMessage || 'יש כבר פעילות בזמן הזה. האם להוסיף בכל זאת או לקבוע לזמן אחר?',
+        message: parsedResult.replyMessage || 'יש כבר פעילות בזמן הזה. האם להוסיף בכל זאת או לקבוע לזמן אחר?',
         events: []
       });
     }
