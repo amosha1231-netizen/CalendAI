@@ -29,6 +29,7 @@ const { google } = require('googleapis');
 const fs = require('fs');
 const path = require('path');
 const rateLimit = require('express-rate-limit');
+const crypto = require('crypto'); // For Lemon Squeezy webhook HMAC signature verification
 
 dotenv.config({ path: path.join(__dirname, '.env') });
 
@@ -191,6 +192,14 @@ app.use(cors({
   origin: allowedOrigins,
   credentials: true
 }));
+
+// ── Raw body middleware for payment webhook path ──
+// MUST run BEFORE express.json() so the body remains a raw Buffer
+// for HMAC signature verification (Stripe & Lemon Squeezy).
+// body-parser sets req._body = true after raw parsing, so express.json()
+// will skip requests already consumed by express.raw().
+app.use('/api/payments/webhook', express.raw({ type: 'application/json' }));
+
 app.use(express.json());
 
 // ──────────────────────────────────────────────
@@ -2982,13 +2991,97 @@ app.post('/api/payments/create-checkout-session', async (req, res) => {
 
 /**
  * POST /api/payments/webhook
- * Receives Stripe webhook events.
- * On checkout.session.completed, marks the user as isPro: true in MongoDB.
+ * Receives payment webhook events from BOTH Stripe and Lemon Squeezy.
+ *
+ * - Stripe:         On checkout.session.completed → marks the user as isPro: true.
+ * - Lemon Squeezy:  On order_created → credits the user with 100 AI credits.
+ *
+ * This route is intentionally NOT protected by auth middleware — the requests
+ * come from the payment providers' servers, not from the client.
  */
 app.post('/api/payments/webhook',
   express.raw({ type: 'application/json' }),
   async (req, res) => {
-    const sig = req.headers['stripe-signature'];
+    // ──────────────────────────────────────────────
+    // Detect provider: Lemon Squeezy sends `x-signature`,
+    // Stripe sends `stripe-signature`.
+    // ──────────────────────────────────────────────
+    const lemonSqueezySignature = req.headers['x-signature'];
+    const stripeSignature = req.headers['stripe-signature'];
+
+    // ── Lemon Squeezy webhook (order_created → +100 AI credits) ──
+    if (lemonSqueezySignature) {
+      try {
+        const rawBody = req.body; // Buffer from express.raw()
+
+        // Verify HMAC-SHA256 signature using the Lemon Squeezy webhook secret
+        const secret = process.env.LEMON_SQUEEZY_WEBHOOK_SECRET;
+        if (!secret) {
+          console.error('Lemon Squeezy webhook: LEMON_SQUEEZY_WEBHOOK_SECRET is not configured.');
+          return res.status(500).send('Webhook secret not configured');
+        }
+
+        const expectedSignature = crypto
+          .createHmac('sha256', secret)
+          .update(rawBody)
+          .digest('hex');
+
+        const receivedSignature = String(lemonSqueezySignature || '');
+
+        // Use timing-safe comparison to prevent timing attacks
+        const expectedBuffer = Buffer.from(expectedSignature, 'hex');
+        const receivedBuffer = Buffer.from(receivedSignature, 'hex');
+        const signaturesMatch =
+          expectedBuffer.length === receivedBuffer.length &&
+          crypto.timingSafeEqual(expectedBuffer, receivedBuffer);
+
+        if (!signaturesMatch) {
+          console.error('Lemon Squeezy webhook: Invalid signature.');
+          return res.status(401).send('Invalid signature');
+        }
+
+        // Signature is valid — parse the JSON payload
+        const payload = JSON.parse(rawBody.toString('utf-8'));
+
+        // Only process successful order_created events
+        const eventName = payload?.meta?.event_name;
+        if (eventName !== 'order_created') {
+          return res.status(200).send('Webhook received and processed');
+        }
+
+        const userId = payload?.meta?.custom_data?.user_id || payload?.meta?.custom_data?.userId;
+        if (!userId) {
+          console.warn('Lemon Squeezy webhook: No userId found in custom_data.');
+          return res.status(200).send('Webhook received and processed');
+        }
+
+        // Find the user in MongoDB and credit them with 100 AI credits
+        let user = null;
+        if (mongoose.Types.ObjectId.isValid(userId)) {
+          user = await User.findById(userId);
+        }
+        if (!user) {
+          user = await User.findOne({ googleId: userId });
+        }
+
+        if (!user) {
+          console.warn(`Lemon Squeezy webhook: User ${userId} not found in MongoDB.`);
+          return res.status(200).send('Webhook received and processed');
+        }
+
+        user.aiCredits = (user.aiCredits || 0) + 100;
+        await user.save();
+        console.log(`✅ Lemon Squeezy: Credited user ${user._id} with 100 AI credits (total: ${user.aiCredits}).`);
+
+        return res.status(200).send('Webhook received and processed');
+      } catch (err) {
+        console.error('Lemon Squeezy webhook processing failed:', err.message);
+        return res.status(400).send('Webhook processing failed');
+      }
+    }
+
+    // ── Stripe webhook (original logic) ──
+    const sig = stripeSignature;
     const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
     let event;
