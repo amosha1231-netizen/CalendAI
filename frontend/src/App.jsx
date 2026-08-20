@@ -1378,7 +1378,7 @@ function AppRoutes() {
         </div>
       )}
 
-      <div className={`min-h-screen bg-[#F2F2F7] p-4 sm:p-6 font-sans pb-20`} dir={isRTL ? 'rtl' : 'ltr'}>
+      <div className={`min-h-screen bg-[#F8FAFC] p-4 sm:p-6 font-sans pb-20`} dir={isRTL ? 'rtl' : 'ltr'}>
       {/* iOS In-App Browser Banner (WhatsApp, Facebook, Instagram) */}
       {isIosWhatsApp() && (
         <div className="fixed top-0 left-0 right-0 z-[99999] bg-amber-50 border-b border-amber-200 px-3 py-2 text-xs text-amber-800 flex items-center justify-between gap-2 shadow-sm" dir="rtl">
@@ -1448,17 +1448,17 @@ function AppRoutes() {
         <div className="flex items-center gap-1 sm:gap-3 shrink-0">
           {/* Meeting Wizard Button */}
           <button onClick={() => setShowWizard(true)}
-            className="flex items-center gap-1 bg-gradient-to-r from-blue-500 to-indigo-600 border border-blue-400 text-white px-1.5 sm:px-4 py-1 sm:py-2 rounded-lg hover:from-blue-600 hover:to-indigo-700 transition text-[11px] sm:text-sm font-medium shadow-sm whitespace-nowrap">
+            className="flex items-center gap-1 bg-gradient-to-r from-blue-500 to-indigo-600 border border-blue-400 text-white px-1.5 sm:px-4 py-1 sm:py-2 rounded-full hover:from-blue-600 hover:to-indigo-700 transition-all duration-200 text-[11px] sm:text-sm font-medium shadow-sm shadow-blue-200 hover:shadow-md hover:-translate-y-0.5 whitespace-nowrap">
             <Calendar className="w-3 h-3 sm:w-4 sm:h-4" /> <span className="hidden sm:inline">{t.wizardTitle}</span><span className="sm:hidden">{t.wizardShort}</span>
           </button>
           {/* Share App Button */}
           <button onClick={handleShareApp}
-            className="flex items-center gap-1 bg-white border border-emerald-300 text-emerald-700 px-1.5 sm:px-3 py-1 sm:py-2 rounded-lg hover:bg-emerald-50 transition text-[11px] sm:text-sm font-medium whitespace-nowrap shadow-sm">
+            className="flex items-center gap-1 bg-white border border-emerald-300 text-emerald-700 px-1.5 sm:px-3 py-1 sm:py-2 rounded-full hover:bg-emerald-50 hover:border-emerald-400 transition-all duration-200 text-[11px] sm:text-sm font-medium whitespace-nowrap shadow-sm hover:shadow-md">
             <Share2 className="w-3 h-3 sm:w-4 sm:h-4" /> <span className="hidden sm:inline">{t.shareAppButton || 'שתף'}</span>
           </button>
           {/* Language Toggle Button */}
           <button onClick={toggleLanguage}
-            className="flex items-center gap-1 bg-white border border-slate-300 text-slate-700 px-1.5 sm:px-3 py-1 sm:py-2 rounded-lg hover:bg-slate-50 transition text-[11px] sm:text-sm font-medium whitespace-nowrap">
+            className="flex items-center gap-1 bg-white border border-slate-300 text-slate-700 px-1.5 sm:px-3 py-1 sm:py-2 rounded-full hover:bg-slate-50 hover:border-slate-400 transition-all duration-200 text-[11px] sm:text-sm font-medium whitespace-nowrap">
             {t.languageLabel}
           </button>
           {user ? (
@@ -1476,19 +1476,19 @@ function AppRoutes() {
       </header>
 
       <main className="max-w-6xl mx-auto grid grid-cols-1 gap-6">
-        {/* Input box - iOS Card */}
-        <div className="bg-white p-5 sm:p-6 rounded-[20px] shadow-[0_4px_12px_rgba(0,0,0,0.04)]">
+        {/* Input box - Premium Floating Card */}
+        <div className="bg-white p-6 sm:p-8 rounded-3xl shadow-lg shadow-slate-100 border border-slate-100">
           <h2 className="text-lg font-semibold mb-2 text-slate-800">{t.inputTitle}</h2>
 
-          {/* ── Suggestion Chips Bar (moved above textarea) ── */}
+          {/* ── Suggestion Chips Bar (premium chips) ── */}
           <div className="flex items-center gap-2 overflow-x-auto whitespace-nowrap py-1 mb-3" style={{ scrollbarWidth: 'none' }}>
             <span className="text-xs text-slate-400 shrink-0">{t.tryForExample}</span>
             {SUGGESTION_CHIPS.map((s, i) => (
               <button key={i} onClick={() => setInputText(s)}
-                className="px-2.5 py-1 text-xs rounded-full border transition bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100 hover:border-slate-300 shrink-0">{s}</button>
+                className="px-3 py-1.5 text-xs rounded-full border transition bg-slate-50 text-slate-600 border-slate-200 hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-300 hover:shadow-sm hover:-translate-y-0.5 active:translate-y-0 shrink-0 font-medium">{s}</button>
             ))}
             <button onClick={() => setInputText(t.suggestionSleep)}
-              className="px-2.5 py-1 text-xs rounded-full border transition bg-indigo-50 text-indigo-600 border-indigo-200 hover:bg-indigo-100 shrink-0 flex items-center gap-1">
+              className="px-3 py-1.5 text-xs rounded-full border transition bg-indigo-50 text-indigo-600 border-indigo-200 hover:bg-indigo-100 hover:border-indigo-400 hover:shadow-sm hover:-translate-y-0.5 active:translate-y-0 shrink-0 flex items-center gap-1 font-medium">
               <Moon className="w-3 h-3" /> {t.suggestionSleep}
             </button>
           </div>
@@ -1496,26 +1496,26 @@ function AppRoutes() {
           {/* ── AI Prompt Textarea ── */}
           <div className="relative" style={{ minHeight: '120px' }}>
             <textarea value={inputText} onChange={e => setInputText(e.target.value)}
-              className={`w-full p-4 rounded-xl bg-[#F2F2F7] text-slate-800 placeholder-transparent focus:ring-2 focus:ring-blue-400 focus:bg-white transition-colors resize-none ${isRTL ? 'text-right' : 'text-left'}`}
+              className={`w-full p-4 sm:p-5 rounded-2xl bg-slate-50 text-slate-800 placeholder-transparent focus:ring-2 focus:ring-indigo-400 focus:ring-violet-400 focus:bg-white focus:shadow-lg focus:shadow-indigo-100/50 border border-slate-200 focus:border-indigo-300 transition-all duration-200 resize-none ${isRTL ? 'text-right' : 'text-left'}`}
               rows="4" placeholder=" "
               onKeyDown={e => { if (e.key === 'Enter' && e.ctrlKey) handleParse(); }}
             />
-            {/* ── AI Credits Balance (PAYG) — subtle badge ── */}
+            {/* ── AI Credits Balance (PAYG) — premium sparkle card ── */}
             {user && user.aiCredits !== undefined && user.aiCredits !== null && (
               <div className={`absolute top-2 ${isRTL ? 'left-2' : 'right-2'} flex items-center gap-2`}>
-                <div className={`flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded-full ${user.aiCredits > 0 ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-red-50 text-red-600 border border-red-200'}`}>
-                  <span className="text-xs">⚡</span>
+                <div className={`flex items-center gap-1.5 text-[11px] font-medium px-3 py-1.5 rounded-full shadow-sm backdrop-blur-sm ${user.aiCredits > 0 ? 'bg-amber-50/90 text-amber-700 border border-amber-200/80' : 'bg-red-50/90 text-red-600 border border-red-200/80'}`}>
+                  <Sparkles className="w-3 h-3 text-amber-500" />
                   <span dir="rtl">{user.aiCredits > 0 ? `נותרו לך ${user.aiCredits} פעולות AI` : 'נגמרו הקרדיטים!'}</span>
                 </div>
                 <button
                   onClick={handleBuyCredits}
                   disabled={checkoutLoading}
-                  className="flex items-center gap-1 text-[11px] font-medium px-2.5 py-1 rounded-full bg-gradient-to-r from-purple-600 to-indigo-600 text-white border border-purple-500 hover:from-purple-700 hover:to-indigo-700 transition shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
+                  className="flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1.5 rounded-full bg-gradient-to-r from-purple-600 to-indigo-600 text-white border border-purple-500 hover:from-purple-700 hover:to-indigo-700 hover:shadow-md hover:shadow-indigo-200 transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed"
                 >
                   {checkoutLoading ? (
                     <Loader2 className="w-3 h-3 animate-spin" />
                   ) : (
-                    <span>⚡ {lang === 'he' ? 'רכוש 100 קרדיטים' : 'Buy 100 credits'}</span>
+                    <><Sparkles className="w-3 h-3" /> {lang === 'he' ? 'רכוש 100 קרדיטים' : 'Buy 100 credits'}</>
                   )}
                 </button>
               </div>
@@ -1629,30 +1629,30 @@ function AppRoutes() {
 
           <div className="mt-4 flex items-center gap-3">
             <button onClick={handleParse} disabled={loading}
-              className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-full font-medium transition disabled:bg-blue-400 disabled:cursor-not-allowed w-full sm:w-48">
+              className="flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-6 py-3 rounded-full font-semibold transition-all duration-200 shadow-md shadow-blue-200 hover:shadow-lg hover:shadow-indigo-200 hover:-translate-y-0.5 active:translate-y-0 disabled:from-blue-400 disabled:to-indigo-400 disabled:cursor-not-allowed disabled:shadow-none w-full sm:w-48">
               {loading ? <><Loader2 className="w-4 h-4 animate-spin" /> {t.parsing}</> : <><Sparkles className="w-5 h-5" /> {t.parseButton}</>}
             </button>
-            <button onClick={handleUndo} disabled={scheduleHistoryRef.current.length === 0} className="flex items-center gap-2 text-slate-500 hover:text-slate-700 px-4 py-3 rounded-lg hover:bg-slate-50 transition text-sm disabled:opacity-30 disabled:cursor-not-allowed"><RotateCcw className="w-4 h-4" /> {t.undo}</button>
+            <button onClick={handleUndo} disabled={scheduleHistoryRef.current.length === 0} className="flex items-center gap-2 text-slate-500 hover:text-slate-700 px-4 py-3 rounded-full hover:bg-slate-100 transition text-sm disabled:opacity-30 disabled:cursor-not-allowed"><RotateCcw className="w-4 h-4" /> {t.undo}</button>
           </div>
         </div>
 
-        {/* Weekly Schedule - iOS Card */}
-        <div className="bg-white p-5 sm:p-6 rounded-[20px] shadow-[0_4px_12px_rgba(0,0,0,0.04)]">
-          <div className="flex flex-wrap items-center justify-between gap-4 mb-6 border-b pb-2">
+        {/* Weekly Schedule - Premium Floating Card */}
+        <div className="bg-white p-6 sm:p-8 rounded-3xl shadow-lg shadow-slate-100 border border-slate-100">
+          <div className="flex flex-wrap items-center justify-between gap-4 mb-6 border-b border-slate-100 pb-3">
             <h2 className="text-xl font-bold text-slate-800">{t.weeklyScheduleTitle}</h2>
             <div className="flex items-center gap-2">
               {allLocationsInEvents.length > 0 && (
                 <div className="flex items-center gap-1.5 text-xs">
                   <Filter className="w-3 h-3 text-slate-400" />
                   <select value={locationFilter} onChange={e => setLocationFilter(e.target.value)}
-                    className="text-xs border border-slate-200 rounded-md px-2 py-1 bg-white text-slate-600 focus:ring-1 focus:ring-blue-500">
+                    className="text-xs border border-slate-200 rounded-full px-2.5 py-1 bg-white text-slate-600 focus:ring-1 focus:ring-indigo-500">
                     <option value="all">{t.allLocations}</option>
                     {allLocationsInEvents.map(loc => <option key={loc} value={loc}>{LOCATION_LABELS[loc] || loc}</option>)}
                   </select>
                 </div>
               )}
               <button onClick={handleOpenReschedule}
-                className="flex items-center gap-2 bg-indigo-100 text-indigo-700 px-4 py-2 rounded-lg hover:bg-indigo-200 transition text-sm font-medium border border-indigo-200">
+                className="flex items-center gap-2 bg-gradient-to-r from-indigo-50 to-violet-50 text-indigo-700 px-4 py-2 rounded-full hover:from-indigo-100 hover:to-violet-100 transition-all duration-200 text-sm font-medium border border-indigo-200 hover:border-indigo-300 hover:shadow-sm">
                 <Wand2 className="w-4 h-4" /> {t.fixSchedule}
               </button>
             </div>

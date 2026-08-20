@@ -239,8 +239,8 @@ export default function MonthlyCalendar({ schedule, lang }) {
   };
 
   return (
-    <div className="bg-white p-5 sm:p-6 rounded-[20px] shadow-[0_4px_12px_rgba(0,0,0,0.04)]">
-      <div className="flex items-center justify-between mb-6 border-b pb-4">
+    <div className="bg-white p-6 sm:p-8 rounded-3xl shadow-lg shadow-slate-100 border border-slate-100">
+      <div className="flex items-center justify-between mb-6 border-b border-slate-100 pb-4">
         <div className="flex items-center gap-3">
           <CalendarDays className="w-6 h-6 text-indigo-600" />
           <h2 className="text-xl font-bold text-slate-800">
@@ -250,7 +250,7 @@ export default function MonthlyCalendar({ schedule, lang }) {
         <div className="flex items-center gap-2">
           <button
             onClick={() => setViewMode(prev => prev === 'month' ? 'year' : 'month')}
-            className="flex items-center gap-2 bg-indigo-50 text-indigo-700 px-4 py-2 rounded-lg hover:bg-indigo-100 transition text-sm font-medium border border-indigo-200"
+            className="flex items-center gap-2 bg-gradient-to-r from-indigo-50 to-violet-50 text-indigo-700 px-4 py-2 rounded-full hover:from-indigo-100 hover:to-violet-100 transition-all duration-200 text-sm font-medium border border-indigo-200 hover:border-indigo-300 hover:shadow-sm"
           >
             <Eye className="w-4 h-4" />
             {viewMode === 'month' ? t.calendarToggleYear : t.calendarToggleMonth}
