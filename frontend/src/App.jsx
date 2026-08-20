@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, Suspense, lazy } from "react";
 import { BrowserRouter } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
-import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Menu, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff } from "lucide-react";
+import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Menu, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff, Home, Plus, Zap, ChevronDown, ChevronUp } from "lucide-react";
 import MonthlyCalendar from "./components/MonthlyCalendar";
 import LocationSelector from "./components/LocationSelector";
 import Privacy from "./components/Privacy";
@@ -31,7 +31,6 @@ function RECURRENCE_OPTIONS(lang) {
     { value: "yearly", label: translations[lang].recurrenceYearly }
   ];
 }
-// "forever" is now the default behavior (no end date / no UNTIL in RRULE)
 
 function REMINDER_MINUTES_OPTIONS(lang) {
   return [
@@ -102,15 +101,15 @@ function AppRoutes() {
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [inputText, setInputText] = useState("");
   const [recurrence, setRecurrence] = useState("weekly");
-  const [eventType, setEventType] = useState("activity"); // "activity" or "notification"
-  const [activityDuration, setActivityDuration] = useState(60); // minutes
+  const [eventType, setEventType] = useState("activity");
+  const [activityDuration, setActivityDuration] = useState(60);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [placeholderIndex, setPlaceholderIndex] = useState(0);
   const [conflicts, setConflicts] = useState([]);
 
-  // Voice-to-Text State (Web Speech API)
+  // Voice-to-Text State
   const [isListening, setIsListening] = useState(false);
   const [speechSupported] = useState(() => {
     try {
@@ -155,35 +154,26 @@ function AppRoutes() {
   const intentRef = useRef(getInitialIntent());
 
   // ── View State ──
-  // 'landing'   = default for unauthenticated guests (landing page)
-  // 'dashboard' = main app for authenticated users or guests who clicked "try demo"
-  // 'booking'   = ONLY if ?book=true or ?book=dyn_xxx is explicitly in the URL
-  // 'guest-booking' = when a dynamic booking ID is in the URL
   const [currentView, setCurrentView] = useState(() => {
     if (intentRef.current.wantsBooking) return 'booking';
-    // Initialize based on persisted auth state so logged-in users land directly on dashboard
     try {
       const isLoggedIn = localStorage.getItem('calendai-isLoggedIn') === 'true' || !!localStorage.getItem('calendai-jwt') || !!localStorage.getItem('token');
       return isLoggedIn ? 'dashboard' : 'landing';
     } catch { return 'landing'; }
   });
   const [guestBookingId, setGuestBookingId] = useState(() => {
-    // First check /book/:id in the pathname (public guest booking route)
     const pathMatch = typeof window !== 'undefined' ? window.location.pathname.match(/^\/book\/(.+)$/) : null;
     if (pathMatch && pathMatch[1]) {
       return pathMatch[1];
     }
-    // Fallback to ?book=dyn_xxx query parameter
     const params = new URLSearchParams(window.location.search);
     const bookParam = params.get('book');
-    // Check if it's a dynamic booking ID (starts with dyn_)
     if (bookParam && bookParam !== 'true' && bookParam !== '1') {
       return bookParam;
     }
     return null;
   });
 
-  // ── Auto-redirect authenticated users from landing to dashboard ──
   useEffect(() => {
     if (isAuthenticated) {
       setCurrentView('dashboard');
@@ -196,13 +186,9 @@ function AppRoutes() {
   });
   const scheduleHistoryRef = useRef([]);
 
-  // ── Multi-Event Day View State ──
-  // Tracks which days have "show all" expanded (for the weekly cards)
   const [expandedDays, setExpandedDays] = useState({});
-  // Tracks the day being viewed in the Day Detail Modal
   const [dayDetailModal, setDayDetailModal] = useState(null);
 
-  // Notification / Reminder State
   function getInitialNotificationPerm() {
     try {
       if (typeof Notification !== 'undefined') return Notification.permission;
@@ -213,22 +199,24 @@ function AppRoutes() {
   const [toasts, setToasts] = useState([]);
   const notifiedRemindersRef = useRef(new Set());
 
-  // Sidebar state
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
-  // ── Guest Usage Limit State ──
   const [guestUsageCount, setGuestUsageCount] = useState(() => {
     try {
       return parseInt(safeStorage.getItem(GUEST_COUNT_KEY) || '0', 10);
     } catch { return 0; }
   });
   const [showGuestLimitModal, setShowGuestLimitModal] = useState(false);
-  // ── AI Credits (PAYG) State ──
   const [showCreditsModal, setShowCreditsModal] = useState(false);
   const [creditsError, setCreditsError] = useState("");
   const [checkoutLoading, setCheckoutLoading] = useState(false);
 
-  // ── Lemon Squeezy Checkout Handler ──
+  // ── Advanced Options Toggle ──
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  // ── Bottom Nav Active Tab ──
+  const [activeTab, setActiveTab] = useState('home');
+
   const handleBuyCredits = useCallback(async () => {
     if (!user) {
       setShowLoginPrompt(true);
@@ -251,7 +239,6 @@ function AppRoutes() {
         throw new Error(data.error || lang === 'he' ? 'שגיאה ביצירת דף התשלום.' : 'Failed to create checkout session.');
       }
       if (data.url) {
-        // Redirect to Lemon Squeezy checkout page
         window.location.href = data.url;
       } else {
         throw new Error('Invalid response from server.');
@@ -263,43 +250,36 @@ function AppRoutes() {
     }
   }, [user, lang, setShowLoginPrompt, setError]);
 
-  // Meeting Wizard State
   const [showWizard, setShowWizard] = useState(false);
 
-  // PWA Install State
   const [installPrompt, setInstallPrompt] = useState(null);
   const [showPwaPopup, setShowPwaPopup] = useState(false);
   const [pwaDismissed, setPwaDismissed] = useState(() => {
     try { return safeStorage.getItem('calendai-pwa-dismissed') === 'true'; } catch { return false; }
   });
 
-  // Smart PWA Install Banner (bottom toast, appears after 60s)
   const [showPwaBanner, setShowPwaBanner] = useState(false);
   const [pwaBannerDismissed, setPwaBannerDismissed] = useState(() => {
     try { return safeStorage.getItem('calendai-pwa-banner-dismissed') === 'true'; } catch { return false; }
   });
 
-  // Email/Password Auth State
   const [showEmailAuth, setShowEmailAuth] = useState(false);
-  const [authMode, setAuthMode] = useState('login'); // 'login' or 'register'
+  const [authMode, setAuthMode] = useState('login');
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
   const [authName, setAuthName] = useState('');
   const [emailAuthLoading, setEmailAuthLoading] = useState(false);
   const [authError, setAuthError] = useState('');
 
-  // Share Booking Link State
   const [showShareModal, setShowShareModal] = useState(false);
   const [shareLinkCopied, setShareLinkCopied] = useState(false);
 
-  // Profile settings (location in sidebar)
   const [profileLocation, setProfileLocation] = useState(() => {
     try { return safeStorage.getItem('calendai-profile-location') || 'none'; } catch { return 'none'; }
   });
 
   const bookingLink = typeof window !== 'undefined' ? `${window.location.origin}${window.location.pathname}?book=1` : '';
 
-  // ── Guest Usage Counter Helpers ──
   const incrementGuestUsage = useCallback(() => {
     setGuestUsageCount(prev => {
       const next = prev + 1;
@@ -308,7 +288,6 @@ function AppRoutes() {
     });
   }, []);
 
-  // Save guest-created data temporarily to localStorage
   const saveGuestTempData = useCallback((actionType, data) => {
     try {
       const existing = JSON.parse(safeStorage.getItem(GUEST_DATA_KEY) || '[]');
@@ -317,24 +296,19 @@ function AppRoutes() {
     } catch (e) {}
   }, []);
 
-  // Check if guest can perform an action: return true if allowed, false if blocked
   const checkGuestActionLimit = useCallback(() => {
-    if (user) return true; // Logged-in users have no limit
+    if (user) return true;
     if (guestUsageCount < GUEST_MAX_ACTIONS) return true;
-    // Show the limit modal
     setShowGuestLimitModal(true);
     return false;
   }, [user, guestUsageCount]);
 
-  // Sync guest temp data to backend after login
   const syncGuestDataToBackend = useCallback(async () => {
     try {
       const raw = safeStorage.getItem(GUEST_DATA_KEY);
       if (!raw) return;
       const guestData = JSON.parse(raw);
       if (!Array.isArray(guestData) || guestData.length === 0) return;
-
-      // For each saved action, replay it to the backend
       for (const entry of guestData) {
         if (entry.type === 'parse' && entry.data?.text) {
           await fetch(`${API_BASE}/api/parse-schedule`, {
@@ -349,8 +323,6 @@ function AppRoutes() {
           });
         }
       }
-
-      // Clear guest temp data after sync
       safeStorage.removeItem(GUEST_DATA_KEY);
       safeStorage.removeItem(GUEST_COUNT_KEY);
       setGuestUsageCount(0);
@@ -359,7 +331,6 @@ function AppRoutes() {
     }
   }, []);
 
-  // ── Share App Handler ──
   const handleShareApp = useCallback(async () => {
     const shareUrl = 'https://calendai-backend-dfmi.onrender.com/';
     if (navigator.share) {
@@ -370,7 +341,6 @@ function AppRoutes() {
           url: shareUrl,
         });
       } catch (e) {
-        // User cancelled or error - fallback to clipboard
         if (e.name !== 'AbortError') {
           copyToClipboardFallback(shareUrl);
         }
@@ -404,20 +374,17 @@ function AppRoutes() {
     }
   }
 
-  // ── Shabbat Mode (Dynamic via Hebcal API) ──
-  const [shabbatTimes, setShabbatTimes] = useState(null); // { candles: Date, havdalah: Date }
+  // ── Shabbat Mode ──
+  const [shabbatTimes, setShabbatTimes] = useState(null);
   const [shabbatFetchError, setShabbatFetchError] = useState(false);
 
-  // Fetch Shabbat times from Hebcal API
   const fetchShabbatTimes = useCallback(async () => {
     try {
       const res = await fetch('https://www.hebcal.com/shabbat?cfg=json&geonameid=293397&m=50');
       if (!res.ok) throw new Error('Failed to fetch Shabbat times');
       const data = await res.json();
-      
       let candlesTime = null;
       let havdalahTime = null;
-      
       for (const item of data.items) {
         if (item.category === 'candles' && !candlesTime) {
           candlesTime = new Date(item.date);
@@ -426,7 +393,6 @@ function AppRoutes() {
           havdalahTime = new Date(item.date);
         }
       }
-      
       if (candlesTime && havdalahTime) {
         setShabbatTimes({ candles: candlesTime, havdalah: havdalahTime });
         setShabbatFetchError(false);
@@ -439,7 +405,6 @@ function AppRoutes() {
     }
   }, []);
 
-  // Fetch on mount and every 6 hours
   useEffect(() => {
     fetchShabbatTimes();
     const interval = setInterval(fetchShabbatTimes, 6 * 60 * 60 * 1000);
@@ -448,7 +413,6 @@ function AppRoutes() {
 
   const isShabbatNow = useCallback(() => {
     if (!shabbatTimes || !shabbatTimes.candles || !shabbatTimes.havdalah) {
-      // Fallback: if API hasn't loaded yet, use hardcoded times
       const now = new Date();
       const day = now.getDay();
       const hours = now.getHours();
@@ -458,15 +422,12 @@ function AppRoutes() {
       if (day === 6 && totalMinutes < 1200) return true;
       return false;
     }
-    
     const now = new Date();
     return now >= shabbatTimes.candles && now < shabbatTimes.havdalah;
   }, [shabbatTimes]);
 
-  // Check if a given date/time falls within Shabbat (for blocking scheduling)
   const isTimeInShabbat = useCallback((date) => {
     if (!shabbatTimes || !shabbatTimes.candles || !shabbatTimes.havdalah) {
-      // Fallback: check if it's Friday 16:00 to Saturday 20:00
       const day = date.getDay();
       const hours = date.getHours();
       const minutes = date.getMinutes();
@@ -480,7 +441,6 @@ function AppRoutes() {
 
   const [showShabbatOverlay, setShowShabbatOverlay] = useState(() => isShabbatNow());
 
-  // Check shabbat status every minute
   useEffect(() => {
     const checkShabbat = () => {
       setShowShabbatOverlay(isShabbatNow());
@@ -490,11 +450,8 @@ function AppRoutes() {
     return () => clearInterval(interval);
   }, [isShabbatNow]);
 
-  // Block scheduling during Shabbat - wrap the parse handler
   const handleParseOriginalRef = useRef(null);
-  // We'll check in handleParse before proceeding
 
-  // Smart Auth: require login for save operations
   const handleLoginRequired = useCallback((action) => {
     if (!user) {
       setPendingAction(action);
@@ -504,7 +461,6 @@ function AppRoutes() {
     return false;
   }, [user]);
 
-  // Listen for beforeinstallprompt (Android Chrome)
   useEffect(() => {
     const handler = (e) => {
       e.preventDefault();
@@ -517,7 +473,6 @@ function AppRoutes() {
     return () => window.removeEventListener('beforeinstallprompt', handler);
   }, [pwaDismissed]);
 
-  // Show iOS PWA prompt if not already dismissed
   useEffect(() => {
     if (!isStandalone() && !pwaDismissed && !installPrompt) {
       const timer = setTimeout(() => {
@@ -527,14 +482,12 @@ function AppRoutes() {
     }
   }, [pwaDismissed, installPrompt]);
 
-  // Hide PWA popup if already standalone
   useEffect(() => {
     if (isStandalone()) {
       setShowPwaPopup(false);
     }
   }, []);
 
-  // Smart PWA Banner: show after 60 seconds of active usage
   useEffect(() => {
     if (!isStandalone() && !pwaBannerDismissed) {
       const timer = setTimeout(() => {
@@ -590,7 +543,6 @@ function AppRoutes() {
     window.open(bookingLink, '_blank');
   };
 
-  // Fetch schedule from backend
   const fetchSchedule = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/api/schedule`, { credentials: "include" });
@@ -603,7 +555,6 @@ function AppRoutes() {
     }
   }, []);
 
-  // ── Refresh user data (aiCredits balance) from the server ──
   const refreshUserCredits = useCallback(async () => {
     if (!user) return;
     try {
@@ -624,27 +575,22 @@ function AppRoutes() {
     }
   }, [user, setUser]);
 
-  // Save the current schedule state to the undo history stack
   const saveScheduleState = useCallback(() => {
     scheduleHistoryRef.current.push(JSON.parse(JSON.stringify(schedule)));
   }, [schedule]);
 
-  // Keep-alive ping to wake up Render server if it's sleeping
-  // Pings every 5 minutes, but only when the page is visible
   useEffect(() => {
     let pingInterval;
     const startPing = () => {
       pingInterval = setInterval(() => {
         fetch(`${API_BASE}/api/health`, { method: 'GET', cache: 'no-store' })
-          .catch(() => {}); // Silently fail - server might be waking up
-      }, 5 * 60 * 1000); // Every 5 minutes
+          .catch(() => {});
+      }, 5 * 60 * 1000);
     };
     const stopPing = () => {
       if (pingInterval) clearInterval(pingInterval);
     };
-    // Start immediately when component mounts
     startPing();
-    // Stop when tab is hidden, resume when visible
     const handleVisibility = () => {
       if (document.hidden) {
         stopPing();
@@ -659,11 +605,6 @@ function AppRoutes() {
     };
   }, []);
 
-  // Auth is now managed by AuthContext
-  // The initial auth check, token extraction from URL, and session restoration
-  // all happen in the AuthProvider component (context/AuthContext.jsx).
-
-  // Handle booking confirmation
   const handleBookingConfirm = useCallback(async (bookingData) => {
     if (handleLoginRequired('booking')) return;
     if (!checkGuestActionLimit()) return;
@@ -674,21 +615,15 @@ function AppRoutes() {
       for (const slot of slots) {
         const totalStartMinutes = slot.hour * 60 + slot.minute;
         const totalEndMinutes = totalStartMinutes + duration;
-        
         const endHour24 = Math.floor(totalEndMinutes / 60) % 24;
         const endMin = totalEndMinutes % 60;
-        
         const startH12 = slot.hour % 12 || 12;
         const startAmpm = slot.hour >= 12 ? 'PM' : 'AM';
-        
         const endH12 = endHour24 % 12 || 12;
         const endAmpm = endHour24 >= 12 ? 'PM' : 'AM';
-
         const startTime = `${String(startH12).padStart(2, '0')}:${String(slot.minute).padStart(2, '0')} ${startAmpm}`;
         const endTime = `${String(endH12).padStart(2, '0')}:${String(endMin).padStart(2, '0')} ${endAmpm}`;
-
         if (!firstSlotTime) firstSlotTime = startTime;
-
         if (user) {
           const res = await fetch(`${API_BASE}/api/schedule/add-to-free-slot`, {
             method: "POST",
@@ -719,18 +654,14 @@ function AppRoutes() {
           });
         }
       }
-
       if (user) {
         await fetchSchedule();
       }
-
       setSuccess(t.bookingConfirmation);
-      
       if (!user) {
         incrementGuestUsage();
         saveGuestTempData('booking', { day, slots, guestName, duration, location: selectedLocation });
       }
-
       const toastId = Date.now();
       const meetingTime = firstSlotTime || '';
       const toastMessage = t.bookingToastMessage
@@ -749,7 +680,6 @@ function AppRoutes() {
     }
   }, [schedule, selectedLocation, fetchSchedule, t, handleLoginRequired, checkGuestActionLimit, user, incrementGuestUsage, saveGuestTempData]);
 
-  // Toggle language function
   const toggleLanguage = () => {
     const newLang = lang === 'he' ? 'en' : 'he';
     setLang(newLang);
@@ -762,9 +692,7 @@ function AppRoutes() {
         const perm = await Notification.requestPermission();
         setNotificationPerm(perm);
       }
-    } catch (e) {
-      // Notification API not available
-    }
+    } catch (e) {}
   }, []);
 
   useEffect(() => {
@@ -772,22 +700,18 @@ function AppRoutes() {
     return () => clearTimeout(timer);
   }, [requestNotificationPermission]);
 
-  // Reminder Checker Interval
   useEffect(() => {
     const interval = setInterval(() => {
       const now = new Date();
       const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
       const todayName = dayNames[now.getDay()];
-
       const todayEvents = [
         ...(schedule['Today'] || []),
         ...(schedule[todayName] || [])
       ];
-
       for (const event of todayEvents) {
         const reminderMin = event.reminderMinutesBefore;
         if (!reminderMin || reminderMin <= 0) continue;
-
         const timeMatch = event.startTime?.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
         if (!timeMatch) continue;
         let eventHour = parseInt(timeMatch[1], 10);
@@ -795,16 +719,13 @@ function AppRoutes() {
         const isPM = timeMatch[3].toUpperCase() === 'PM';
         if (isPM && eventHour !== 12) eventHour += 12;
         if (!isPM && eventHour === 12) eventHour = 0;
-
         const eventDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), eventHour, eventMin, 0);
         const alertTime = new Date(eventDate.getTime() - reminderMin * 60000);
         const timeDiff = now.getTime() - alertTime.getTime();
-
         if (timeDiff >= 0 && timeDiff < 31000) {
           const reminderKey = `${event.title}_${todayName}_${reminderMin}_${event.startTime}`;
           if (!notifiedRemindersRef.current.has(reminderKey)) {
             notifiedRemindersRef.current.add(reminderKey);
-
             if (notificationPerm === "granted") {
               try {
                 new Notification(t.reminderTitle, {
@@ -813,16 +734,13 @@ function AppRoutes() {
                 });
               } catch (e) {}
             }
-
             playNotificationSound();
-
             const toastId = Date.now();
             setToasts(prev => [...prev, {
               id: toastId,
               title: event.title,
               message: `${t.reminderStartsIn} ${reminderMin} ${t.reminderMinutes} (${event.startTime})`
             }]);
-
             setTimeout(() => {
               setToasts(prev => prev.filter(t => t.id !== toastId));
             }, 8000);
@@ -832,8 +750,6 @@ function AppRoutes() {
     }, 30000);
     return () => clearInterval(interval);
   }, [schedule, notificationPerm, lang]);
-
-  // (Auth state machine handles initial auth check via the useEffect above)
 
   const [isTransitioning, setIsTransitioning] = useState(false);
   const PLACEHOLDER_EXAMPLES = t.placeholderExamples;
@@ -859,51 +775,35 @@ function AppRoutes() {
 
   useEffect(() => { fetchSchedule(); }, [fetchSchedule]);
 
-  // ── Voice-to-Text Handler (Web Speech API) ──
   const handleToggleListening = useCallback(() => {
     if (isListening) {
-      // Stop listening
       if (recognitionRef.current) {
         try { recognitionRef.current.stop(); } catch (e) {}
       }
       setIsListening(false);
       return;
     }
-
     try {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SpeechRecognition) return;
-
       const recognition = new SpeechRecognition();
       recognitionRef.current = recognition;
-
-      // Support both Hebrew and English
       recognition.lang = lang === 'he' ? 'he-IL' : 'en-US';
       recognition.continuous = false;
       recognition.interimResults = false;
       recognition.maxAlternatives = 1;
-
-      recognition.onstart = () => {
-        setIsListening(true);
-      };
-
+      recognition.onstart = () => { setIsListening(true); };
       recognition.onresult = (event) => {
         const transcript = event.results[0][0].transcript;
-        // Append to existing text with a space if not empty
         const currentText = inputTextRef.current;
         const newText = currentText ? `${currentText} ${transcript}` : transcript;
         setInputText(newText);
       };
-
       recognition.onerror = (event) => {
         console.warn('Speech recognition error:', event.error);
         setIsListening(false);
       };
-
-      recognition.onend = () => {
-        setIsListening(false);
-      };
-
+      recognition.onend = () => { setIsListening(false); };
       recognition.start();
     } catch (e) {
       console.warn('Speech recognition failed:', e);
@@ -966,14 +866,10 @@ function AppRoutes() {
           setInputText("");
           return;
         }
-        // ── CONFLICT 409: User requested a time that is already taken ―
-        // Show the conflict message prominently as a bold error.
         if (res.status === 409 && errorData.hasConflict === true) {
           setError(errorData.conflictMessage || errorData.replyMessage || 'יש כבר פעילות בזמן הזה. האם להוסיף בכל זאת או לקבוע לזמן אחר?');
-          // Do NOT clear the input text — the user may want to modify their request.
           return;
         }
-        // ── PAYG 402: Out of AI credits — show the purchase modal ──
         if (res.status === 402) {
           setCreditsError(errorData.error || 'נגמרו לך הקרדיטים! אנא רכוש חבילת פעולות נוספת כדי להמשיך להשתמש ב-AI.');
           setShowCreditsModal(true);
@@ -994,7 +890,6 @@ function AppRoutes() {
       }
       if (data.conflicts?.length > 0) setConflicts(data.conflicts);
       else setConflicts([]);
-      // ── Update aiCredits immediately from the response ──
       if (data.aiCredits !== undefined && data.aiCredits !== null) {
         setUser(prev => prev ? { ...prev, aiCredits: data.aiCredits } : prev);
         try {
@@ -1005,14 +900,11 @@ function AppRoutes() {
           }
         } catch (e) {}
       } else {
-        // Fallback: refresh from server if aiCredits not in response
         refreshUserCredits();
       }
       await fetchSchedule();
       setSuccess(data.replyMessage || `${t.successAdded} ${data.events?.length || 0} ${t.successEvents}`);
       setInputText("");
-
-      // Track guest usage
       if (!user) {
         incrementGuestUsage();
         saveGuestTempData('parse', { text: inputText, recurrence, location: selectedLocation });
@@ -1233,7 +1125,6 @@ function AppRoutes() {
 
   const allLocationsInEvents = [...new Set(Object.values(schedule).flat().map(e => e.location).filter(Boolean))];
 
-  // ── Helper: parse time string "HH:MM AM/PM" to minutes for sorting ──
   const timeToSortMinutes = (timeStr) => {
     if (!timeStr) return 0;
     const match = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
@@ -1246,7 +1137,6 @@ function AppRoutes() {
     return hours * 60 + minutes;
   };
 
-  // ── Group and sort events by day, sorted by startTime within each day ──
   const getSortedDayEvents = (dayKey) => {
     const dayEvents = getFilteredEvents(dayKey);
     return [...dayEvents].sort((a, b) => {
@@ -1262,7 +1152,6 @@ function AppRoutes() {
     return dayEvents.filter(e => e.location === locationFilter);
   };
 
-  // ── Toggle expanded state for a specific day ──
   const toggleDayExpanded = (dayKey) => {
     setExpandedDays(prev => ({
       ...prev,
@@ -1270,7 +1159,6 @@ function AppRoutes() {
     }));
   };
 
-  // ── Open the Day Detail Modal for a specific day ──
   const openDayDetail = (dayKey) => {
     setDayDetailModal({
       dayKey,
@@ -1279,24 +1167,15 @@ function AppRoutes() {
     });
   };
 
-  // ── Dedicated OAuth callback route ──
-  // When the backend redirects to /auth/success?token=xxx after a successful
-  // Google OAuth login, render the AuthSuccess component. It extracts the token,
-  // stores it, fetches user data, and performs a full navigation to "/" so that
-  // App.jsx re-initializes with the authenticated state — no race conditions.
   if (typeof window !== 'undefined' && window.location.pathname === '/auth/success') {
     return <AuthSuccess />;
   }
 
-  // ── LuxuryLoader: only shown during initial loading when there's no saved token ──
-  // If the user has a token in localStorage, render immediately — AuthContext
-  // will resolve auth in the background and update the user state.
   console.log('🔄 [App render] authLoading:', authLoading, 'isAuthenticated:', isAuthenticated, 'currentView:', currentView, 'authStatus:', authStatus);
   if (authLoading && !user && !localStorage.getItem('token')) {
     return <LuxuryLoader statusText={t.parsing || 'AUTHENTICATING...'} />;
   }
 
-  // If a dynamic booking ID is in the URL, show the guest booking view
   if (guestBookingId) {
     return (
       <GuestBookingView
@@ -1314,8 +1193,6 @@ function AppRoutes() {
 
   if (showPrivacy) return <Privacy onBack={() => setShowPrivacy(false)} />;
 
-  // Landing Page: Show the landing page for unauthenticated guests on the root route
-  // If the user is already authenticated, skip the landing page and go to dashboard
   if (currentView === 'landing' && !isAuthenticated) {
     return (
       <LandingPage
@@ -1328,7 +1205,6 @@ function AppRoutes() {
     );
   }
 
-  // Booking View: ONLY when ?book=true or ?book=1 is explicitly in the URL
   if (currentView === 'booking') {
     return (
       <Booking
@@ -1347,13 +1223,20 @@ function AppRoutes() {
   const isRTL = lang === 'he';
   const SUGGESTION_CHIPS = t.suggestionChips;
 
+  // ── Get accent color for event card ──
+  const getEventAccent = (event) => {
+    if (event.isSleep) return 'border-indigo-500 bg-indigo-50/20';
+    if (event.reminderMinutesBefore > 0) return 'border-amber-400 bg-amber-50/20';
+    if (event.eventType === 'notification') return 'border-purple-400 bg-purple-50/20';
+    return 'border-blue-500 bg-white';
+  };
+
   return (
     <>
       {/* ── Shabbat Screen Overlay ── */}
       {showShabbatOverlay && (
         <div className="fixed inset-0 z-[10000] bg-gradient-to-b from-indigo-950 via-purple-950 to-slate-900 flex flex-col items-center justify-center p-8" dir="rtl">
           <div className="max-w-md mx-auto text-center">
-            {/* Candle SVG Icon */}
             <div className="mb-8 flex items-center justify-center gap-6">
               <svg width="48" height="72" viewBox="0 0 48 72" fill="none" xmlns="http://www.w3.org/2000/svg" className="opacity-90">
                 <rect x="18" y="52" width="12" height="18" rx="2" fill="#FCD34D" opacity="0.6"/>
@@ -1378,410 +1261,418 @@ function AppRoutes() {
         </div>
       )}
 
-      <div className={`min-h-screen bg-[#F8FAFC] p-4 sm:p-6 font-sans pb-20`} dir={isRTL ? 'rtl' : 'ltr'}>
-      {/* iOS In-App Browser Banner (WhatsApp, Facebook, Instagram) */}
-      {isIosWhatsApp() && (
-        <div className="fixed top-0 left-0 right-0 z-[99999] bg-amber-50 border-b border-amber-200 px-3 py-2 text-xs text-amber-800 flex items-center justify-between gap-2 shadow-sm" dir="rtl">
-          <div className="flex items-center gap-1.5">
-            <svg className="w-3.5 h-3.5 text-amber-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <span>לקבלת חוויית התחברות מלאה, מומלץ לפתוח ב-Safari</span>
-          </div>
-          <button
-            onClick={() => {
-              // Copy current URL to clipboard
-              const url = window.location.href;
-              if (navigator.clipboard) {
-                navigator.clipboard.writeText(url).catch(() => {});
-              }
-              // Try to open in Safari using the safari:// URL scheme
-              window.location.href = url;
-            }}
-            className="shrink-0 px-2.5 py-1 bg-amber-600 text-white rounded-md font-medium hover:bg-amber-700 transition text-[10px]"
-          >
-            פתח ב-Safari
-          </button>
-          <button
-            onClick={(e) => {
-              e.currentTarget.closest('.fixed').style.display = 'none';
-            }}
-            className="shrink-0 p-1 text-amber-400 hover:text-amber-600 transition"
-          >
-            <X className="w-3 h-3" />
-          </button>
-        </div>
-      )}
-      {/* Toast Notifications */}
-      {toasts.length > 0 && (
-        <div className={`fixed top-4 ${isRTL ? 'left-4' : 'right-4'} z-[100] flex flex-col gap-2 max-w-sm`}>
-          {toasts.map(ti => (
-            <div key={ti.id} className={`bg-white ${isRTL ? 'border-r-4' : 'border-l-4'} border-amber-500 rounded-lg shadow-lg p-4 animate-slide-in flex items-start gap-3`}>
-              <BellRing className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
-              <div className="flex-1 min-w-0">
-                <div className="font-bold text-sm text-slate-800">{t.toastReminder} {ti.title}</div>
-                <div className="text-xs text-slate-500 mt-0.5">{ti.message}</div>
-              </div>
-              <button onClick={() => setToasts(prev => prev.filter(x => x.id !== ti.id))} className="text-slate-300 hover:text-slate-500">
-                <X className="w-4 h-4" />
-              </button>
+      <div className={`min-h-screen bg-[#F8FAFC] font-sans pb-24`} dir={isRTL ? 'rtl' : 'ltr'}>
+        {/* iOS In-App Browser Banner */}
+        {isIosWhatsApp() && (
+          <div className="fixed top-0 left-0 right-0 z-[99999] bg-amber-50 border-b border-amber-200 px-3 py-2 text-xs text-amber-800 flex items-center justify-between gap-2 shadow-sm" dir="rtl">
+            <div className="flex items-center gap-1.5">
+              <svg className="w-3.5 h-3.5 text-amber-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span>לקבלת חוויית התחברות מלאה, מומלץ לפתוח ב-Safari</span>
             </div>
-          ))}
-        </div>
-      )}
-
-      {/* Header */}
-      <header className="max-w-6xl mx-auto mb-6 sm:mb-8 flex items-center justify-between pb-3 sm:pb-4 gap-1 sm:gap-2">
-        <div className="flex items-center gap-1 sm:gap-3 min-w-0 flex-shrink">
-          {/* Hamburger Menu Button */}
-          <button onClick={() => setIsSidebarOpen(true)}
-            className="flex items-center justify-center w-8 h-8 sm:w-9 sm:h-9 rounded-lg hover:bg-slate-100 transition text-slate-600 shrink-0">
-            <Menu className="w-4 h-4 sm:w-5 sm:h-5" />
-          </button>
-          <Calendar className="w-5 h-5 sm:w-8 sm:h-8 text-blue-600 shrink-0" />
-          <div className="min-w-0">
-            <span className="text-[8px] sm:text-[10px] text-slate-400 tracking-widest mb-0.5 block">{t.besod}</span>
-            <h1 className="text-sm sm:text-2xl font-bold text-slate-900 leading-tight truncate">CalendAI</h1>
-            <p className="text-[10px] sm:text-sm text-indigo-500/80 font-medium leading-snug truncate hidden sm:block">{t.tagline}</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-1 sm:gap-3 shrink-0">
-          {/* Meeting Wizard Button */}
-          <button onClick={() => setShowWizard(true)}
-            className="flex items-center gap-1 bg-gradient-to-r from-blue-500 to-indigo-600 border border-blue-400 text-white px-1.5 sm:px-4 py-1 sm:py-2 rounded-full hover:from-blue-600 hover:to-indigo-700 transition-all duration-200 text-[11px] sm:text-sm font-medium shadow-sm shadow-blue-200 hover:shadow-md hover:-translate-y-0.5 whitespace-nowrap">
-            <Calendar className="w-3 h-3 sm:w-4 sm:h-4" /> <span className="hidden sm:inline">{t.wizardTitle}</span><span className="sm:hidden">{t.wizardShort}</span>
-          </button>
-          {/* Share App Button */}
-          <button onClick={handleShareApp}
-            className="flex items-center gap-1 bg-white border border-emerald-300 text-emerald-700 px-1.5 sm:px-3 py-1 sm:py-2 rounded-full hover:bg-emerald-50 hover:border-emerald-400 transition-all duration-200 text-[11px] sm:text-sm font-medium whitespace-nowrap shadow-sm hover:shadow-md">
-            <Share2 className="w-3 h-3 sm:w-4 sm:h-4" /> <span className="hidden sm:inline">{t.shareAppButton || 'שתף'}</span>
-          </button>
-          {/* Language Toggle Button */}
-          <button onClick={toggleLanguage}
-            className="flex items-center gap-1 bg-white border border-slate-300 text-slate-700 px-1.5 sm:px-3 py-1 sm:py-2 rounded-full hover:bg-slate-50 hover:border-slate-400 transition-all duration-200 text-[11px] sm:text-sm font-medium whitespace-nowrap">
-            {t.languageLabel}
-          </button>
-          {user ? (
-            <div className="flex items-center gap-1 sm:gap-3">
-              {user?.photo ? <img src={user.photo} alt="" className="w-6 h-6 sm:w-8 sm:h-8 rounded-full shrink-0" /> : <User className="w-4 h-4 sm:w-6 sm:h-6 text-slate-500 shrink-0" />}
-              <span className="hidden sm:inline text-sm text-slate-700 truncate max-w-[100px]">{user?.displayName || user?.email || ''}</span>
-              <button onClick={handleLogout} className="flex items-center gap-1 text-[11px] sm:text-sm text-red-500 hover:text-red-700 transition shrink-0"><LogOut className="w-3 h-3 sm:w-4 sm:h-4" /> <span className="hidden sm:inline">{t.logout}</span></button>
-            </div>
-          ) : (
-            <button onClick={handleLogin} className="flex items-center gap-1 sm:gap-2 bg-white border border-slate-300 text-slate-700 px-1.5 sm:px-4 py-1 sm:py-2 rounded-lg hover:bg-slate-50 transition text-[11px] sm:text-sm whitespace-nowrap">
-              <LogIn className="w-3 h-3 sm:w-4 sm:h-4" /> <span className="hidden sm:inline">{t.loginWithGoogle}</span><span className="sm:hidden">{t.loginShort}</span>
+            <button
+              onClick={() => {
+                const url = window.location.href;
+                if (navigator.clipboard) {
+                  navigator.clipboard.writeText(url).catch(() => {});
+                }
+                window.location.href = url;
+              }}
+              className="shrink-0 px-2.5 py-1 bg-amber-600 text-white rounded-md font-medium hover:bg-amber-700 transition text-[10px]"
+            >
+              פתח ב-Safari
             </button>
-          )}
-        </div>
-      </header>
-
-      <main className="max-w-6xl mx-auto grid grid-cols-1 gap-6">
-        {/* Input box - Premium Floating Card */}
-        <div className="bg-white p-6 sm:p-8 rounded-3xl shadow-lg shadow-slate-100 border border-slate-100">
-          <h2 className="text-lg font-semibold mb-2 text-slate-800">{t.inputTitle}</h2>
-
-          {/* ── Suggestion Chips Bar (premium chips) ── */}
-          <div className="flex items-center gap-2 overflow-x-auto whitespace-nowrap py-1 mb-3" style={{ scrollbarWidth: 'none' }}>
-            <span className="text-xs text-slate-400 shrink-0">{t.tryForExample}</span>
-            {SUGGESTION_CHIPS.map((s, i) => (
-              <button key={i} onClick={() => setInputText(s)}
-                className="px-3 py-1.5 text-xs rounded-full border transition bg-slate-50 text-slate-600 border-slate-200 hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-300 hover:shadow-sm hover:-translate-y-0.5 active:translate-y-0 shrink-0 font-medium">{s}</button>
-            ))}
-            <button onClick={() => setInputText(t.suggestionSleep)}
-              className="px-3 py-1.5 text-xs rounded-full border transition bg-indigo-50 text-indigo-600 border-indigo-200 hover:bg-indigo-100 hover:border-indigo-400 hover:shadow-sm hover:-translate-y-0.5 active:translate-y-0 shrink-0 flex items-center gap-1 font-medium">
-              <Moon className="w-3 h-3" /> {t.suggestionSleep}
+            <button
+              onClick={(e) => {
+                e.currentTarget.closest('.fixed').style.display = 'none';
+              }}
+              className="shrink-0 p-1 text-amber-400 hover:text-amber-600 transition"
+            >
+              <X className="w-3 h-3" />
             </button>
           </div>
+        )}
 
-          {/* ── AI Prompt Textarea ── */}
-          <div className="relative" style={{ minHeight: '120px' }}>
-            <textarea value={inputText} onChange={e => setInputText(e.target.value)}
-              className={`w-full p-4 sm:p-5 rounded-2xl bg-slate-50 text-slate-800 placeholder-transparent focus:ring-2 focus:ring-indigo-400 focus:ring-violet-400 focus:bg-white focus:shadow-lg focus:shadow-indigo-100/50 border border-slate-200 focus:border-indigo-300 transition-all duration-200 resize-none ${isRTL ? 'text-right' : 'text-left'}`}
-              rows="4" placeholder=" "
-              onKeyDown={e => { if (e.key === 'Enter' && e.ctrlKey) handleParse(); }}
-            />
-            {/* ── AI Credits Balance (PAYG) — premium sparkle card ── */}
-            {user && user.aiCredits !== undefined && user.aiCredits !== null && (
-              <div className={`absolute top-2 ${isRTL ? 'left-2' : 'right-2'} flex items-center gap-2`}>
-                <div className={`flex items-center gap-1.5 text-[11px] font-medium px-3 py-1.5 rounded-full shadow-sm backdrop-blur-sm ${user.aiCredits > 0 ? 'bg-amber-50/90 text-amber-700 border border-amber-200/80' : 'bg-red-50/90 text-red-600 border border-red-200/80'}`}>
-                  <Sparkles className="w-3 h-3 text-amber-500" />
-                  <span dir="rtl">{user.aiCredits > 0 ? `נותרו לך ${user.aiCredits} פעולות AI` : 'נגמרו הקרדיטים!'}</span>
+        {/* Toast Notifications */}
+        {toasts.length > 0 && (
+          <div className={`fixed top-4 ${isRTL ? 'left-4' : 'right-4'} z-[100] flex flex-col gap-2 max-w-sm`}>
+            {toasts.map(ti => (
+              <div key={ti.id} className={`bg-white ${isRTL ? 'border-r-4' : 'border-l-4'} border-amber-500 rounded-lg shadow-lg p-4 animate-slide-in flex items-start gap-3`}>
+                <BellRing className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <div className="font-bold text-sm text-slate-800">{t.toastReminder} {ti.title}</div>
+                  <div className="text-xs text-slate-500 mt-0.5">{ti.message}</div>
                 </div>
-                <button
-                  onClick={handleBuyCredits}
-                  disabled={checkoutLoading}
-                  className="flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1.5 rounded-full bg-gradient-to-r from-purple-600 to-indigo-600 text-white border border-purple-500 hover:from-purple-700 hover:to-indigo-700 hover:shadow-md hover:shadow-indigo-200 transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed"
-                >
-                  {checkoutLoading ? (
-                    <Loader2 className="w-3 h-3 animate-spin" />
-                  ) : (
-                    <><Sparkles className="w-3 h-3" /> {lang === 'he' ? 'רכוש 100 קרדיטים' : 'Buy 100 credits'}</>
-                  )}
+                <button onClick={() => setToasts(prev => prev.filter(x => x.id !== ti.id))} className="text-slate-300 hover:text-slate-500">
+                  <X className="w-4 h-4" />
                 </button>
               </div>
+            ))}
+          </div>
+        )}
+
+        {/* ── Minimal Header ── */}
+        <header className="px-4 py-3 flex items-center justify-between max-w-6xl mx-auto">
+          <div className="flex items-center gap-2">
+            <button onClick={() => setIsSidebarOpen(true)} className="flex items-center justify-center w-8 h-8 rounded-lg hover:bg-slate-100 transition text-slate-600">
+              <Menu className="w-5 h-5" />
+            </button>
+            <Calendar className="w-6 h-6 text-blue-600" />
+            <h1 className="text-lg font-bold text-slate-900">CalendAI</h1>
+          </div>
+          <div className="flex items-center gap-2">
+            {/* AI Credits Badge */}
+            {user && user.aiCredits !== undefined && user.aiCredits !== null && (
+              <button
+                onClick={handleBuyCredits}
+                disabled={checkoutLoading}
+                className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full border shadow-sm transition ${
+                  user.aiCredits > 0
+                    ? 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'
+                    : 'bg-red-50 text-red-600 border-red-200 hover:bg-red-100 animate-pulse'
+                }`}
+              >
+                <Zap className="w-3.5 h-3.5" />
+                <span>{user.aiCredits}</span>
+              </button>
             )}
-            {!inputText && (
-              <div className={`absolute top-4 ${isRTL ? 'right-4' : 'left-4'} pointer-events-none overflow-hidden text-slate-400`} style={{ height: '1.75rem', width: 'calc(100% - 2rem)' }}>
-                <div className={isTransitioning ? 'transition-transform duration-500 ease-in-out' : ''} style={{ transform: `translateY(-${placeholderIndex * 1.75}rem)` }}>
-                  {displayedPlaceholders.map((text, i) => (
-                    <div key={i} className="h-7 leading-7 whitespace-nowrap truncate" style={{ direction: isRTL ? 'rtl' : 'ltr', textAlign: isRTL ? 'right' : 'left' }}>{text}</div>
-                  ))}
+            {/* Language Toggle */}
+            <button onClick={toggleLanguage} className="text-xs font-medium px-2.5 py-1.5 rounded-full border border-slate-200 text-slate-600 hover:bg-slate-50 transition">
+              {t.languageLabel}
+            </button>
+            {/* Auth */}
+            {user ? (
+              <button onClick={handleLogout} className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-full border border-slate-200 text-slate-600 hover:bg-slate-50 transition">
+                {user?.photo ? <img src={user.photo} alt="" className="w-5 h-5 rounded-full" /> : <User className="w-4 h-4" />}
+                <span className="hidden sm:inline">{t.logout}</span>
+              </button>
+            ) : (
+              <button onClick={handleLogin} className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full bg-blue-600 text-white hover:bg-blue-700 transition shadow-sm">
+                <LogIn className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">{t.loginWithGoogle}</span>
+              </button>
+            )}
+          </div>
+        </header>
+
+        <main className="px-4 max-w-6xl mx-auto space-y-5">
+          {/* ── AI Prompt Floating Card ── */}
+          <div className="bg-slate-50 p-5 rounded-3xl shadow-sm border border-slate-100">
+            {/* Suggestion Chips */}
+            <div className="flex items-center gap-2 overflow-x-auto whitespace-nowrap py-1 mb-3" style={{ scrollbarWidth: 'none' }}>
+              <span className="text-xs text-slate-400 shrink-0">{t.tryForExample}</span>
+              {SUGGESTION_CHIPS.map((s, i) => (
+                <button key={i} onClick={() => setInputText(s)}
+                  className="px-3 py-1.5 text-xs rounded-full border transition bg-white text-slate-600 border-slate-200 hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-300 shrink-0 font-medium">{s}</button>
+              ))}
+              <button onClick={() => setInputText(t.suggestionSleep)}
+                className="px-3 py-1.5 text-xs rounded-full border transition bg-indigo-50 text-indigo-600 border-indigo-200 hover:bg-indigo-100 shrink-0 flex items-center gap-1 font-medium">
+                <Moon className="w-3 h-3" /> {t.suggestionSleep}
+              </button>
+            </div>
+
+            {/* Textarea */}
+            <div className="relative" style={{ minHeight: '100px' }}>
+              <textarea value={inputText} onChange={e => setInputText(e.target.value)}
+                className={`w-full p-4 rounded-2xl bg-white text-slate-800 placeholder-transparent focus:ring-2 focus:ring-indigo-400 focus:bg-white focus:shadow-lg border border-slate-200 focus:border-indigo-300 transition-all duration-200 resize-none ${isRTL ? 'text-right' : 'text-left'}`}
+                rows="3" placeholder=" "
+                onKeyDown={e => { if (e.key === 'Enter' && e.ctrlKey) handleParse(); }}
+              />
+              {!inputText && (
+                <div className={`absolute top-4 ${isRTL ? 'right-4' : 'left-4'} pointer-events-none overflow-hidden text-slate-400`} style={{ height: '1.75rem', width: 'calc(100% - 2rem)' }}>
+                  <div className={isTransitioning ? 'transition-transform duration-500 ease-in-out' : ''} style={{ transform: `translateY(-${placeholderIndex * 1.75}rem)` }}>
+                    {displayedPlaceholders.map((text, i) => (
+                      <div key={i} className="h-7 leading-7 whitespace-nowrap truncate" style={{ direction: isRTL ? 'rtl' : 'ltr', textAlign: isRTL ? 'right' : 'left' }}>{text}</div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {/* Voice Button */}
+              {speechSupported && (
+                <button
+                  onClick={handleToggleListening}
+                  disabled={loading}
+                  className={`absolute bottom-2 ${isRTL ? 'left-2' : 'right-2'} p-2 rounded-full transition shadow-sm z-10 ${
+                    isListening
+                      ? 'bg-red-500 text-white animate-pulse shadow-md ring-2 ring-red-300'
+                      : 'bg-white text-slate-500 border border-slate-300 hover:bg-slate-100 hover:text-blue-600'
+                  } disabled:opacity-50 disabled:cursor-not-allowed`}
+                  title={isListening ? (lang === 'he' ? 'מקשיב... לחץ להפסיק' : 'Listening... Click to stop') : (lang === 'he' ? 'הקלט קול' : 'Voice input')}
+                >
+                  {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                </button>
+              )}
+            </div>
+
+            {/* Send Button */}
+            <div className="mt-3 flex items-center gap-2">
+              <button onClick={handleParse} disabled={loading}
+                className="flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-5 py-2.5 rounded-full font-semibold transition-all duration-200 shadow-md shadow-blue-200 hover:shadow-lg disabled:from-blue-400 disabled:to-indigo-400 disabled:cursor-not-allowed disabled:shadow-none flex-1 sm:flex-none sm:w-44">
+                {loading ? <><Loader2 className="w-4 h-4 animate-spin" /> {t.parsing}</> : <><Sparkles className="w-5 h-5" /> {t.parseButton}</>}
+              </button>
+              <button onClick={handleUndo} disabled={scheduleHistoryRef.current.length === 0} className="flex items-center gap-2 text-slate-500 hover:text-slate-700 px-3 py-2.5 rounded-full hover:bg-slate-100 transition text-sm disabled:opacity-30 disabled:cursor-not-allowed">
+                <RotateCcw className="w-4 h-4" />
+              </button>
+              {/* Advanced Toggle */}
+              <button
+                onClick={() => setShowAdvanced(!showAdvanced)}
+                className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 px-3 py-2 rounded-full hover:bg-slate-100 transition"
+              >
+                {showAdvanced ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                {t.advanced || 'מתקדם'}
+              </button>
+            </div>
+
+            {/* ── Advanced Options (collapsible) ── */}
+            {showAdvanced && (
+              <div className="mt-3 pt-3 border-t border-slate-200 space-y-3 animate-fade-in">
+                {/* Event Type */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-medium text-slate-500">{t.eventType || 'סוג:'}</span>
+                  <div className="flex rounded-lg border border-slate-300 overflow-hidden">
+                    <button onClick={() => setEventType('activity')}
+                      className={`px-3 py-1.5 text-xs font-medium transition ${eventType === 'activity' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>
+                      {t.typeActivity || 'פעילות'}
+                    </button>
+                    <button onClick={() => setEventType('notification')}
+                      className={`px-3 py-1.5 text-xs font-medium transition border-r border-slate-300 ${eventType === 'notification' ? 'bg-amber-500 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>
+                      {t.typeNotification || 'התראה'}
+                    </button>
+                  </div>
+                </div>
+                {/* Recurrence */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-medium text-slate-500">{t.frequency || 'תדירות:'}</span>
+                  <div className="flex rounded-lg border border-slate-300 overflow-hidden">
+                    {['once', 'weekly', 'monthly', 'yearly'].map((recVal) => {
+                      const labels = {
+                        once: t.recurrenceOnce || 'חד פעמי',
+                        weekly: t.recurrenceWeekly || 'שבועי',
+                        monthly: t.recurrenceMonthly || 'חודשי',
+                        yearly: t.recurrenceYearly || 'שנתי'
+                      };
+                      return (
+                        <button key={recVal} onClick={() => setRecurrence(recVal)}
+                          className={`px-3 py-1.5 text-xs font-medium transition border-r border-slate-300 last:border-r-0 ${recurrence === recVal ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>
+                          {labels[recVal]}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
             )}
-            {/* Voice-to-Text Microphone Button */}
-            {speechSupported && (
-              <button
-                onClick={handleToggleListening}
-                disabled={loading}
-                className={`absolute bottom-2 ${isRTL ? 'left-2' : 'right-2'} p-2 rounded-full transition shadow-sm z-10 ${
-                  isListening
-                    ? 'bg-red-500 text-white animate-pulse shadow-md ring-2 ring-red-300'
-                    : 'bg-white text-slate-500 border border-slate-300 hover:bg-slate-100 hover:text-blue-600'
-                } disabled:opacity-50 disabled:cursor-not-allowed`}
-                title={isListening ? (lang === 'he' ? 'מקשיב... לחץ להפסיק' : 'Listening... Click to stop') : (lang === 'he' ? 'הקלט קול' : 'Voice input')}
-              >
-                {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-              </button>
+
+            {error && <div className="flex items-center gap-2 text-red-600 text-sm mt-3 bg-red-50 p-3 rounded-lg border border-red-200"><AlertCircle className="w-4 h-4 shrink-0" /><span>{error}</span></div>}
+            {success && <div className="flex items-center gap-2 text-green-700 text-sm mt-3 bg-green-50 p-3 rounded-lg border border-green-200"><Sparkles className="w-4 h-4 text-green-600 shrink-0" /><span>{success}</span></div>}
+
+            {conflicts.length > 0 && (
+              <div className="mt-3 space-y-3">
+                {conflicts.map((c, idx) => (
+                  <div key={idx} className="bg-amber-50 border border-amber-300 rounded-lg p-4">
+                    <div className="flex items-center gap-2 text-amber-800 font-semibold mb-2"><AlertTriangle className="w-5 h-5 text-amber-600" /><span>{t.conflictTitle}{dayTranslations[c.day] || c.day}</span></div>
+                    <p className="text-sm text-amber-700 mb-2">"{c.event.title}" ({c.event.startTime}-{c.event.endTime}) {t.conflictOverlaps}</p>
+                    <ul className="text-sm text-amber-800 list-disc list-inside mb-3 space-y-1">{c.conflicts.map((cc, i) => <li key={i}>{cc.title} ({cc.startTime}-{cc.endTime})</li>)}</ul>
+                    {c.suggestions?.length > 0 && (
+                      <div><p className="text-sm font-medium text-amber-800 mb-1">{t.conflictSuggestions}</p>
+                        <div className="flex flex-wrap gap-2">{c.suggestions.map((s, i) => (
+                          <button key={i} onClick={() => setInputText(`${t.conflictChangeTime} ${s.startTime}-${s.endTime} ${t.slotClickPrefix} ${c.day}`)}
+                            className="px-3 py-1.5 text-xs rounded-lg border border-amber-300 bg-white text-amber-800 hover:bg-amber-100 transition">{s.label ? `${s.label}: ` : ''}{s.startTime} - {s.endTime}</button>
+                        ))}</div>
+                      </div>
+                    )}
+                    <button onClick={() => { setFreeSlotsDay(c.day); handleOpenFreeSlots(c.day); }}
+                      className="mt-2 w-full text-center px-3 py-1.5 text-xs rounded-lg border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 transition flex items-center justify-center gap-1">
+                      <Sun className="w-3 h-3" /> {t.seeAllFreeSlots || 'ראה את כל החלונות הפנויים'}
+                    </button>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
 
-          {/* ── Event Type Selector ── */}
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <span className="text-xs font-medium text-slate-500">{t.eventType || 'סוג:'}</span>
-            <div className="flex rounded-lg border border-slate-300 overflow-hidden">
-              <button
-                onClick={() => setEventType('activity')}
-                className={`px-3 py-1.5 text-xs font-medium transition ${
-                  eventType === 'activity'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-white text-slate-600 hover:bg-slate-50'
-                }`}
-              >
-                {t.typeActivity || 'פעילות'}
-              </button>
-              <button
-                onClick={() => setEventType('notification')}
-                className={`px-3 py-1.5 text-xs font-medium transition border-r border-slate-300 ${
-                  eventType === 'notification'
-                    ? 'bg-amber-500 text-white'
-                    : 'bg-white text-slate-600 hover:bg-slate-50'
-                }`}
-              >
-                {t.typeNotification || 'התראה'}
-              </button>
+          {/* ── Weekly Schedule - Clean Cards ── */}
+          <div className="bg-white p-5 rounded-3xl shadow-sm border border-slate-100">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+              <h2 className="text-lg font-bold text-slate-800">{t.weeklyScheduleTitle}</h2>
+              <div className="flex items-center gap-2">
+                {allLocationsInEvents.length > 0 && (
+                  <div className="flex items-center gap-1.5 text-xs">
+                    <Filter className="w-3 h-3 text-slate-400" />
+                    <select value={locationFilter} onChange={e => setLocationFilter(e.target.value)}
+                      className="text-xs border border-slate-200 rounded-full px-2.5 py-1 bg-white text-slate-600 focus:ring-1 focus:ring-indigo-500">
+                      <option value="all">{t.allLocations}</option>
+                      {allLocationsInEvents.map(loc => <option key={loc} value={loc}>{LOCATION_LABELS[loc] || loc}</option>)}
+                    </select>
+                  </div>
+                )}
+                <button onClick={handleOpenReschedule}
+                  className="flex items-center gap-2 bg-gradient-to-r from-indigo-50 to-violet-50 text-indigo-700 px-3 py-1.5 rounded-full hover:from-indigo-100 hover:to-violet-100 transition-all duration-200 text-xs font-medium border border-indigo-200">
+                  <Wand2 className="w-3.5 h-3.5" /> {t.fixSchedule}
+                </button>
+              </div>
             </div>
-          </div>
 
-          {/* ── Frequency / Recurrence Selector ── */}
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <span className="text-xs font-medium text-slate-500">{t.frequency || 'תדירות:'}</span>
-            <div className="flex rounded-lg border border-slate-300 overflow-hidden">
-              {['once', 'weekly', 'monthly', 'yearly'].map((recVal) => {
-                const labels = {
-                  once: t.recurrenceOnce || 'חד פעמי',
-                  weekly: t.recurrenceWeekly || 'שבועי',
-                  monthly: t.recurrenceMonthly || 'חודשי',
-                  yearly: t.recurrenceYearly || 'שנתי'
-                };
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {orderedDayKeys.map(dayKey => {
+                if (dayKey === "Today" && (!schedule[dayKey] || schedule[dayKey].length === 0)) return null;
+                const dayEvents = getFilteredEvents(dayKey);
+                const sortedDayEvents = getSortedDayEvents(dayKey);
+                const isTodayColumn = dayKey === todayName;
+                const maxVisible = 2;
+                const isExpanded = expandedDays[dayKey] || false;
+                const visibleEvents = isExpanded ? sortedDayEvents : sortedDayEvents.slice(0, maxVisible);
+                const hasMoreThanMax = sortedDayEvents.length > maxVisible;
                 return (
-                  <button
-                    key={recVal}
-                    onClick={() => setRecurrence(recVal)}
-                    className={`px-3 py-1.5 text-xs font-medium transition border-r border-slate-300 last:border-r-0 ${
-                      recurrence === recVal
-                        ? 'bg-indigo-600 text-white'
-                        : 'bg-white text-slate-600 hover:bg-slate-50'
-                    }`}
-                  >
-                    {labels[recVal]}
-                  </button>
+                  <div key={dayKey} className={`rounded-xl p-3 flex flex-col min-h-[120px] ${isTodayColumn ? 'bg-blue-50 border border-blue-300' : 'bg-slate-50 border border-slate-200'}`}>
+                    <div
+                      className={`font-bold text-sm text-slate-700 mb-2 pb-1.5 border-b text-center cursor-pointer hover:text-indigo-600 transition ${isTodayColumn ? 'border-blue-200' : 'border-slate-200'}`}
+                      onClick={() => openDayDetail(dayKey)}
+                    >
+                      {dayTranslations[dayKey]}
+                      {dayEvents.length > 0 && <span className="text-xs text-slate-400 mr-1">({dayEvents.length})</span>}
+                    </div>
+                    <div className="flex-1 flex flex-col gap-2">
+                      {dayKey === 'Saturday' && (
+                        <div className="text-center py-2 px-2 mb-2 bg-blue-50/50 rounded-xl border border-blue-100">
+                          <p className="text-sm font-semibold text-blue-900">שבת שלום 🕯️🕯️</p>
+                          <p className="text-[10px] text-gray-500 mt-0.5">נחזור לפעילות במוצאי השבת</p>
+                        </div>
+                      )}
+                      {dayEvents.length > 0 ? (
+                        <>
+                          {visibleEvents.map((event, index) => {
+                            const actualIndex = schedule[dayKey]?.findIndex(e => e === event);
+                            return (
+                              <div key={index}
+                                className={`group relative p-3 rounded-xl border-r-[3px] flex flex-col gap-1 hover:shadow-md transition cursor-pointer ${getEventAccent(event)}`}
+                                onClick={() => actualIndex >= 0 && handleOpenEditModal(dayKey, actualIndex)}>
+                                <button onClick={e => { e.stopPropagation(); if (actualIndex >= 0) handleRemoveEvent(dayKey, actualIndex); }}
+                                  className="absolute -top-1.5 -left-1.5 opacity-0 group-hover:opacity-100 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center transition shadow-sm z-10">
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                                <div className="font-semibold text-sm text-slate-800 flex items-center gap-1.5">
+                                  {event.isSleep && <Moon className="w-3.5 h-3.5 text-indigo-500 shrink-0" />}
+                                  {event.reminderMinutesBefore > 0 && <Bell className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
+                                  <span className="truncate">{event.title}</span>
+                                  <Edit3 className="w-3 h-3 text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity mr-auto shrink-0" />
+                                </div>
+                                <div className="flex items-center gap-1 text-xs text-slate-500">
+                                  <Clock className="w-3 h-3 text-slate-400 shrink-0" />
+                                  <span dir="ltr">{event.startTime} - {event.endTime}</span>
+                                  {event.isSleep && <span className="text-[10px] text-indigo-500 mr-1">{t.sleepLabel}</span>}
+                                </div>
+                                {event.reminderMinutesBefore > 0 && (
+                                  <div className="flex items-center gap-1 text-[10px] text-amber-600">
+                                    <BellRing className="w-2.5 h-2.5" />
+                                    <span>{t.reminderColon} {event.reminderMinutesBefore} {t.reminderMinutes}</span>
+                                  </div>
+                                )}
+                                {event.location && (
+                                  <div className="flex items-center gap-1 text-[10px] text-slate-400">
+                                    <MapPin className="w-2.5 h-2.5" />
+                                    <span>{LOCATION_LABELS[event.location] || event.location}</span>
+                                  </div>
+                                )}
+                                {event.recurrence && <span className="text-[10px] text-blue-500 font-medium">{recurrenceLabels[event.recurrence] || event.recurrence}</span>}
+                                {event.hasAdvice && event.aiAdvice && (
+                                  <div className="mt-1 bg-amber-50 border border-amber-200 rounded-lg p-2 text-xs text-amber-900">
+                                    <div className="flex items-start gap-1.5"><span className="text-sm">💡</span><span>{event.aiAdvice}</span></div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                          {hasMoreThanMax && (
+                            <div className="flex flex-col gap-1">
+                              {!isExpanded && (
+                                <button onClick={() => toggleDayExpanded(dayKey)}
+                                  className="w-full text-center px-3 py-1.5 text-xs rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition font-medium">
+                                  {t.showAllEvents ? t.showAllEvents.replace('{count}', sortedDayEvents.length) : `הצג הכל (${sortedDayEvents.length} אירועים)`}
+                                </button>
+                              )}
+                              <button onClick={() => openDayDetail(dayKey)}
+                                className="w-full text-center px-3 py-1.5 text-xs rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition">
+                                {t.dayDetailView || 'פירוט יומי מלא'}
+                              </button>
+                            </div>
+                          )}
+                          {isExpanded && !hasMoreThanMax && (
+                            <button onClick={() => openDayDetail(dayKey)}
+                              className="w-full text-center px-3 py-1.5 text-xs rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition">
+                              {t.dayDetailView || 'פירוט יומי מלא'}
+                            </button>
+                          )}
+                        </>
+                      ) : (
+                        dayKey !== 'Saturday' && (
+                          <p className="text-xs text-slate-300 text-center my-auto font-light">{t.noEvents}</p>
+                        )
+                      )}
+                    </div>
+                  </div>
                 );
               })}
             </div>
           </div>
-          {error && <div className="flex items-center gap-2 text-red-600 text-sm mt-4 bg-red-50 p-3 rounded-lg border border-red-200"><AlertCircle className="w-4 h-4" /><span>{error}</span></div>}
-          {success && <div className="flex items-center gap-2 text-green-700 text-sm mt-4 bg-green-50 p-3 rounded-lg border border-green-200"><Sparkles className="w-4 h-4 text-green-600" /><span>{success}</span></div>}
 
-          {conflicts.length > 0 && (
-            <div className="mt-4 space-y-3">
-              {conflicts.map((c, idx) => (
-                <div key={idx} className="bg-amber-50 border border-amber-300 rounded-lg p-4">
-                  <div className="flex items-center gap-2 text-amber-800 font-semibold mb-2"><AlertTriangle className="w-5 h-5 text-amber-600" /><span>{t.conflictTitle}{dayTranslations[c.day] || c.day}</span></div>
-                  <p className="text-sm text-amber-700 mb-2">"{c.event.title}" ({c.event.startTime}-{c.event.endTime}) {t.conflictOverlaps}</p>
-                  <ul className="text-sm text-amber-800 list-disc list-inside mb-3 space-y-1">{c.conflicts.map((cc, i) => <li key={i}>{cc.title} ({cc.startTime}-{cc.endTime})</li>)}</ul>
-                  {c.suggestions?.length > 0 && (
-                    <div><p className="text-sm font-medium text-amber-800 mb-1">{t.conflictSuggestions}</p>
-                      <div className="flex flex-wrap gap-2">{c.suggestions.map((s, i) => (
-                        <button key={i} onClick={() => setInputText(`${t.conflictChangeTime} ${s.startTime}-${s.endTime} ${t.slotClickPrefix} ${c.day}`)}
-                          className="px-3 py-1.5 text-xs rounded-lg border border-amber-300 bg-white text-amber-800 hover:bg-amber-100 transition">{s.label ? `${s.label}: ` : ''}{s.startTime} - {s.endTime}</button>
-                      ))}</div>
-                    </div>
-                  )}
-                  <button onClick={() => { setFreeSlotsDay(c.day); handleOpenFreeSlots(c.day); }}
-                    className="mt-2 w-full text-center px-3 py-1.5 text-xs rounded-lg border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 transition flex items-center justify-center gap-1">
-                    <Sun className="w-3 h-3" /> {t.seeAllFreeSlots || 'ראה את כל החלונות הפנויים'}
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
+          <MonthlyCalendar schedule={schedule} lang={lang} />
+        </main>
 
-          <div className="mt-4 flex items-center gap-3">
-            <button onClick={handleParse} disabled={loading}
-              className="flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-6 py-3 rounded-full font-semibold transition-all duration-200 shadow-md shadow-blue-200 hover:shadow-lg hover:shadow-indigo-200 hover:-translate-y-0.5 active:translate-y-0 disabled:from-blue-400 disabled:to-indigo-400 disabled:cursor-not-allowed disabled:shadow-none w-full sm:w-48">
-              {loading ? <><Loader2 className="w-4 h-4 animate-spin" /> {t.parsing}</> : <><Sparkles className="w-5 h-5" /> {t.parseButton}</>}
+        <footer className="max-w-6xl mx-auto mt-8 text-center text-xs text-slate-400 border-t pt-4 px-4">
+          <p>{t.footerVersion} {typeof __BUILD_TIME__ !== 'undefined' ? __BUILD_TIME__ : t.footerLocal}</p>
+          <button onClick={() => setShowPrivacy(true)} className="mt-2 inline-flex items-center gap-1 text-slate-400 hover:text-slate-600 transition"><Shield className="w-3 h-3" /> {t.footerPrivacy}</button>
+        </footer>
+
+        {/* ── Bottom Navigation Bar ── */}
+        <nav className="fixed bottom-0 left-0 right-0 z-50 bg-white/80 backdrop-blur-lg border-t border-slate-200/60 safe-area-bottom">
+          <div className="max-w-lg mx-auto flex items-center justify-around py-2 px-4">
+            {/* Home Tab */}
+            <button
+              onClick={() => setActiveTab('home')}
+              className={`flex flex-col items-center gap-0.5 px-4 py-1 rounded-xl transition ${
+                activeTab === 'home' ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'
+              }`}
+            >
+              <Home className="w-5 h-5" />
+              <span className="text-[10px] font-medium">{t.home || 'בית'}</span>
             </button>
-            <button onClick={handleUndo} disabled={scheduleHistoryRef.current.length === 0} className="flex items-center gap-2 text-slate-500 hover:text-slate-700 px-4 py-3 rounded-full hover:bg-slate-100 transition text-sm disabled:opacity-30 disabled:cursor-not-allowed"><RotateCcw className="w-4 h-4" /> {t.undo}</button>
+
+            {/* Center Add Button */}
+            <button
+              onClick={() => {
+                const ta = document.querySelector('textarea');
+                if (ta) ta.focus();
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              className="flex flex-col items-center -mt-5"
+            >
+              <div className="w-12 h-12 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-full flex items-center justify-center shadow-lg shadow-blue-200 hover:shadow-xl hover:-translate-y-0.5 transition-all active:translate-y-0">
+                <Plus className="w-6 h-6 text-white" />
+              </div>
+              <span className="text-[10px] font-medium text-slate-500 mt-0.5">{t.addEvent || 'הוסף'}</span>
+            </button>
+
+            {/* Credits Tab */}
+            <button
+              onClick={() => {
+                if (user) {
+                  handleBuyCredits();
+                } else {
+                  setShowLoginPrompt(true);
+                }
+              }}
+              className={`flex flex-col items-center gap-0.5 px-4 py-1 rounded-xl transition ${
+                activeTab === 'credits' ? 'text-amber-600' : 'text-slate-400 hover:text-slate-600'
+              }`}
+            >
+              <Zap className="w-5 h-5" />
+              <span className="text-[10px] font-medium">{t.credits || 'קרדיטים'}</span>
+            </button>
           </div>
-        </div>
-
-        {/* Weekly Schedule - Premium Floating Card */}
-        <div className="bg-white p-6 sm:p-8 rounded-3xl shadow-lg shadow-slate-100 border border-slate-100">
-          <div className="flex flex-wrap items-center justify-between gap-4 mb-6 border-b border-slate-100 pb-3">
-            <h2 className="text-xl font-bold text-slate-800">{t.weeklyScheduleTitle}</h2>
-            <div className="flex items-center gap-2">
-              {allLocationsInEvents.length > 0 && (
-                <div className="flex items-center gap-1.5 text-xs">
-                  <Filter className="w-3 h-3 text-slate-400" />
-                  <select value={locationFilter} onChange={e => setLocationFilter(e.target.value)}
-                    className="text-xs border border-slate-200 rounded-full px-2.5 py-1 bg-white text-slate-600 focus:ring-1 focus:ring-indigo-500">
-                    <option value="all">{t.allLocations}</option>
-                    {allLocationsInEvents.map(loc => <option key={loc} value={loc}>{LOCATION_LABELS[loc] || loc}</option>)}
-                  </select>
-                </div>
-              )}
-              <button onClick={handleOpenReschedule}
-                className="flex items-center gap-2 bg-gradient-to-r from-indigo-50 to-violet-50 text-indigo-700 px-4 py-2 rounded-full hover:from-indigo-100 hover:to-violet-100 transition-all duration-200 text-sm font-medium border border-indigo-200 hover:border-indigo-300 hover:shadow-sm">
-                <Wand2 className="w-4 h-4" /> {t.fixSchedule}
-              </button>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {orderedDayKeys.map(dayKey => {
-              if (dayKey === "Today" && (!schedule[dayKey] || schedule[dayKey].length === 0)) return null;
-              const dayEvents = getFilteredEvents(dayKey);
-              const sortedDayEvents = getSortedDayEvents(dayKey);
-              const isTodayColumn = dayKey === todayName;
-              const maxVisible = 2;
-              const isExpanded = expandedDays[dayKey] || false;
-              const visibleEvents = isExpanded ? sortedDayEvents : sortedDayEvents.slice(0, maxVisible);
-              const hasMoreThanMax = sortedDayEvents.length > maxVisible;
-              return (
-                <div key={dayKey} className={`border rounded-xl p-4 flex flex-col min-h-[150px] relative ${isTodayColumn ? 'today-column bg-blue-50 border-blue-400 ring-2 ring-blue-400 shadow-lg shadow-blue-100/50' : 'bg-slate-50 border-slate-200'}`}>
-                  {isTodayColumn && (
-                    <div className="today-badge">היום / Today</div>
-                  )}
-                  <div
-                    className={`font-bold text-slate-700 mb-3 border-b pb-1 text-center bg-white rounded shadow-sm py-1 cursor-pointer hover:bg-slate-50 transition ${isTodayColumn ? 'border-blue-300' : ''}`}
-                    onClick={() => openDayDetail(dayKey)}
-                    title={t.dayDetailClick || 'לחץ להצגת כל האירועים'}
-                  >
-                    {dayTranslations[dayKey]}
-                    {dayEvents.length > 0 && <span className="text-xs text-slate-400 mr-1">({dayEvents.length})</span>}
-                  </div>
-                  <div className="flex-1 flex flex-col gap-2">
-                    {/* ── Shabbat banner: always shown for Saturday, regardless of events ── */}
-                    {dayKey === 'Saturday' && (
-                      <div className="text-center py-3 px-2 mb-3 bg-blue-50/50 dark:bg-slate-800/50 rounded-xl border border-blue-100 dark:border-slate-700/50">
-                        <p className="text-base font-semibold text-blue-900 dark:text-blue-200">
-                          שבת שלום 🕯️🕯️
-                        </p>
-                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                          נחזור לפעילות במוצאי השבת
-                        </p>
-                      </div>
-                    )}
-
-                    {/* ── Events list ── */}
-                    {dayEvents.length > 0 ? (
-                      <>
-                        {visibleEvents.map((event, index) => {
-                          // Find the actual index in the original schedule array for edit/delete
-                          const actualIndex = schedule[dayKey]?.findIndex(e => e === event);
-                          return (
-                            <div key={index}
-                              className={`group relative bg-white p-3 rounded-lg shadow-xs border-r-4 flex flex-col gap-1 hover:shadow-md transition cursor-pointer ${event.reminderMinutesBefore > 0 ? 'border-amber-400 bg-amber-50/20' : event.isSleep ? 'border-indigo-500 bg-indigo-50/30' : 'border-blue-500'}`}
-                              onClick={() => actualIndex >= 0 && handleOpenEditModal(dayKey, actualIndex)}>
-                              <button onClick={e => { e.stopPropagation(); if (actualIndex >= 0) handleRemoveEvent(dayKey, actualIndex); }}
-                                className="absolute -top-2 -left-2 opacity-0 group-hover:opacity-100 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center transition">
-                                <Trash2 className="w-3 h-3" />
-                              </button>
-                              <div className="font-semibold text-sm text-slate-800 flex items-center gap-1.5">
-                                {event.isSleep && <Moon className="w-3.5 h-3.5 text-indigo-500" />}
-                                {event.reminderMinutesBefore > 0 && <Bell className="w-3.5 h-3.5 text-amber-500" />}
-                                {event.title}
-                                <Edit3 className="w-3 h-3 text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity mr-auto" />
-                              </div>
-                              <div className="flex items-center gap-1 text-xs text-slate-500 mt-1">
-                                <Clock className="w-3 h-3 text-slate-400" />
-                                <span dir="ltr">{event.startTime} - {event.endTime}</span>
-                                {event.isSleep && <span className="text-[10px] text-indigo-500 mr-1">{t.sleepLabel}</span>}
-                              </div>
-                              {event.reminderMinutesBefore > 0 && (
-                                <div className="flex items-center gap-1 text-[10px] text-amber-600">
-                                  <BellRing className="w-2.5 h-2.5" />
-                                  <span>{t.reminderColon} {event.reminderMinutesBefore} {t.reminderMinutes}</span>
-                                </div>
-                              )}
-                              {event.location && (
-                                <div className="flex items-center gap-1 text-[10px] text-slate-400 mt-0.5">
-                                  <MapPin className="w-2.5 h-2.5" />
-                                  <span>{LOCATION_LABELS[event.location] || event.location}</span>
-                                </div>
-                              )}
-                              {event.recurrence && <span className="text-[10px] text-blue-500 font-medium">{recurrenceLabels[event.recurrence] || event.recurrence}</span>}
-                              {event.hasAdvice && event.aiAdvice && (
-                                <div className="mt-1.5 bg-amber-50 border border-amber-200 rounded-lg p-2 text-xs text-amber-900">
-                                  <div className="flex items-start gap-1.5"><span className="text-sm">💡</span><span>{event.aiAdvice}</span></div>
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                        {hasMoreThanMax && (
-                          <div className="flex flex-col gap-1">
-                            {!isExpanded && (
-                              <button
-                                onClick={() => toggleDayExpanded(dayKey)}
-                                className="w-full text-center px-3 py-2 text-xs rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition font-medium"
-                              >
-                                {t.showAllEvents ? t.showAllEvents.replace('{count}', sortedDayEvents.length) : `הצג הכל (${sortedDayEvents.length} אירועים)`}
-                              </button>
-                            )}
-                            <button
-                              onClick={() => openDayDetail(dayKey)}
-                              className="w-full text-center px-3 py-1.5 text-xs rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition"
-                            >
-                              {t.dayDetailView || 'פירוט יומי מלא'}
-                            </button>
-                          </div>
-                        )}
-                        {isExpanded && !hasMoreThanMax && (
-                          <button
-                            onClick={() => openDayDetail(dayKey)}
-                            className="w-full text-center px-3 py-1.5 text-xs rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition"
-                          >
-                            {t.dayDetailView || 'פירוט יומי מלא'}
-                          </button>
-                        )}
-                      </>
-                    ) : (
-                      /* ── Empty state: hidden on Saturday to avoid duplication with Shabbat banner ── */
-                      dayKey !== 'Saturday' && (
-                        <p className="text-xs text-slate-300 text-center my-auto font-light">{t.noEvents}</p>
-                      )
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        <MonthlyCalendar schedule={schedule} lang={lang} />
-      </main>
+        </nav>
+      </div>
 
       {/* Reschedule Modal */}
       {isRescheduleOpen && (
@@ -1830,8 +1721,6 @@ function AppRoutes() {
                       className="w-full text-right p-3 bg-slate-50 rounded-lg border border-slate-200 hover:bg-indigo-50 hover:border-indigo-300 transition">{item.label}</button>
                   ))}
                 </div>
-
-                {/* Quick Actions */}
                 <div className="mt-4 pt-3 border-t border-slate-200">
                   <p className="text-xs font-semibold text-slate-500 mb-2">{t.rescheduleQuickActions}</p>
                   <div className="flex flex-col gap-2">
@@ -1866,8 +1755,6 @@ function AppRoutes() {
                     </button>
                   </div>
                 </div>
-
-                {/* Free text input */}
                 <div className="mt-4 pt-3 border-t border-slate-200">
                   <p className="text-xs font-semibold text-slate-500 mb-2">{t.rescheduleFreeText}</p>
                   <div className="flex gap-2">
@@ -1893,7 +1780,6 @@ function AppRoutes() {
                     </button>
                   </div>
                 </div>
-
                 {rescheduleError && <div className="flex items-center gap-2 text-red-600 text-sm mt-4 bg-red-50 p-3 rounded-lg border border-red-200"><AlertCircle className="w-4 h-4" /><span>{rescheduleError}</span></div>}
               </div>
             )}
@@ -1935,7 +1821,7 @@ function AppRoutes() {
         </div>
       )}
 
-      {/* Event Edit Modal with Reminder Dropdown */}
+      {/* Event Edit Modal */}
       {editModalData && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" onClick={() => setEditModalData(null)}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
@@ -1965,7 +1851,6 @@ function AppRoutes() {
                   className="w-full px-3 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                   {RECURRENCE_OPTIONS(lang).map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
                 </select>
-                {/* End Date Selector - Default: Never Ends ("forever") */}
                 <div className="mt-2">
                   <label className="block text-xs font-medium text-slate-500 mb-1">{t.recurrenceEndLabel || 'Ends'}</label>
                   <select
@@ -1973,7 +1858,6 @@ function AppRoutes() {
                     onChange={e => {
                       const val = e.target.value;
                       handleEditInputChange('recurrenceEndType', val);
-                      // If "never", remove any endDate; if "date", keep existing endDate
                       if (val === 'never') {
                         handleEditInputChange('recurrenceEndDate', '');
                       }
@@ -1984,16 +1868,11 @@ function AppRoutes() {
                     <option value="date">{t.recurrenceEndsOnDate || 'Ends on date...'}</option>
                   </select>
                   {editModalData.event.recurrenceEndType === 'date' && (
-                    <input
-                      type="date"
-                      value={editModalData.event.recurrenceEndDate || ''}
-                      onChange={e => handleEditInputChange('recurrenceEndDate', e.target.value)}
-                      className="mt-2 w-full px-3 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    />
+                    <input type="date" value={editModalData.event.recurrenceEndDate || ''} onChange={e => handleEditInputChange('recurrenceEndDate', e.target.value)}
+                      className="mt-2 w-full px-3 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
                   )}
                 </div>
               </div>
-              {/* Reminder Dropdown */}
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-1">
                   <Bell className="w-4 h-4 text-amber-500" /> {t.reminderLabel}
@@ -2020,7 +1899,7 @@ function AppRoutes() {
         </div>
       )}
 
-      {/* ── Day Detail Modal ── */}
+      {/* Day Detail Modal */}
       {dayDetailModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" onClick={() => setDayDetailModal(null)}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
@@ -2030,27 +1909,17 @@ function AppRoutes() {
                 {t.dayDetailTitle || 'פירוט יומי'}: {dayDetailModal.dayLabel}
                 <span className="text-sm font-normal text-slate-400">({dayDetailModal.events.length} {t.dayDetailEvents || 'אירועים'})</span>
               </h3>
-              <button onClick={() => setDayDetailModal(null)} className="p-1 rounded-full hover:bg-slate-100">
-                <X className="w-5 h-5 text-slate-500" />
-              </button>
+              <button onClick={() => setDayDetailModal(null)} className="p-1 rounded-full hover:bg-slate-100"><X className="w-5 h-5 text-slate-500" /></button>
             </div>
-
             {dayDetailModal.events.length === 0 ? (
-              <div className="flex-1 flex items-center justify-center">
-                <p className="text-sm text-slate-400">{t.noEvents}</p>
-              </div>
+              <div className="flex-1 flex items-center justify-center"><p className="text-sm text-slate-400">{t.noEvents}</p></div>
             ) : (
               <div className="flex-1 overflow-y-auto space-y-2 pr-1">
                 {dayDetailModal.events.map((event, index) => {
-                  // Find the actual index in the original schedule array for edit/delete
                   const actualIndex = schedule[dayDetailModal.dayKey]?.findIndex(e => e === event);
                   return (
                     <div key={index}
-                      className={`group relative bg-white p-4 rounded-xl border-r-4 flex flex-col gap-2 hover:shadow-md transition cursor-pointer ${
-                        event.reminderMinutesBefore > 0 ? 'border-amber-400 bg-amber-50/20' :
-                        event.isSleep ? 'border-indigo-500 bg-indigo-50/30' :
-                        'border-blue-500'
-                      }`}
+                      className={`group relative p-4 rounded-xl border-r-[3px] flex flex-col gap-2 hover:shadow-md transition cursor-pointer ${getEventAccent(event)}`}
                       onClick={() => { if (actualIndex >= 0) { setDayDetailModal(null); handleOpenEditModal(dayDetailModal.dayKey, actualIndex); } }}
                     >
                       <div className="flex items-start justify-between gap-2">
@@ -2061,11 +1930,8 @@ function AppRoutes() {
                         </div>
                         <div className="flex items-center gap-1 shrink-0">
                           {actualIndex >= 0 && (
-                            <button
-                              onClick={e => { e.stopPropagation(); handleRemoveEvent(dayDetailModal.dayKey, actualIndex); setDayDetailModal(prev => prev ? { ...prev, events: prev.events.filter((_, i) => i !== index) } : null); }}
-                              className="p-1.5 rounded-lg bg-red-50 text-red-500 hover:bg-red-100 transition opacity-0 group-hover:opacity-100"
-                              title={t.delete || 'מחק'}
-                            >
+                            <button onClick={e => { e.stopPropagation(); handleRemoveEvent(dayDetailModal.dayKey, actualIndex); setDayDetailModal(prev => prev ? { ...prev, events: prev.events.filter((_, i) => i !== index) } : null); }}
+                              className="p-1.5 rounded-lg bg-red-50 text-red-500 hover:bg-red-100 transition opacity-0 group-hover:opacity-100" title={t.delete || 'מחק'}>
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           )}
@@ -2078,21 +1944,9 @@ function AppRoutes() {
                         {event.isSleep && <span className="text-[10px] text-indigo-500 mr-1 bg-indigo-100 px-1.5 py-0.5 rounded">{t.sleepLabel}</span>}
                       </div>
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-slate-400">
-                        {event.location && (
-                          <span className="flex items-center gap-1">
-                            <MapPin className="w-2.5 h-2.5" />
-                            {LOCATION_LABELS[event.location] || event.location}
-                          </span>
-                        )}
-                        {event.recurrence && (
-                          <span className="text-blue-500 font-medium">{recurrenceLabels[event.recurrence] || event.recurrence}</span>
-                        )}
-                        {event.reminderMinutesBefore > 0 && (
-                          <span className="flex items-center gap-1 text-amber-600">
-                            <BellRing className="w-2.5 h-2.5" />
-                            {t.reminderColon} {event.reminderMinutesBefore} {t.reminderMinutes}
-                          </span>
-                        )}
+                        {event.location && <span className="flex items-center gap-1"><MapPin className="w-2.5 h-2.5" />{LOCATION_LABELS[event.location] || event.location}</span>}
+                        {event.recurrence && <span className="text-blue-500 font-medium">{recurrenceLabels[event.recurrence] || event.recurrence}</span>}
+                        {event.reminderMinutesBefore > 0 && <span className="flex items-center gap-1 text-amber-600"><BellRing className="w-2.5 h-2.5" />{t.reminderColon} {event.reminderMinutesBefore} {t.reminderMinutes}</span>}
                       </div>
                       {event.hasAdvice && event.aiAdvice && (
                         <div className="bg-amber-50 border border-amber-200 rounded-lg p-2 text-xs text-amber-900">
@@ -2104,61 +1958,34 @@ function AppRoutes() {
                 })}
               </div>
             )}
-
             <div className="mt-4 pt-3 border-t border-slate-100 shrink-0 flex items-center justify-between">
-              <p className="text-xs text-slate-400">
-                {t.dayDetailTotal || 'סה"כ'} {dayDetailModal.events.length} {t.dayDetailEvents || 'אירועים'}
-              </p>
-              <button
-                onClick={() => setDayDetailModal(null)}
-                className="px-4 py-2 text-sm text-slate-600 hover:text-slate-800 bg-slate-50 hover:bg-slate-100 rounded-lg transition"
-              >
-                {t.close || 'סגור'}
-              </button>
+              <p className="text-xs text-slate-400">{t.dayDetailTotal || 'סה"כ'} {dayDetailModal.events.length} {t.dayDetailEvents || 'אירועים'}</p>
+              <button onClick={() => setDayDetailModal(null)} className="px-4 py-2 text-sm text-slate-600 hover:text-slate-800 bg-slate-50 hover:bg-slate-100 rounded-lg transition">{t.close || 'סגור'}</button>
             </div>
           </div>
         </div>
       )}
-
-      <footer className="max-w-6xl mx-auto mt-12 text-center text-xs text-slate-400 border-t pt-4">
-        <p>{t.footerVersion} {typeof __BUILD_TIME__ !== 'undefined' ? __BUILD_TIME__ : t.footerLocal}</p>
-        <button onClick={() => setShowPrivacy(true)} className="mt-2 inline-flex items-center gap-1 text-slate-400 hover:text-slate-600 transition"><Shield className="w-3 h-3" /> {t.footerPrivacy}</button>
-      </footer>
 
       {/* Share Booking Link Modal */}
       {showShareModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" onClick={() => setShowShareModal(false)}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                <Share2 className="w-5 h-5 text-emerald-600" /> {t.shareBookingTitle}
-              </h3>
-              <button onClick={() => setShowShareModal(false)} className="p-1 rounded-full hover:bg-slate-100">
-                <X className="w-5 h-5 text-slate-500" />
-              </button>
+              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2"><Share2 className="w-5 h-5 text-emerald-600" /> {t.shareBookingTitle}</h3>
+              <button onClick={() => setShowShareModal(false)} className="p-1 rounded-full hover:bg-slate-100"><X className="w-5 h-5 text-slate-500" /></button>
             </div>
             <p className="text-sm text-slate-600 mb-4">{t.shareBookingDesc}</p>
             <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 mb-4">
               <label className="block text-xs font-medium text-slate-500 mb-1">{t.shareBookingLinkLabel}</label>
-              <div className="text-sm text-slate-800 font-mono break-all bg-white p-2 rounded border border-slate-200" dir="ltr">
-                {bookingLink}
-              </div>
+              <div className="text-sm text-slate-800 font-mono break-all bg-white p-2 rounded border border-slate-200" dir="ltr">{bookingLink}</div>
             </div>
             <div className="flex items-center gap-3">
-              <button
-                onClick={handleCopyShareLink}
-                className="flex-1 flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-lg font-medium transition text-sm"
-              >
-                {shareLinkCopied ? (
-                  <><Check className="w-4 h-4" /> {t.shareBookingCopied}</>
-                ) : (
-                  <><Copy className="w-4 h-4" /> {t.shareBookingCopy}</>
-                )}
+              <button onClick={handleCopyShareLink}
+                className="flex-1 flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-lg font-medium transition text-sm">
+                {shareLinkCopied ? <><Check className="w-4 h-4" /> {t.shareBookingCopied}</> : <><Copy className="w-4 h-4" /> {t.shareBookingCopy}</>}
               </button>
-              <button
-                onClick={handlePreviewLink}
-                className="flex items-center justify-center gap-2 bg-white border border-slate-300 text-slate-700 px-4 py-2.5 rounded-lg hover:bg-slate-50 transition text-sm font-medium"
-              >
+              <button onClick={handlePreviewLink}
+                className="flex items-center justify-center gap-2 bg-white border border-slate-300 text-slate-700 px-4 py-2.5 rounded-lg hover:bg-slate-50 transition text-sm font-medium">
                 <ExternalLink className="w-4 h-4" /> {t.shareBookingPreview}
               </button>
             </div>
@@ -2170,7 +1997,6 @@ function AppRoutes() {
       {showPwaPopup && !isStandalone() && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[9999]" onClick={handleDismissPwa}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
-            {/* Android Chrome Install Prompt */}
             {installPrompt && (
               <div className="text-center">
                 <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
@@ -2184,7 +2010,6 @@ function AppRoutes() {
                 </button>
               </div>
             )}
-            {/* iOS Safari Install Instructions */}
             {isIosSafari() && !installPrompt && (
               <div className="text-center">
                 <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-cyan-500 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
@@ -2208,7 +2033,6 @@ function AppRoutes() {
                 </div>
               </div>
             )}
-            {/* iOS Non-Safari Browser */}
             {isIosNonSafari() && !installPrompt && (
               <div className="text-center">
                 <div className="w-16 h-16 bg-gradient-to-br from-amber-400 to-orange-500 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
@@ -2216,28 +2040,20 @@ function AppRoutes() {
                 </div>
                 <h3 className="text-lg font-bold text-slate-800 mb-2">{t.pwaOpenInSafari}</h3>
                 <p className="text-sm text-slate-500 mb-6">{t.pwaOpenInSafariDesc}</p>
-                <button
-                  onClick={() => {
-                    const safariUrl = window.location.href;
-                    window.location.href = safariUrl;
-                  }}
-                  className="w-full px-4 py-3 bg-gradient-to-r from-amber-400 to-orange-500 text-white rounded-xl font-bold text-sm shadow-lg hover:shadow-xl transition"
-                >
+                <button onClick={() => { window.location.href = window.location.href; }}
+                  className="w-full px-4 py-3 bg-gradient-to-r from-amber-400 to-orange-500 text-white rounded-xl font-bold text-sm shadow-lg hover:shadow-xl transition">
                   {t.pwaOpenInSafari}
                 </button>
               </div>
             )}
-            {/* Dismiss button */}
-            <button onClick={handleDismissPwa} className="w-full mt-3 text-sm text-slate-400 hover:text-slate-600 py-2 transition">
-              {t.cancel}
-            </button>
+            <button onClick={handleDismissPwa} className="w-full mt-3 text-sm text-slate-400 hover:text-slate-600 py-2 transition">{t.cancel}</button>
           </div>
         </div>
       )}
 
-      {/* Smart PWA Install Banner (bottom toast, after 60s) */}
+      {/* Smart PWA Install Banner */}
       {showPwaBanner && !isStandalone() && (
-        <div className="fixed bottom-0 left-0 right-0 z-[9999] p-4 animate-slide-up">
+        <div className="fixed bottom-0 left-0 right-0 z-[9999] p-4 animate-slide-up" style={{ marginBottom: '60px' }}>
           <div className="max-w-md mx-auto bg-white rounded-xl shadow-2xl border border-slate-200 p-4 flex items-center gap-3">
             <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center shrink-0">
               <Download className="w-5 h-5 text-white" />
@@ -2245,10 +2061,8 @@ function AppRoutes() {
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium text-slate-800">{t.pwaInstallBanner}</p>
             </div>
-            <button
-              onClick={handlePwaBannerInstall}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition shrink-0"
-            >
+            <button onClick={handlePwaBannerInstall}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition shrink-0">
               {installPrompt ? t.pwaInstallBannerAndroid : (isIosSafari() ? t.pwaInstallBannerIos : t.pwaInstallBannerAndroid)}
             </button>
             <button onClick={handleDismissPwaBanner} className="text-slate-400 hover:text-slate-600 shrink-0">
@@ -2267,18 +2081,13 @@ function AppRoutes() {
             </div>
             <h3 className="text-lg font-bold text-slate-800 mb-2">{t.loginToSave}</h3>
             <p className="text-sm text-slate-500 mb-6">{t.loginToSaveDesc}</p>
-            <button onClick={handleLogin}
-              className="w-full px-4 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition shadow-lg">
-              {t.loginWithGoogle}
-            </button>
-            <button onClick={() => setShowLoginPrompt(false)} className="w-full mt-3 text-sm text-slate-400 hover:text-slate-600 py-2 transition">
-              {t.cancel}
-            </button>
+            <button onClick={handleLogin} className="w-full px-4 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition shadow-lg">{t.loginWithGoogle}</button>
+            <button onClick={() => setShowLoginPrompt(false)} className="w-full mt-3 text-sm text-slate-400 hover:text-slate-600 py-2 transition">{t.cancel}</button>
           </div>
         </div>
       )}
 
-      {/* ── AI Credits Exhausted Modal (PAYG / 402) ── */}
+      {/* AI Credits Exhausted Modal */}
       {showCreditsModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-[9999]" onClick={() => setShowCreditsModal(false)}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center" onClick={e => e.stopPropagation()}>
@@ -2286,25 +2095,14 @@ function AppRoutes() {
               <AlertTriangle className="w-8 h-8 text-white" />
             </div>
             <h3 className="text-lg font-bold text-slate-800 mb-2">{lang === 'he' ? 'נגמרו לך הקרדיטים!' : 'You are out of credits!'}</h3>
-            <p className="text-sm text-slate-500 mb-6">
-              {creditsError || (lang === 'he'
-                ? 'נגמרו לך הקרדיטים! אנא רכוש חבילת פעולות נוספת כדי להמשיך להשתמש ב-AI.'
-                : 'You ran out of credits! Please purchase an additional action pack to continue using the AI.')}
-            </p>
-            <button
-              onClick={() => setShowCreditsModal(false)}
-              className="w-full px-4 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition shadow-lg"
-            >
-              {lang === 'he' ? 'הבנתי' : 'Got it'}
-            </button>
-            <button onClick={() => setShowCreditsModal(false)} className="w-full mt-3 text-sm text-slate-400 hover:text-slate-600 py-2 transition">
-              {t.cancel}
-            </button>
+            <p className="text-sm text-slate-500 mb-6">{creditsError || (lang === 'he' ? 'נגמרו לך הקרדיטים! אנא רכוש חבילת פעולות נוספת כדי להמשיך להשתמש ב-AI.' : 'You ran out of credits! Please purchase an additional action pack to continue using the AI.')}</p>
+            <button onClick={() => setShowCreditsModal(false)} className="w-full px-4 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition shadow-lg">{lang === 'he' ? 'הבנתי' : 'Got it'}</button>
+            <button onClick={() => setShowCreditsModal(false)} className="w-full mt-3 text-sm text-slate-400 hover:text-slate-600 py-2 transition">{t.cancel}</button>
           </div>
         </div>
       )}
 
-      {/* ── Guest Usage Limit Modal ── */}
+      {/* Guest Usage Limit Modal */}
       {showGuestLimitModal && !user && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-[9999]" onClick={() => setShowGuestLimitModal(false)}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center" onClick={e => e.stopPropagation()}>
@@ -2313,40 +2111,23 @@ function AppRoutes() {
             </div>
             <h3 className="text-lg font-bold text-slate-800 mb-2">{t.guestLimitTitle}</h3>
             <p className="text-sm text-slate-500 mb-6">{t.guestLimitDesc}</p>
-            <button onClick={handleLogin}
-              className="w-full px-4 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition shadow-lg flex items-center justify-center gap-2">
-              <LogIn className="w-4 h-4" /> {t.loginWithGoogle}
-            </button>
+            <button onClick={handleLogin} className="w-full px-4 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition shadow-lg flex items-center justify-center gap-2"><LogIn className="w-4 h-4" /> {t.loginWithGoogle}</button>
             <button onClick={() => { setShowGuestLimitModal(false); setShowEmailAuth(true); setAuthMode('login'); }}
-              className="w-full mt-2 px-4 py-3 bg-white border border-slate-300 text-slate-700 rounded-xl font-medium hover:bg-slate-50 transition shadow-sm flex items-center justify-center gap-2">
-              <Mail className="w-4 h-4" /> {lang === 'he' ? 'התחבר עם אימייל' : 'Login with Email'}
-            </button>
-            <button onClick={() => setShowGuestLimitModal(false)} className="w-full mt-3 text-sm text-slate-400 hover:text-slate-600 py-2 transition">
-              {t.cancel}
-            </button>
+              className="w-full mt-2 px-4 py-3 bg-white border border-slate-300 text-slate-700 rounded-xl font-medium hover:bg-slate-50 transition shadow-sm flex items-center justify-center gap-2"><Mail className="w-4 h-4" /> {lang === 'he' ? 'התחבר עם אימייל' : 'Login with Email'}</button>
+            <button onClick={() => setShowGuestLimitModal(false)} className="w-full mt-3 text-sm text-slate-400 hover:text-slate-600 py-2 transition">{t.cancel}</button>
           </div>
         </div>
       )}
 
-      {/* ── Email/Password Auth Modal ── */}
+      {/* Email/Password Auth Modal */}
       {showEmailAuth && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-[9999]" onClick={() => setShowEmailAuth(false)}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-slate-800">
-                {authMode === 'login' ? (lang === 'he' ? 'התחברות' : 'Login') : (lang === 'he' ? 'הרשמה' : 'Register')}
-              </h3>
-              <button onClick={() => setShowEmailAuth(false)} className="p-1 rounded-full hover:bg-slate-100">
-                <X className="w-5 h-5 text-slate-500" />
-              </button>
+              <h3 className="text-lg font-bold text-slate-800">{authMode === 'login' ? (lang === 'he' ? 'התחברות' : 'Login') : (lang === 'he' ? 'הרשמה' : 'Register')}</h3>
+              <button onClick={() => setShowEmailAuth(false)} className="p-1 rounded-full hover:bg-slate-100"><X className="w-5 h-5 text-slate-500" /></button>
             </div>
-
-            {authError && (
-              <div className="flex items-center gap-2 text-red-600 text-sm mb-4 bg-red-50 p-3 rounded-lg border border-red-200">
-                <AlertCircle className="w-4 h-4" /><span>{authError}</span>
-              </div>
-            )}
-
+            {authError && <div className="flex items-center gap-2 text-red-600 text-sm mb-4 bg-red-50 p-3 rounded-lg border border-red-200"><AlertCircle className="w-4 h-4" /><span>{authError}</span></div>}
             <div className="space-y-4">
               {authMode === 'register' && (
                 <div>
@@ -2359,16 +2140,13 @@ function AppRoutes() {
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">{lang === 'he' ? 'אימייל' : 'Email'}</label>
                 <input type="email" value={authEmail} onChange={e => setAuthEmail(e.target.value)}
-                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="email@example.com" />
+                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="email@example.com" />
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">{lang === 'he' ? 'סיסמה' : 'Password'}</label>
                 <input type="password" value={authPassword} onChange={e => setAuthPassword(e.target.value)}
-                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="••••••" />
+                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="••••••" />
               </div>
-
               <button onClick={async () => {
                 setEmailAuthLoading(true);
                 setAuthError('');
@@ -2377,25 +2155,18 @@ function AppRoutes() {
                   const body = authMode === 'login'
                     ? { email: authEmail, password: authPassword }
                     : { email: authEmail, password: authPassword, name: authName };
-                  
                   const res = await fetch(`${API_BASE}${endpoint}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(body)
                   });
                   const data = await res.json();
-                  
-                  if (!res.ok) {
-                    throw new Error(data.error || 'Authentication failed');
-                  }
-
-                  // Save JWT token and user
+                  if (!res.ok) throw new Error(data.error || 'Authentication failed');
                   setJwtToken(data.token);
                   if (setUser) setUser(data.user);
                   if (setIsPro) setIsPro(data.user?.isPro === true || data.user?.isPro === 'true');
                   safeStorage.setItem('calendai-isLoggedIn', 'true');
                   safeStorage.setItem('calendai-user', JSON.stringify(data.user));
-                  
                   setShowEmailAuth(false);
                   setShowLoginPrompt(false);
                   setShowGuestLimitModal(false);
@@ -2412,23 +2183,16 @@ function AppRoutes() {
                 className="w-full px-4 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition shadow-lg disabled:bg-blue-400 disabled:cursor-not-allowed flex items-center justify-center gap-2">
                 {emailAuthLoading ? <><Loader2 className="w-4 h-4 animate-spin" /> {lang === 'he' ? 'מתחבר...' : 'Loading...'}</> : (authMode === 'login' ? (lang === 'he' ? 'התחבר' : 'Login') : (lang === 'he' ? 'הירשם' : 'Register'))}
               </button>
-
               <div className="text-center mt-2">
-                <button onClick={() => {
-                  setAuthMode(authMode === 'login' ? 'register' : 'login');
-                  setAuthError('');
-                }} className="text-sm text-blue-600 hover:text-blue-800">
-                  {authMode === 'login'
-                    ? (lang === 'he' ? 'אין לך חשבון? הירשם' : 'Don\'t have an account? Register')
-                    : (lang === 'he' ? 'יש לך חשבון? התחבר' : 'Already have an account? Login')}
+                <button onClick={() => { setAuthMode(authMode === 'login' ? 'register' : 'login'); setAuthError(''); }}
+                  className="text-sm text-blue-600 hover:text-blue-800">
+                  {authMode === 'login' ? (lang === 'he' ? 'אין לך חשבון? הירשם' : "Don't have an account? Register") : (lang === 'he' ? 'יש לך חשבון? התחבר' : 'Already have an account? Login')}
                 </button>
               </div>
-
               <div className="relative my-4">
                 <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-200" /></div>
                 <div className="relative flex justify-center text-xs"><span className="bg-white px-2 text-slate-400">{lang === 'he' ? 'או' : 'or'}</span></div>
               </div>
-
               <button onClick={() => { setShowEmailAuth(false); handleLogin(); }}
                 className="w-full px-4 py-3 bg-white border border-slate-300 text-slate-700 rounded-xl font-medium hover:bg-slate-50 transition shadow-sm flex items-center justify-center gap-2">
                 <LogIn className="w-4 h-4" /> {t.loginWithGoogle}
@@ -2440,12 +2204,7 @@ function AppRoutes() {
 
       {/* Meeting Wizard Modal */}
       {showWizard && (
-        <MeetingWizard
-          schedule={schedule}
-          lang={lang}
-          t={t}
-          onClose={() => setShowWizard(false)}
-        />
+        <MeetingWizard schedule={schedule} lang={lang} t={t} onClose={() => setShowWizard(false)} />
       )}
 
       {/* Sidebar Drawer */}
@@ -2465,12 +2224,11 @@ function AppRoutes() {
           safeStorage.setItem('calendai-profile-location', loc);
         }}
       />
-    </div>
     </>
   );
 }
 
-// ── Root App: wraps everything in the correct provider hierarchy ──
+// ── Root App ──
 function App() {
   return (
     <BrowserRouter>
@@ -2483,7 +2241,6 @@ function App() {
   );
 }
 
-// ── Default export with ErrorBoundary ──
 export default function AppWithBoundary() {
   return (
     <ErrorBoundary>

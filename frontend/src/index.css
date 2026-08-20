@@ -438,6 +438,26 @@
   to { opacity: 1; }
 }
 
+@keyframes slide-up {
+  from {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.animate-slide-up {
+  animation: slide-up 0.3s ease-out;
+}
+
+/* Safe area bottom for iOS notch */
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
 .sidebar-drawer {
   position: fixed;
   top: 0;
@@ -1242,22 +1262,6 @@
   border-radius: 999px;
   font-size: 0.85rem;
   font-weight: 600;
-}
-
-/* Slide Up Animation for PWA Banner */
-@keyframes slide-up {
-  from {
-    transform: translateY(100%);
-    opacity: 0;
-  }
-  to {
-    transform: translateY(0);
-    opacity: 1;
-  }
-}
-
-.animate-slide-up {
-  animation: slide-up 0.4s ease-out;
 }
 
 /* ──────────────────────────────────────────── */
