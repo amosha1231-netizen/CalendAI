@@ -148,6 +148,10 @@ function AppRoutes() {
   const [locationFilter, setLocationFilter] = useState("all");
   const { user, isPro, isAuthenticated, authLoading, authStatus, handleLogin, handleLogout, setUser, setIsPro } = useAuth();
 
+  // Smart Auth: show login prompt for save operations
+  const [showLoginPrompt, setShowLoginPrompt] = useState(false);
+  const [pendingAction, setPendingAction] = useState(null);
+
   const intentRef = useRef(getInitialIntent());
 
   // ── View State ──
@@ -274,10 +278,6 @@ function AppRoutes() {
   const [pwaBannerDismissed, setPwaBannerDismissed] = useState(() => {
     try { return safeStorage.getItem('calendai-pwa-banner-dismissed') === 'true'; } catch { return false; }
   });
-
-  // Smart Auth: show login prompt for save operations
-  const [showLoginPrompt, setShowLoginPrompt] = useState(false);
-  const [pendingAction, setPendingAction] = useState(null);
 
   // Email/Password Auth State
   const [showEmailAuth, setShowEmailAuth] = useState(false);
