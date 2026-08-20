@@ -1371,7 +1371,7 @@ function AppRoutes() {
         </div>
       )}
 
-      <div className={`min-h-screen bg-slate-50 p-4 sm:p-6 font-sans pb-20`} dir={isRTL ? 'rtl' : 'ltr'}>
+      <div className={`min-h-screen bg-[#F2F2F7] p-4 sm:p-6 font-sans pb-20`} dir={isRTL ? 'rtl' : 'ltr'}>
       {/* iOS In-App Browser Banner (WhatsApp, Facebook, Instagram) */}
       {isIosWhatsApp() && (
         <div className="fixed top-0 left-0 right-0 z-[99999] bg-amber-50 border-b border-amber-200 px-3 py-2 text-xs text-amber-800 flex items-center justify-between gap-2 shadow-sm" dir="rtl">
@@ -1424,7 +1424,7 @@ function AppRoutes() {
       )}
 
       {/* Header */}
-      <header className="max-w-6xl mx-auto mb-4 sm:mb-8 flex items-center justify-between border-b pb-3 sm:pb-4 gap-1 sm:gap-2">
+      <header className="max-w-6xl mx-auto mb-6 sm:mb-8 flex items-center justify-between pb-3 sm:pb-4 gap-1 sm:gap-2">
         <div className="flex items-center gap-1 sm:gap-3 min-w-0 flex-shrink">
           {/* Hamburger Menu Button */}
           <button onClick={() => setIsSidebarOpen(true)}
@@ -1469,8 +1469,8 @@ function AppRoutes() {
       </header>
 
       <main className="max-w-6xl mx-auto grid grid-cols-1 gap-6">
-        {/* Input box */}
-        <div className="bg-white p-4 sm:p-6 rounded-xl shadow-sm border">
+        {/* Input box - iOS Card */}
+        <div className="bg-white p-5 sm:p-6 rounded-[20px] shadow-[0_4px_12px_rgba(0,0,0,0.04)]">
           <h2 className="text-lg font-semibold mb-2 text-slate-800">{t.inputTitle}</h2>
 
           {/* ── Suggestion Chips Bar (moved above textarea) ── */}
@@ -1489,7 +1489,7 @@ function AppRoutes() {
           {/* ── AI Prompt Textarea ── */}
           <div className="relative" style={{ minHeight: '120px' }}>
             <textarea value={inputText} onChange={e => setInputText(e.target.value)}
-              className={`w-full p-4 border rounded-lg text-slate-800 placeholder-transparent focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none ${isRTL ? 'text-right' : 'text-left'}`}
+              className={`w-full p-4 rounded-xl bg-[#F2F2F7] text-slate-800 placeholder-transparent focus:ring-2 focus:ring-blue-400 focus:bg-white transition-colors resize-none ${isRTL ? 'text-right' : 'text-left'}`}
               rows="4" placeholder=" "
               onKeyDown={e => { if (e.key === 'Enter' && e.ctrlKey) handleParse(); }}
             />
@@ -1622,15 +1622,15 @@ function AppRoutes() {
 
           <div className="mt-4 flex items-center gap-3">
             <button onClick={handleParse} disabled={loading}
-              className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-medium transition disabled:bg-blue-400 disabled:cursor-not-allowed w-full sm:w-48">
+              className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-full font-medium transition disabled:bg-blue-400 disabled:cursor-not-allowed w-full sm:w-48">
               {loading ? <><Loader2 className="w-4 h-4 animate-spin" /> {t.parsing}</> : <><Sparkles className="w-5 h-5" /> {t.parseButton}</>}
             </button>
             <button onClick={handleUndo} disabled={scheduleHistoryRef.current.length === 0} className="flex items-center gap-2 text-slate-500 hover:text-slate-700 px-4 py-3 rounded-lg hover:bg-slate-50 transition text-sm disabled:opacity-30 disabled:cursor-not-allowed"><RotateCcw className="w-4 h-4" /> {t.undo}</button>
           </div>
         </div>
 
-        {/* Weekly Schedule */}
-        <div className="bg-white p-4 sm:p-6 rounded-xl shadow-sm border">
+        {/* Weekly Schedule - iOS Card */}
+        <div className="bg-white p-5 sm:p-6 rounded-[20px] shadow-[0_4px_12px_rgba(0,0,0,0.04)]">
           <div className="flex flex-wrap items-center justify-between gap-4 mb-6 border-b pb-2">
             <h2 className="text-xl font-bold text-slate-800">{t.weeklyScheduleTitle}</h2>
             <div className="flex items-center gap-2">

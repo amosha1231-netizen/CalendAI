@@ -239,7 +239,7 @@ export default function MonthlyCalendar({ schedule, lang }) {
   };
 
   return (
-    <div className="bg-white p-6 rounded-xl shadow-sm border mt-6">
+    <div className="bg-white p-5 sm:p-6 rounded-[20px] shadow-[0_4px_12px_rgba(0,0,0,0.04)]">
       <div className="flex items-center justify-between mb-6 border-b pb-4">
         <div className="flex items-center gap-3">
           <CalendarDays className="w-6 h-6 text-indigo-600" />
