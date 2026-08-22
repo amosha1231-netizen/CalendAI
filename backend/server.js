@@ -2067,12 +2067,23 @@ async function syncEventToGoogleCalendar(userId, event, locationId) {
     }
 
     // Build request body
+    const isReminderEvent = event.isReminder === true || event.eventType === 'reminder' || event.eventType === 'notification';
     const requestBody = {
       summary: event.title || 'CalendAI Event',
       description: event.description || `Created by CalendAI for ${event.day}`,
       start: { dateTime: startDateTime.toISOString(), timeZone },
       end: { dateTime: endDateTime.toISOString(), timeZone },
     };
+
+    // Force popup reminders for notification/reminder events so the user gets a ping
+    if (isReminderEvent) {
+      requestBody.reminders = {
+        useDefault: false,
+        overrides: [
+          { method: 'popup', minutes: 0 } // pops exactly at event start time
+        ]
+      };
+    }
 
     // Build RRULE for recurring events
     if (event.recurrence) {
@@ -2168,11 +2179,22 @@ app.post('/api/add-to-google-calendar', async (req, res) => {
   }
 
   try {
+    const isReminderEvent = event.isReminder === true || event.eventType === 'reminder' || event.eventType === 'notification';
     const requestBody = {
       summary: event.title,
       start: { dateTime: startDateTime.toISOString(), timeZone },
       end: { dateTime: endDateTime.toISOString(), timeZone },
     };
+
+    // Force popup reminders for notification/reminder events so the user gets a ping
+    if (isReminderEvent) {
+      requestBody.reminders = {
+        useDefault: false,
+        overrides: [
+          { method: 'popup', minutes: 0 } // pops exactly at event start time
+        ]
+      };
+    }
     
     // Attach RRULE to recurring events
     if (recurrenceRule) {
