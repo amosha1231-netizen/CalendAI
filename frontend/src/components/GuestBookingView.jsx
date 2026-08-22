@@ -100,16 +100,33 @@ export default function GuestBookingView({ bookingId, lang, t, onClose }) {
     return monthNames[date.getMonth()];
   }
 
+  // Get the display name for meeting types
+  function getMeetingTypeDisplay(typeId) {
+    if (!typeId) return t.wizardSubject || 'Meeting';
+    const meetingLabels = {
+      'quick': t.bookingQuickChat || 'Quick Chat',
+      'standard': t.bookingStandard || 'Standard Meeting',
+      'consultation': t.bookingConsultation || 'Consultation'
+    };
+    return meetingLabels[typeId] || typeId;
+  }
+
   const handleConfirm = async () => {
-    if (selectedSlotIndex === null || !guestName.trim()) return;
+    if (!guestName.trim()) return;
     setConfirming(true);
     setConfirmError("");
+
+    // For locked bookings, we don't need a slotIndex - the backend uses startTime/endTime directly
+    const isLocked = booking?.isLocked;
+    
     try {
       const res = await fetch(`${API_BASE}/api/booking/${bookingId}/confirm`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          slotIndex: selectedSlotIndex,
+          // For locked bookings, slotIndex is ignored by backend (it uses booking.startTime/endTime)
+          // For multi-slot, we need slotIndex
+          slotIndex: isLocked ? 0 : (selectedSlotIndex !== null ? selectedSlotIndex : undefined),
           guestName: guestName.trim(),
           guestEmail: guestEmail.trim(),
           guestPhone: guestPhone.trim(),
@@ -156,6 +173,224 @@ export default function GuestBookingView({ bookingId, lang, t, onClose }) {
     );
   }
 
+  // ── LOCKED BOOKING VIEW (single exact time, no slot selection) ──
+  if (booking?.isLocked && booking?.startTime && booking?.endTime) {
+    // Already confirmed
+    if (confirmed) {
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center p-4" dir={isRTL ? 'rtl' : 'ltr'}>
+          <div className="bg-white rounded-2xl shadow-xl p-8 text-center max-w-md w-full">
+            <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Check className="w-8 h-8 text-green-600" />
+            </div>
+            <h3 className="text-xl font-bold text-slate-800 mb-2">{t.bookingSuccessTitle || t.guestViewSuccess}</h3>
+            <p className="text-sm text-slate-500 mb-6">{t.bookingSuccessDesc || t.guestViewSuccessDesc}</p>
+
+            {/* Meeting Details */}
+            <div className="bg-slate-50 rounded-lg p-4 border border-slate-200 mb-6 text-right">
+              <p className="font-bold text-slate-800 mb-2">{getMeetingTypeDisplay(booking.meetingType)}</p>
+              <div className="flex items-center gap-2 text-sm mb-1">
+                <Calendar className="w-4 h-4 text-blue-500" />
+                <span className="font-medium text-slate-700">
+                  {getDayDisplayName(booking.day)} · {getDayDate(booking.day)}/{getMonthName(booking.day)}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 text-sm text-slate-600 mb-1">
+                <Clock className="w-4 h-4 text-blue-500" />
+                <span>{booking.startTime} – {booking.endTime} · {booking.duration} {t.wizardDurationMinutes || 'min'}</span>
+              </div>
+              <div className="flex items-center gap-2 text-sm text-slate-600">
+                <span className="font-medium">{t.wizardSubject}:</span> {booking.subject}
+              </div>
+            </div>
+
+            {/* Referral Banner */}
+            <div className="bg-gradient-to-br from-indigo-50 to-blue-50 border border-indigo-200 rounded-xl p-5 mb-6">
+              <div className="flex items-center gap-2 mb-2">
+                <Sparkles className="w-5 h-5 text-indigo-500" />
+                <span className="text-sm font-bold text-indigo-800">{t.referralBannerTitle || t.referralBannerSubtitle || 'Want to manage your time with AI too?'}</span>
+              </div>
+              <p className="text-xs text-indigo-600 mb-3">{t.referralBannerDesc || 'Join CalendAI and start getting the most out of your time!'}</p>
+              <a
+                href="https://calendai.onrender.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition shadow-md"
+              >
+                <Sparkles className="w-4 h-4" />
+                {t.referralBannerButton || 'Start Free'}
+                <ExternalLink className="w-3 h-3" />
+              </a>
+            </div>
+
+            <button onClick={onClose} className="text-sm text-slate-500 hover:text-slate-700 font-medium">
+              {t.bookingClose || 'Close'}
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // Main locked booking view - show meeting card + guest details form
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center p-4" dir={isRTL ? 'rtl' : 'ltr'}>
+        <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg">
+          {/* Header */}
+          <div className="p-6 border-b">
+            <div className="flex items-center gap-3 mb-1">
+              <Calendar className="w-6 h-6 text-blue-600" />
+              <h2 className="text-xl font-bold text-slate-800">
+                {getMeetingTypeDisplay(booking.meetingType)}
+              </h2>
+            </div>
+            <p className="text-sm text-slate-500 mt-1">
+              {booking.hostName ? (
+                <>{t.guestViewSubtitle?.replace('{hostName}', booking.hostName) || `Schedule a meeting with ${booking.hostName}`}</>
+              ) : (
+                t.guestViewSubtitle || 'Confirm your meeting time'
+              )}
+            </p>
+          </div>
+
+          <div className="p-6 space-y-5">
+            {/* Locked Meeting Time Card */}
+            <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-5">
+              <h3 className="text-sm font-bold text-blue-800 mb-4 text-center">
+                {t.guestViewMeetingDetails || 'Meeting Details'}
+              </h3>
+              
+              {/* Subject / Meeting type */}
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
+                  <Calendar className="w-5 h-5 text-blue-600" />
+                </div>
+                <div>
+                  <p className="text-sm text-slate-500">{t.wizardSubject || 'Subject'}</p>
+                  <p className="font-semibold text-slate-800">{booking.subject || getMeetingTypeDisplay(booking.meetingType)}</p>
+                </div>
+              </div>
+
+              {/* Date */}
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
+                  <Calendar className="w-5 h-5 text-blue-600" />
+                </div>
+                <div>
+                  <p className="text-sm text-slate-500">{t.bookingDayPicker || 'Day'}</p>
+                  <p className="font-semibold text-slate-800">
+                    {getDayDisplayName(booking.day)} · {getDayDate(booking.day)} {getMonthName(booking.day)}
+                  </p>
+                </div>
+              </div>
+
+              {/* Time */}
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
+                  <Clock className="w-5 h-5 text-blue-600" />
+                </div>
+                <div>
+                  <p className="text-sm text-slate-500">{t.bookingDuration || 'Duration'}</p>
+                  <p className="font-semibold text-slate-800">
+                    {booking.startTime} – {booking.endTime} 
+                    <span className="text-slate-500 font-normal"> · {booking.duration} {t.wizardDurationMinutes || 'min'}</span>
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Guest Details Form */}
+            <div className="space-y-4">
+              <h3 className="text-sm font-semibold text-slate-700">{t.bookingDetailsTitle || 'Your Details'}</h3>
+
+              {/* Name */}
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-2">{t.guestViewName || 'Your Name'} *</label>
+                <input
+                  type="text"
+                  value={guestName}
+                  onChange={e => setGuestName(e.target.value)}
+                  placeholder={t.guestViewNamePlaceholder || 'Enter your name'}
+                  className="w-full px-4 py-2.5 border border-slate-300 rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  dir={isRTL ? 'rtl' : 'ltr'}
+                />
+              </div>
+
+              {/* Email */}
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-2">{t.bookingGuestEmail || 'Email'}</label>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input
+                    type="email"
+                    value={guestEmail}
+                    onChange={e => setGuestEmail(e.target.value)}
+                    placeholder={t.bookingGuestEmailPlaceholder || 'Enter your email'}
+                    className="w-full pl-10 pr-4 py-2.5 border border-slate-300 rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    dir="ltr"
+                  />
+                </div>
+              </div>
+
+              {/* Phone */}
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-2">{t.bookingGuestPhone || 'Phone / WhatsApp'}</label>
+                <div className="relative">
+                  <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input
+                    type="tel"
+                    value={guestPhone}
+                    onChange={e => setGuestPhone(e.target.value)}
+                    placeholder={t.bookingGuestPhonePlaceholder || 'Enter your phone number'}
+                    className="w-full pl-10 pr-4 py-2.5 border border-slate-300 rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    dir="ltr"
+                  />
+                </div>
+              </div>
+
+              {/* Notes */}
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-2">{t.bookingGuestNotes || 'Notes / Topic'}</label>
+                <div className="relative">
+                  <MessageSquare className="absolute left-3 top-3 w-4 h-4 text-slate-400" />
+                  <textarea
+                    value={guestNotes}
+                    onChange={e => setGuestNotes(e.target.value)}
+                    placeholder={t.bookingGuestNotesPlaceholder || 'Enter a short description or topic'}
+                    rows={2}
+                    className="w-full pl-10 pr-4 py-2.5 border border-slate-300 rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                    dir={isRTL ? 'rtl' : 'ltr'}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Error */}
+            {confirmError && (
+              <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 p-3 rounded-lg border border-red-200">
+                <span>{confirmError}</span>
+              </div>
+            )}
+
+            {/* Confirm Button */}
+            <button
+              onClick={handleConfirm}
+              disabled={!guestName.trim() || confirming}
+              className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-semibold transition disabled:bg-blue-400 disabled:cursor-not-allowed shadow-lg"
+            >
+              {confirming ? (
+                <><Loader2 className="w-4 h-4 animate-spin" /> {t.guestViewConfirming || 'Confirming...'}</>
+              ) : (
+                <><Check className="w-5 h-5" /> {t.guestViewConfirm || 'Confirm Meeting'}</>
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── MULTI-SLOT LEGACY VIEW (same as before) ──
+  
   // Confirmed state - Enhanced success screen
   if (confirmed) {
     return (
@@ -214,7 +449,7 @@ export default function GuestBookingView({ bookingId, lang, t, onClose }) {
     );
   }
 
-  // Main booking view
+  // Main booking view (multi-slot)
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center p-4" dir={isRTL ? 'rtl' : 'ltr'}>
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg">

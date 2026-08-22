@@ -264,16 +264,64 @@ export default function Booking({ schedule, lang, t, onClose, onConfirm, user })
   };
 
   // Confirm and create share link
-  const handleConfirmAndCreateLink = () => {
+  const handleConfirmAndCreateLink = async () => {
     if (selectedSlots.length === 0) return;
-    // Generate a unique booking ID
-    const id = 'book_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-    setBookingId(id);
-    const link = typeof window !== 'undefined' 
-      ? `${window.location.origin}${window.location.pathname}?book=${id}&day=${selectedDay}&slots=${selectedSlots.map(s => `${s.hour}-${s.minute}`).join(',')}&dur=${duration}`
-      : '';
-    setShareLink(link);
-    setStep('share-link');
+    
+    // Build the exact start/end time strings
+    if (selectedSlots.length === 0) return;
+    const firstSlot = selectedSlots[0];
+    const startHour = firstSlot.hour;
+    const startMin = firstSlot.minute;
+    const endMinTotal = startHour * 60 + startMin + duration;
+    const endHour = Math.floor(endMinTotal / 60) % 24;
+    const endMin = endMinTotal % 60;
+    
+    const fmt12 = (h, m) => {
+      const ampm = h >= 12 ? 'PM' : 'AM';
+      const h12 = h % 12 || 12;
+      return `${String(h12).padStart(2, '0')}:${String(m).padStart(2, '0')} ${ampm}`;
+    };
+    
+    const startTimeStr = fmt12(startHour, startMin);
+    const endTimeStr = fmt12(endHour, endMin);
+    const meetingTypeName = selectedMeetingType?.id || 'standard';
+    
+    try {
+      // Call backend to create a locked booking link with exact time
+      const res = await fetch(`${API_BASE}/api/booking/create-link`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          subject: meetingTypeName === 'quick' ? 'שיחה מהירה' : 
+                   meetingTypeName === 'consultation' ? 'ייעוץ' : 'פגישה סטנדרטית',
+          meetingType: meetingTypeName,
+          startTime: startTimeStr,
+          endTime: endTimeStr,
+          duration,
+          day: selectedDay,
+          hostName: user?.displayName || guestName || user?.email || '',
+          guestTimezone: guestTimezone || ''
+        })
+      });
+      
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to create booking link');
+      
+      setBookingId(data.bookingId);
+      setShareLink(data.link);
+      setStep('share-link');
+    } catch (err) {
+      setBookingError(err.message);
+      // Fallback to local link generation
+      const id = 'book_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+      setBookingId(id);
+      const link = typeof window !== 'undefined' 
+        ? `${window.location.origin}${window.location.pathname}?book=${id}&day=${selectedDay}&slots=${selectedSlots.map(s => `${s.hour}-${s.minute}`).join(',')}&dur=${duration}`
+        : '';
+      setShareLink(link);
+      setStep('share-link');
+    }
   };
 
   // Handle booking confirmation (from details form)

@@ -2721,12 +2721,22 @@ app.post('/api/booking/ai-find-slot', aiLimiter, async (req, res) => {
  * POST /api/booking/create-link
  * Creates a dynamic booking link with specific time slots and duration.
  * Returns a unique ID that can be used in the URL for guest booking.
+ * Supports two modes:
+ *   1. Multi-slot (legacy): { slots: [{hour,minute}], day, duration }
+ *   2. Locked time (new):   { startTime, endTime, meetingType, day, duration }
  */
 app.post('/api/booking/create-link', (req, res) => {
   try {
-    const { subject, duration, slots, day, hostName } = req.body;
-    if (!slots || !Array.isArray(slots) || slots.length === 0 || !duration || !day) {
-      return res.status(400).json({ error: 'slots, duration, and day are required.' });
+    const { subject, duration, slots, day, hostName, startTime, endTime, meetingType, guestTimezone } = req.body;
+    
+    // Determine if this is a locked (single exact time) or multi-slot booking
+    const isLocked = !!(startTime && endTime);
+    
+    if (!isLocked && (!slots || !Array.isArray(slots) || slots.length === 0)) {
+      return res.status(400).json({ error: 'Either slots array or startTime/endTime are required.' });
+    }
+    if (!duration || !day) {
+      return res.status(400).json({ error: 'duration and day are required.' });
     }
 
     const userId = getUserId(req);
@@ -2737,9 +2747,16 @@ app.post('/api/booking/create-link', (req, res) => {
       hostId: userId,
       hostName: hostName || 'Host',
       subject: subject || 'Meeting',
+      meetingType: meetingType || null,
       duration,
       day,
-      slots: slots.map(s => ({ hour: s.hour, minute: s.minute, booked: false })),
+      isLocked,
+      startTime: isLocked ? startTime : null,
+      endTime: isLocked ? endTime : null,
+      guestTimezone: guestTimezone || null,
+      slots: isLocked 
+        ? [] 
+        : slots.map(s => ({ hour: s.hour, minute: s.minute, booked: false })),
       createdAt: new Date().toISOString(),
       status: 'active'
     };
@@ -2764,7 +2781,9 @@ app.post('/api/booking/create-link', (req, res) => {
 /**
  * GET /api/booking/:id
  * Returns the booking data for a given dynamic booking ID.
- * Used by the guest view to display available slots.
+ * Used by the guest view. Supports two modes:
+ *   1. Locked time: returns isLocked=true + startTime/endTime/meetingType
+ *   2. Multi-slot: returns slots array for guest to choose
  */
 app.get('/api/booking/:id', (req, res) => {
   try {
@@ -2781,7 +2800,7 @@ app.get('/api/booking/:id', (req, res) => {
       return res.status(410).json({ error: 'This booking link has expired.', booking });
     }
 
-    // Return available slots only (not booked)
+    // Return available slots only (not booked) for multi-slot mode
     const availableSlots = booking.slots.filter(s => !s.booked);
 
     res.json({
@@ -2790,8 +2809,13 @@ app.get('/api/booking/:id', (req, res) => {
         id: booking.id,
         hostName: booking.hostName,
         subject: booking.subject,
+        meetingType: booking.meetingType || null,
         duration: booking.duration,
         day: booking.day,
+        isLocked: booking.isLocked || false,
+        startTime: booking.isLocked ? booking.startTime : null,
+        endTime: booking.isLocked ? booking.endTime : null,
+        guestTimezone: booking.guestTimezone || null,
         createdAt: booking.createdAt
       },
       slots: availableSlots
@@ -2804,16 +2828,17 @@ app.get('/api/booking/:id', (req, res) => {
 
 /**
  * POST /api/booking/:id/confirm
- * Confirms a booking by a guest: marks the selected slot as booked,
- * adds the event to the host's schedule, and returns confirmation.
+ * Confirms a booking by a guest. Supports two modes:
+ *   1. Locked time (isLocked=true): uses booking.startTime/endTime directly
+ *   2. Multi-slot (isLocked=false): uses slotIndex to pick which slot
  */
 app.post('/api/booking/:id/confirm', async (req, res) => {
   try {
     const { id } = req.params;
     const { slotIndex, guestName, guestEmail, guestPhone, guestNotes } = req.body;
 
-    if (slotIndex === undefined || !guestName) {
-      return res.status(400).json({ error: 'slotIndex and guestName are required.' });
+    if (!guestName) {
+      return res.status(400).json({ error: 'guestName is required.' });
     }
 
     const bookingFile = path.join(DATA_DIR, 'bookings', `${id}.json`);
@@ -2828,23 +2853,53 @@ app.post('/api/booking/:id/confirm', async (req, res) => {
       return res.status(410).json({ error: 'This booking link has expired.' });
     }
 
-    if (slotIndex < 0 || slotIndex >= booking.slots.length) {
-      return res.status(400).json({ error: 'Invalid slot index.' });
+    let startTimeStr, endTimeStr;
+    const formatTime12 = (h, m) => {
+      const ampm = h >= 12 ? 'PM' : 'AM';
+      const h12 = h % 12 || 12;
+      return `${String(h12).padStart(2, '0')}:${String(m).padStart(2, '0')} ${ampm}`;
+    };
+
+    if (booking.isLocked) {
+      // Locked time mode: use the exact startTime/endTime from the booking
+      startTimeStr = booking.startTime;
+      endTimeStr = booking.endTime;
+    } else {
+      // Multi-slot mode: use slotIndex to pick the slot
+      if (slotIndex === undefined) {
+        return res.status(400).json({ error: 'slotIndex is required for multi-slot booking.' });
+      }
+      if (slotIndex < 0 || slotIndex >= booking.slots.length) {
+        return res.status(400).json({ error: 'Invalid slot index.' });
+      }
+
+      const slot = booking.slots[slotIndex];
+      if (slot.booked) {
+        return res.status(409).json({ error: 'This slot is already booked.' });
+      }
+
+      // Mark slot as booked
+      slot.booked = true;
+      slot.bookedBy = guestName;
+      slot.bookedByEmail = guestEmail || '';
+      slot.bookedByPhone = guestPhone || '';
+      slot.bookedByNotes = guestNotes || '';
+      slot.bookedAt = new Date().toISOString();
+
+      const startHour = slot.hour;
+      const startMin = slot.minute;
+      const endMinTotal = startHour * 60 + startMin + booking.duration;
+      const endHour = Math.floor(endMinTotal / 60);
+      const endMin = endMinTotal % 60;
+
+      startTimeStr = formatTime12(startHour, startMin);
+      endTimeStr = formatTime12(endHour, endMin);
     }
 
-    const slot = booking.slots[slotIndex];
-    if (slot.booked) {
-      return res.status(409).json({ error: 'This slot is already booked.' });
-    }
-
-    // Mark slot as booked
-    slot.booked = true;
-    slot.bookedBy = guestName;
-    slot.bookedByEmail = guestEmail || '';
-    slot.bookedByPhone = guestPhone || '';
-    slot.bookedByNotes = guestNotes || '';
-    slot.bookedAt = new Date().toISOString();
+    // Mark booking as completed
     booking.status = 'completed';
+    booking.confirmedBy = guestName;
+    booking.confirmedAt = new Date().toISOString();
 
     // Save booking update
     fs.writeFileSync(bookingFile, JSON.stringify(booking, null, 2));
@@ -2853,29 +2908,18 @@ app.post('/api/booking/:id/confirm', async (req, res) => {
     const hostSchedule = getUserSchedule(booking.hostId);
     const dayName = booking.day;
 
-    const startHour = slot.hour;
-    const startMin = slot.minute;
-    const endMinTotal = startHour * 60 + startMin + booking.duration;
-    const endHour = Math.floor(endMinTotal / 60);
-    const endMin = endMinTotal % 60;
-
-    const formatTime12 = (h, m) => {
-      const ampm = h >= 12 ? 'PM' : 'AM';
-      const h12 = h % 12 || 12;
-      return `${String(h12).padStart(2, '0')}:${String(m).padStart(2, '0')} ${ampm}`;
-    };
-
     const newEvent = {
       title: `${booking.subject} - ${guestName}`,
       day: dayName,
-      startTime: formatTime12(startHour, startMin),
-      endTime: formatTime12(endHour, endMin),
+      startTime: startTimeStr,
+      endTime: endTimeStr,
       recurrence: 'once',
       location: DEFAULT_LOCATION_ID,
       guestName: guestName,
       guestEmail: guestEmail || '',
       guestPhone: guestPhone || '',
       guestNotes: guestNotes || '',
+      meetingType: booking.meetingType || null,
       bookingId: id
     };
 
