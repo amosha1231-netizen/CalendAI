@@ -58,18 +58,19 @@ try {
   cleanTitle = (title) => title || 'פגישה / אירוע';
 }
 
-// Safe Stripe initialization - never crash if STRIPE_SECRET_KEY is missing
-let stripe = null;
+// Safe Lemon Squeezy initialization - never crash if LEMON_SQUEEZY_API_KEY is missing
+// CalendAI uses Lemon Squeezy for payment processing (not Stripe).
+let lemonSqueezyEnabled = false;
 try {
-  const stripeKey = process.env.STRIPE_SECRET_KEY;
-  if (stripeKey && stripeKey !== 'sk_test_placeholder') {
-    stripe = require('stripe')(stripeKey);
-    console.log('✅ Stripe initialized');
+  const lsApiKey = process.env.LEMON_SQUEEZY_API_KEY;
+  if (lsApiKey && lsApiKey !== 'your_lemon_squeezy_api_key_here') {
+    lemonSqueezyEnabled = true;
+    console.log('✅ Lemon Squeezy payment service configured');
   } else {
-    console.warn('⚠️ STRIPE_SECRET_KEY not configured. Payment features disabled.');
+    console.warn('⚠️ LEMON_SQUEEZY_API_KEY not configured. Payment features disabled.');
   }
-} catch (stripeErr) {
-  console.error('⚠️ Failed to initialize Stripe:', stripeErr.message);
+} catch (lsErr) {
+  console.error('⚠️ Failed to initialize Lemon Squeezy:', lsErr.message);
   console.error('⚠️ Payment features will be disabled.');
 }
 
@@ -3136,261 +3137,102 @@ app.get('/api/locations/:id/slots', (req, res) => {
 });
 
 // ──────────────────────────────────────────────
-// 10b. Stripe Payments (Pro Subscription)
+// 10b. Lemon Squeezy Payments (AI Credits Purchase)
 // ──────────────────────────────────────────────
-const PRO_PRICE_ID = process.env.STRIPE_PRO_PRICE_ID || 'price_monthly_pro_29'; // ₪29/month
-const PRO_PRICE_AMOUNT = 2900; // ₪29.00 in agorot (ILS cents)
-
-/**
- * POST /api/payments/create-checkout-session
- * Creates a Stripe Checkout Session for a monthly Pro subscription (₪29/month).
- * Requires an authenticated user.
- */
-app.post('/api/payments/create-checkout-session', async (req, res) => {
-  try {
-    if (!req.isAuthenticated || !req.isAuthenticated()) {
-      return res.status(401).json({ error: 'User not authenticated. Please log in first.' });
-    }
-
-    const sessionUser = req.session?.passport?.user;
-    const userId = sessionUser?._id || sessionUser?.id || sessionUser?.googleId;
-    if (!userId) {
-      return res.status(401).json({ error: 'User not authenticated. Please log in first.' });
-    }
-
-    // Find the user in MongoDB
-    const dbUser = await User.findById(userId).catch(() => null);
-
-    let stripeCustomerId = dbUser?.stripeCustomerId || null;
-
-    // Create a Stripe customer if we don't have one yet
-    if (!stripeCustomerId) {
-      try {
-        const customer = await stripe.customers.create({
-          email: sessionUser?.email || dbUser?.email,
-          name: sessionUser?.displayName || dbUser?.displayName,
-          metadata: {
-            userId: userId.toString(),
-            appUserId: userId.toString()
-          }
-        });
-        stripeCustomerId = customer.id;
-
-        // Save the Stripe customer ID to MongoDB
-        if (dbUser) {
-          await User.findByIdAndUpdate(dbUser._id, { stripeCustomerId });
-        }
-      } catch (customerErr) {
-        console.error('Failed to create Stripe customer:', customerErr.message);
-        // Continue without a customer ID - Stripe can still create the session
-      }
-    }
-
-    // Create the Checkout Session for a monthly subscription
-    const session = await stripe.checkout.sessions.create({
-      mode: 'subscription',
-      customer: stripeCustomerId || undefined,
-      line_items: [
-        {
-          price_data: {
-            currency: 'ils',
-            product_data: {
-              name: 'CalendAI Pro (חודשי)',
-              description: 'מנוי חודשי לתכונות Pro של CalendAI',
-              images: ['https://calendai.onrender.com/icon.svg']
-            },
-            unit_amount: PRO_PRICE_AMOUNT, // ₪29.00
-            recurring: { interval: 'month' }
-          },
-          quantity: 1
-        }
-      ],
-      metadata: {
-        userId: userId.toString()
-      },
-      success_url: `${CLIENT_URL}/?payment=success`,
-      cancel_url: `${CLIENT_URL}/?payment=cancelled`,
-      client_reference_id: userId.toString(),
-      allow_promotion_codes: true
-    });
-
-    res.json({ url: session.url, sessionId: session.id });
-  } catch (error) {
-    console.error('Failed to create Stripe Checkout Session:', error.message);
-    res.status(500).json({ error: 'Failed to create payment session. Please try again.' });
-  }
-});
+// CalendAI uses Lemon Squeezy for all payment processing.
+// The /api/payments/create-checkout route is defined in ./routes/paymentRoutes.js
+// and handles creating Lemon Squeezy checkout sessions for AI credit purchases.
+// Stripe is NOT used — all payment logic is handled via Lemon Squeezy.
 
 /**
  * POST /api/payments/webhook
- * Receives payment webhook events from BOTH Stripe and Lemon Squeezy.
+ * Receives payment webhook events from Lemon Squeezy.
  *
- * - Stripe:         On checkout.session.completed → marks the user as isPro: true.
- * - Lemon Squeezy:  On order_created → credits the user with 100 AI credits.
+ * - Lemon Squeezy: On order_created → credits the user with 100 AI credits.
  *
  * This route is intentionally NOT protected by auth middleware — the requests
- * come from the payment providers' servers, not from the client.
+ * come from Lemon Squeezy's servers, not from the client.
+ * CalendAI uses Lemon Squeezy exclusively for payment processing (not Stripe).
  */
 app.post('/api/payments/webhook',
   express.raw({ type: 'application/json' }),
   async (req, res) => {
     // ──────────────────────────────────────────────
-    // Detect provider: Lemon Squeezy sends `x-signature`,
-    // Stripe sends `stripe-signature`.
+    // Lemon Squeezy sends `x-signature` header for HMAC verification.
     // ──────────────────────────────────────────────
     const lemonSqueezySignature = req.headers['x-signature'];
-    const stripeSignature = req.headers['stripe-signature'];
 
-    // ── Lemon Squeezy webhook (order_created → +100 AI credits) ──
-    if (lemonSqueezySignature) {
-      try {
-        const rawBody = req.body; // Buffer from express.raw()
-
-        // Verify HMAC-SHA256 signature using the Lemon Squeezy webhook secret
-        const secret = process.env.LEMON_SQUEEZY_WEBHOOK_SECRET;
-        if (!secret) {
-          console.error('Lemon Squeezy webhook: LEMON_SQUEEZY_WEBHOOK_SECRET is not configured.');
-          return res.status(500).send('Webhook secret not configured');
-        }
-
-        const expectedSignature = crypto
-          .createHmac('sha256', secret)
-          .update(rawBody)
-          .digest('hex');
-
-        const receivedSignature = String(lemonSqueezySignature || '');
-
-        // Use timing-safe comparison to prevent timing attacks
-        const expectedBuffer = Buffer.from(expectedSignature, 'hex');
-        const receivedBuffer = Buffer.from(receivedSignature, 'hex');
-        const signaturesMatch =
-          expectedBuffer.length === receivedBuffer.length &&
-          crypto.timingSafeEqual(expectedBuffer, receivedBuffer);
-
-        if (!signaturesMatch) {
-          console.error('Lemon Squeezy webhook: Invalid signature.');
-          return res.status(401).send('Invalid signature');
-        }
-
-        // Signature is valid — parse the JSON payload
-        const payload = JSON.parse(rawBody.toString('utf-8'));
-
-        // Only process successful order_created events
-        const eventName = payload?.meta?.event_name;
-        if (eventName !== 'order_created') {
-          return res.status(200).send('Webhook received and processed');
-        }
-
-        const userId = payload?.meta?.custom_data?.user_id || payload?.meta?.custom_data?.userId;
-        if (!userId) {
-          console.warn('Lemon Squeezy webhook: No userId found in custom_data.');
-          return res.status(200).send('Webhook received and processed');
-        }
-
-        // Find the user in MongoDB and credit them with 100 AI credits
-        let user = null;
-        if (mongoose.Types.ObjectId.isValid(userId)) {
-          user = await User.findById(userId);
-        }
-        if (!user) {
-          user = await User.findOne({ googleId: userId });
-        }
-
-        if (!user) {
-          console.warn(`Lemon Squeezy webhook: User ${userId} not found in MongoDB.`);
-          return res.status(200).send('Webhook received and processed');
-        }
-
-        user.aiCredits = (user.aiCredits || 0) + 100;
-        await user.save();
-        console.log(`✅ Lemon Squeezy: Credited user ${user._id} with 100 AI credits (total: ${user.aiCredits}).`);
-
-        return res.status(200).send('Webhook received and processed');
-      } catch (err) {
-        console.error('Lemon Squeezy webhook processing failed:', err.message);
-        return res.status(400).send('Webhook processing failed');
-      }
+    if (!lemonSqueezySignature) {
+      return res.status(400).json({ error: 'Missing webhook signature header.' });
     }
-
-    // ── Stripe webhook (original logic) ──
-    const sig = stripeSignature;
-    const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
-
-    let event;
 
     try {
-      // Verify the event signature if a webhook secret is configured
-      if (endpointSecret) {
-        event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
-      } else {
-        // Fallback: parse the raw body as JSON (NOT recommended for production)
-        event = JSON.parse(req.body.toString('utf-8'));
+      const rawBody = req.body; // Buffer from express.raw()
+
+      // Verify HMAC-SHA256 signature using the Lemon Squeezy webhook secret
+      const secret = process.env.LEMON_SQUEEZY_WEBHOOK_SECRET;
+      if (!secret) {
+        console.error('Lemon Squeezy webhook: LEMON_SQUEEZY_WEBHOOK_SECRET is not configured.');
+        return res.status(500).json({ error: 'Webhook secret not configured' });
       }
-    } catch (err) {
-      console.error('Webhook signature verification failed:', err.message);
-      return res.status(400).json({ error: `Webhook Error: ${err.message}` });
-    }
 
-    // Handle the checkout.session.completed event
-    if (event.type === 'checkout.session.completed') {
-      const checkoutSession = event.data.object;
-      const userId = checkoutSession.metadata?.userId || checkoutSession.client_reference_id;
+      const expectedSignature = crypto
+        .createHmac('sha256', secret)
+        .update(rawBody)
+        .digest('hex');
 
+      const receivedSignature = String(lemonSqueezySignature || '');
+
+      // Use timing-safe comparison to prevent timing attacks
+      const expectedBuffer = Buffer.from(expectedSignature, 'hex');
+      const receivedBuffer = Buffer.from(receivedSignature, 'hex');
+      const signaturesMatch =
+        expectedBuffer.length === receivedBuffer.length &&
+        crypto.timingSafeEqual(expectedBuffer, receivedBuffer);
+
+      if (!signaturesMatch) {
+        console.error('Lemon Squeezy webhook: Invalid signature.');
+        return res.status(401).json({ error: 'Invalid signature' });
+      }
+
+      // Signature is valid — parse the JSON payload
+      const payload = JSON.parse(rawBody.toString('utf-8'));
+
+      // Only process successful order_created events
+      const eventName = payload?.meta?.event_name;
+      if (eventName !== 'order_created') {
+        return res.status(200).json({ received: true });
+      }
+
+      const userId = payload?.meta?.custom_data?.user_id || payload?.meta?.custom_data?.userId;
       if (!userId) {
-        console.warn('Webhook: No userId found in session metadata.');
-        return res.json({ received: true });
+        console.warn('Lemon Squeezy webhook: No userId found in custom_data.');
+        return res.status(200).json({ received: true });
       }
 
-      try {
-        // Update the user in MongoDB to isPro: true
-        const user = await User.findById(userId);
-        if (user) {
-          user.isPro = true;
-          if (checkoutSession.customer) {
-            user.stripeCustomerId = checkoutSession.customer;
-          }
-          await user.save();
-          console.log(`User ${userId} upgraded to Pro successfully.`);
-        } else {
-          // Maybe user is referenced by googleId instead of ObjectId
-          const userByGoogle = await User.findOne({ googleId: userId });
-          if (userByGoogle) {
-            userByGoogle.isPro = true;
-            if (checkoutSession.customer) {
-              userByGoogle.stripeCustomerId = checkoutSession.customer;
-            }
-            await userByGoogle.save();
-            console.log(`User ${userId} upgraded to Pro successfully (by googleId).`);
-          } else {
-            console.warn(`Webhook: User ${userId} not found in MongoDB.`);
-          }
-        }
-      } catch (dbErr) {
-        console.error('Webhook: Failed to update user in MongoDB:', dbErr.message);
-        return res.status(500).json({ error: 'Failed to update user.' });
+      // Find the user in MongoDB and credit them with 100 AI credits
+      let user = null;
+      if (mongoose.Types.ObjectId.isValid(userId)) {
+        user = await User.findById(userId);
       }
+      if (!user) {
+        user = await User.findOne({ googleId: userId });
+      }
+
+      if (!user) {
+        console.warn(`Lemon Squeezy webhook: User ${userId} not found in MongoDB.`);
+        return res.status(200).json({ received: true });
+      }
+
+      user.aiCredits = (user.aiCredits || 0) + 100;
+      await user.save();
+      console.log(`✅ Lemon Squeezy: Credited user ${user._id} with 100 AI credits (total: ${user.aiCredits}).`);
+
+      return res.status(200).json({ received: true });
+    } catch (err) {
+      console.error('Lemon Squeezy webhook processing failed:', err.message);
+      return res.status(400).json({ error: 'Webhook processing failed' });
     }
-
-    // Handle subscription deletion / cancellation events
-    if (event.type === 'customer.subscription.deleted') {
-      const subscription = event.data.object;
-      const stripeCustomerId = subscription.customer;
-
-      try {
-        // Find the user by stripeCustomerId and downgrade to free
-        const user = await User.findOne({ stripeCustomerId });
-        if (user) {
-          user.isPro = false;
-          await user.save();
-          console.log(`User ${user._id} downgraded from Pro (subscription cancelled).`);
-        }
-      } catch (dbErr) {
-        console.error('Webhook: Failed to downgrade user:', dbErr.message);
-        return res.status(500).json({ error: 'Failed to update user.' });
-      }
-    }
-
-    res.json({ received: true });
   }
 );
 
