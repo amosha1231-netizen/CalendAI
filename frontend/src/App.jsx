@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, Suspense, lazy } from "react";
 import { BrowserRouter } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
-import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Menu, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff, Home, Plus, Zap, ChevronDown, ChevronUp } from "lucide-react";
+import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Menu, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff, Home, Plus, Zap, ChevronDown, ChevronUp, FileText } from "lucide-react";
 import MonthlyCalendar from "./components/MonthlyCalendar";
 import LocationSelector from "./components/LocationSelector";
 import Privacy from "./components/Privacy";
@@ -15,6 +15,8 @@ const LandingPage = lazy(() => import("./components/LandingPage"));
 const AuthSuccess = lazy(() => import("./pages/AuthSuccess"));
 const GuestBookingView = lazy(() => import("./components/GuestBookingView"));
 const Booking = lazy(() => import("./components/Booking"));
+import PrivacyPolicyPage from "./pages/PrivacyPolicy";
+import TermsPage from "./pages/Terms";
 import translations from "./i18n";
 import safeStorage from "./utils/safeStorage";
 import { isIosWhatsApp, isIosSafari, isIosNonSafari, isStandalone } from "./utils/browserDetection";
@@ -1167,6 +1169,14 @@ function AppRoutes() {
     });
   };
 
+  if (typeof window !== 'undefined' && window.location.pathname === '/privacy') {
+    return <PrivacyPolicyPage />;
+  }
+
+  if (typeof window !== 'undefined' && window.location.pathname === '/terms') {
+    return <TermsPage />;
+  }
+
   if (typeof window !== 'undefined' && window.location.pathname === '/auth/success') {
     return <AuthSuccess />;
   }
@@ -1622,7 +1632,11 @@ function AppRoutes() {
 
         <footer className="max-w-6xl mx-auto mt-8 text-center text-xs text-slate-400 border-t pt-4 px-4">
           <p>{t.footerVersion} {typeof __BUILD_TIME__ !== 'undefined' ? __BUILD_TIME__ : t.footerLocal}</p>
-          <button onClick={() => setShowPrivacy(true)} className="mt-2 inline-flex items-center gap-1 text-slate-400 hover:text-slate-600 transition"><Shield className="w-3 h-3" /> {t.footerPrivacy}</button>
+          <div className="flex items-center justify-center gap-3 mt-2">
+            <button onClick={() => { window.location.href = '/privacy'; }} className="inline-flex items-center gap-1 text-slate-400 hover:text-slate-600 transition"><Shield className="w-3 h-3" /> {t.footerPrivacy}</button>
+            <span className="text-slate-300">·</span>
+            <button onClick={() => { window.location.href = '/terms'; }} className="inline-flex items-center gap-1 text-slate-400 hover:text-slate-600 transition"><FileText className="w-3 h-3" /> {t.footerTerms}</button>
+          </div>
         </footer>
 
         {/* ── Bottom Navigation Bar ── */}

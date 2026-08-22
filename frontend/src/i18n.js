@@ -175,6 +175,7 @@ const translations = {
     footerVersion: 'גרסה מעודכנת:',
     footerLocal: 'מקומית',
     footerPrivacy: 'Privacy Policy',
+    footerTerms: 'Terms of Service',
 
     // Toast notifications
     toastReminder: 'תזכורת:',
@@ -651,6 +652,7 @@ const translations = {
     footerVersion: 'Version:',
     footerLocal: 'Local',
     footerPrivacy: 'Privacy Policy',
+    footerTerms: 'Terms of Service',
 
     // Toast notifications
     toastReminder: 'Reminder:',
