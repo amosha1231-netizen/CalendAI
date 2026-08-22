@@ -237,6 +237,31 @@ const aiLimiter = rateLimit({
 });
 
 // ──────────────────────────────────────────────
+// Global Shabbat Middleware — blocks ALL API requests during Shabbat
+// except for: /api/health, /api/shabbat/status, and static files.
+// ──────────────────────────────────────────────
+app.use('/api/', (req, res, next) => {
+  // Skip Shabbat check for these whitelisted paths
+  const whitelistedPaths = ['/api/health', '/api/shabbat/status'];
+  if (whitelistedPaths.includes(req.path)) {
+    return next();
+  }
+
+  // Check if currently Shabbat
+  const shabbatStatus = shabbatService.isShabbatNow();
+  if (shabbatStatus) {
+    return res.status(503).json({
+      isShabbat: true,
+      shabbatActive: true,
+      error: 'שבת שלום 🕯️ המערכת אינה זמינה בשבת. נשוב לפעול במוצאי שבת.',
+      message: 'Shabbat mode is active. The system is unavailable until after Havdalah.'
+    });
+  }
+
+  next();
+});
+
+// ──────────────────────────────────────────────
 // 2. Google OAuth Strategy (if keys are configured)
 // ──────────────────────────────────────────────
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
@@ -469,28 +494,9 @@ async function saveScheduleToMongo(userId, schedule) {
 }
 
 // ──────────────────────────────────────────────
-// Shabbat Validation Helper
+// Shabbat Service (accurate astronomical calculation)
 // ──────────────────────────────────────────────
-
-/**
- * Check if a given Date falls within Shabbat (Friday sunset to Saturday nightfall).
- * Uses hardcoded times as fallback (Friday 16:00 to Saturday 20:00 in Israel).
- * @param {Date} date - The date/time to check.
- * @returns {boolean} - True if the time falls within Shabbat.
- */
-function isShabbatTime(date) {
-  const day = date.getDay();
-  const hours = date.getHours();
-  const minutes = date.getMinutes();
-  const totalMinutes = hours * 60 + minutes;
-
-  // Friday: from 16:00 (960 minutes) onward → Shabbat
-  if (day === 5 && totalMinutes >= 960) return true;
-  // Saturday: until 20:00 (1200 minutes) → Shabbat
-  if (day === 6 && totalMinutes < 1200) return true;
-
-  return false;
-}
+const shabbatService = require('./services/shabbatService');
 
 /**
  * Check if an event's startDate falls within Shabbat.
@@ -502,7 +508,7 @@ function checkShabbatBlock(startDate) {
   const date = startDate instanceof Date ? startDate : new Date(startDate);
   if (isNaN(date.getTime())) return { isBlocked: false, message: '' };
 
-  if (isShabbatTime(date)) {
+  if (shabbatService.isShabbatTime(date).isShabbat) {
     return {
       isBlocked: true,
       message: 'האפליקציה אינה קובעת פגישות במהלך השבת. נשמח לתאם מועד לפני כניסת השבת או במוצאי השבת.'
@@ -519,9 +525,7 @@ function checkShabbatBlock(startDate) {
  * @returns {boolean} - True if the day is Shabbat/Saturday.
  */
 function isShabbat(day) {
-  if (!day) return false;
-  const d = day.toLowerCase();
-  return d.includes('שבת') || d.includes('saturday');
+  return shabbatService.isShabbatDay(day);
 }
 
 // ──────────────────────────────────────────────
@@ -3471,6 +3475,12 @@ app.use('/api/payments', paymentRoutes);
 // ──────────────────────────────────────────────
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, message: 'CalendAI backend is running.' });
+});
+
+// ── Shabbat Status Endpoint ──
+// Returns the current Shabbat status so the frontend can display Shabbat banner.
+app.get('/api/shabbat/status', (_req, res) => {
+  res.json(shabbatService.getShabbatStatus());
 });
 
 // ──────────────────────────────────────────────
