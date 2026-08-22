@@ -131,6 +131,7 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, t, user
   const [showIosNonSafariMsg, setShowIosNonSafariMsg] = useState(false);
   const [upgradeLoading, setUpgradeLoading] = useState(false);
   const [upgradeError, setUpgradeError] = useState("");
+  const [showSiriModal, setShowSiriModal] = useState(false);
 
   useEffect(() => {
     window.addEventListener('beforeinstallprompt', (e) => {
@@ -609,13 +610,11 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, t, user
                     : 'Connect CalendAI to Siri on your iPhone to add events using your voice'}
                 </p>
                 <button
-                  onClick={() => {
-                    window.open('https://www.icloud.com/shortcuts/3be0a95552164704818eab7aec056ffe', '_blank');
-                  }}
-                  className="w-full max-w-full box-border flex items-center justify-center gap-2 px-3 py-2.5 bg-blue-50 text-blue-700 border border-blue-200 rounded-lg hover:bg-blue-100 transition text-sm font-medium"
+                  onClick={() => setShowSiriModal(true)}
+                  className="w-full max-w-full box-border flex items-center justify-center gap-2 px-3 py-2.5 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-xl hover:shadow-lg transition text-sm font-medium shadow-md"
                 >
                   <Mic className="w-4 h-4" />
-                  {lang === 'he' ? 'חבר ל-Siri (אייפון)' : 'Connect to Siri (iPhone)'}
+                  {lang === 'he' ? 'חיבור לסירי' : 'Connect to Siri'}
                 </button>
               </div>
 
@@ -724,6 +723,59 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, t, user
             <button onClick={() => setShowIosGuide(false)} className="w-full px-4 py-3 bg-blue-600 text-white rounded-xl font-bold text-sm shadow-lg hover:bg-blue-700 transition">
               {t.cancel || (lang === 'he' ? 'הבנתי!' : 'Got it!')}
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Siri Setup Modal */}
+      {showSiriModal && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-[9999]" onClick={() => setShowSiriModal(false)}>
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md p-6 sm:p-8 relative" onClick={e => e.stopPropagation()}>
+            {/* Close Button */}
+            <button
+              onClick={() => setShowSiriModal(false)}
+              className="absolute top-4 right-4 w-9 h-9 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500 hover:text-slate-700 transition"
+              aria-label="Close"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="text-center">
+              {/* Icon */}
+              <div className="w-20 h-20 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-3xl flex items-center justify-center mx-auto mb-5 shadow-xl shadow-blue-500/30">
+                <Mic className="w-10 h-10 text-white" />
+              </div>
+
+              <h3 className="text-xl font-bold text-slate-800 mb-2">
+                {lang === 'he' ? 'הפעל את CalendAI דרך Siri' : 'Enable CalendAI with Siri'}
+              </h3>
+
+              <p className="text-sm text-slate-500 mb-5 leading-relaxed">
+                {lang === 'he'
+                  ? 'הורד את קיצור הדרך שלנו לאייפון. בעת ההתקנה, תתבקש להזין את כתובת האימייל שלך כדי שהפעולות יסתנכרנו אוטומטית ליומן האישי שלך.'
+                  : 'Download our shortcut to your iPhone. During installation, you will be asked to enter your email address so actions sync automatically to your personal calendar.'}
+              </p>
+
+              {/* User Email Display */}
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 mb-6 text-center">
+                <p className="text-xs text-slate-400 mb-1">
+                  {lang === 'he' ? 'האימייל שלך לחיבור' : 'Your email for connection'}
+                </p>
+                <p className="text-base font-bold text-slate-800 break-all" dir="ltr">
+                  {user?.email || (lang === 'he' ? 'לא זמין' : 'Not available')}
+                </p>
+              </div>
+
+              {/* Download CTA */}
+              <a
+                href="#"
+                onClick={(e) => e.preventDefault()}
+                className="w-full max-w-full box-border flex items-center justify-center gap-2 px-6 py-3.5 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-2xl font-bold text-sm shadow-lg shadow-blue-500/30 hover:shadow-xl hover:from-blue-600 hover:to-indigo-700 transition"
+              >
+                <Download className="w-5 h-5" />
+                {lang === 'he' ? 'הורד קיצור דרך' : 'Download Shortcut'}
+              </a>
+            </div>
           </div>
         </div>
       )}
