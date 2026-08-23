@@ -16,7 +16,7 @@ function initModel() {
   try {
     genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
     model = genAI.getGenerativeModel({
-      model: 'gemini-1.5-flash-latest',
+      model: 'gemini-pro',
       systemInstruction: `You are an intelligent calendar assistant for the "CalendAI" app.
 Your job is to parse free-text requests in Hebrew and return a JSON array of events to be scheduled.
 
@@ -64,11 +64,10 @@ OR if the requested time conflicts with an existing event:
   "message": "string"
 }`,
       generationConfig: {
-        temperature: 0.3,
-        responseMimeType: 'application/json'
+        temperature: 0.3
       }
     });
-    console.log('✅ Gemini AI model initialized (gemini-1.5-flash-latest with Executive Assistant persona)');
+    console.log('✅ Gemini AI model initialized (gemini-pro with Executive Assistant persona)');
   } catch (e) {
     console.error('Failed to initialize Gemini AI model:', e.message);
   }
