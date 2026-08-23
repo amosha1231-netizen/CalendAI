@@ -10,14 +10,25 @@ const mongoose = require('mongoose');
 const JWT_SECRET = process.env.JWT_SECRET || 'calendai-jwt-secret-change-in-production';
 
 // ── AI Service (safe import) ──
-let parseWithGemini;
+let parseWithGemini, parseWithGeminiSmart;
 try {
   const aiService = require('../services/aiService');
   parseWithGemini = aiService.parseWithGemini;
+  parseWithGeminiSmart = aiService.parseWithGeminiSmart;
 } catch (aiErr) {
   console.error('⚠️ [Siri Route] Failed to load AI service:', aiErr.message);
   const { fallbackParseAdvice } = require('../services/aiFallback');
   parseWithGemini = async (text, options = {}) => fallbackParseAdvice(text);
+}
+
+// ── Semantic Router (fast vs smart track classification) ──
+let classifyRequest;
+try {
+  const { classifyRequest: classify } = require('../services/semanticRouter');
+  classifyRequest = classify;
+} catch (srErr) {
+  console.error('⚠️ [Siri Route] Failed to load semantic router:', srErr.message);
+  classifyRequest = (text) => ({ route: 'smart', reason: 'Semantic router unavailable, defaulting to smart track.' });
 }
 
 // ── User Model ──
@@ -474,8 +485,18 @@ router.post('/siri', async (req, res) => {
       }
     }
 
-    // ── Parse the text using AI (with schedule context) ──
-    const parsedResult = await parseWithGemini(text, { busySlots, schedule });
+    // ── SEMANTIC ROUTING: Classify the request as Fast Track or Smart Track ──
+    const classification = classifyRequest(text);
+    console.log(`[Semantic Router][Siri] Route: ${classification.route} | Reason: ${classification.reason} | Text: "${text.slice(0, 60)}..."`);
+
+    let parsedResult;
+    if (classification.route === 'fast') {
+      // FAST TRACK: User specified a specific time → no need to fetch busy slots
+      parsedResult = await parseWithGemini(text, { busySlots: [], schedule: {} });
+    } else {
+      // SMART TRACK: User made a general request → inject busy slots with 15-min buffer
+      parsedResult = await parseWithGeminiSmart(text, { busySlots, schedule });
+    }
 
     // Handle Shabbat block response from AI
     if (parsedResult.isBlocked === true) {

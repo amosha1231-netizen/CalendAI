@@ -39,10 +39,11 @@ dotenv.config({ path: path.join(__dirname, '.env') });
 
 // Safe import of AI service - if @google/generative-ai is missing,
 // the server still starts and uses the fallback parser.
-let parseWithGemini, rescheduleWithGemini, cleanTitle;
+let parseWithGemini, parseWithGeminiSmart, rescheduleWithGemini, cleanTitle;
 try {
   const aiService = require('./services/aiService');
   parseWithGemini = aiService.parseWithGemini;
+  parseWithGeminiSmart = aiService.parseWithGeminiSmart;
   rescheduleWithGemini = aiService.rescheduleWithGemini;
   cleanTitle = aiService.cleanTitle;
   console.log('✅ AI Service loaded successfully');
@@ -421,6 +422,9 @@ function getUserId(req) {
   }
   return 'anonymous';
 }
+
+// ── Semantic Router (fast vs smart track classification)
+const { classifyRequest } = require('./services/semanticRouter');
 
 // ──────────────────────────────────────────────
 // AI Credit System (Pay As You Go / PAYG)
@@ -1644,7 +1648,20 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
       }
     }
 
-    const parsedResult = await parseWithGemini(text, { eventType, duration, busySlots, schedule });
+    // ── SEMANTIC ROUTING: Classify the request as Fast Track or Smart Track ──
+    const classification = classifyRequest(text);
+    console.log(`[Semantic Router] Route: ${classification.route} | Reason: ${classification.reason} | Text: "${text.slice(0, 60)}..."`);
+
+    let parsedResult;
+    if (classification.route === 'fast') {
+      // FAST TRACK: User specified a specific time → no need to fetch busy slots,
+      // just parse and schedule immediately (speed is the priority).
+      parsedResult = await parseWithGemini(text, { eventType, duration });
+    } else {
+      // SMART TRACK: User made a general request → inject busy slots into the AI
+      // prompt with the 15-minute buffer instruction.
+      parsedResult = await parseWithGeminiSmart(text, { eventType, duration, busySlots, schedule });
+    }
     
     // Handle Shabbat block response from AI
     if (parsedResult.isBlocked === true) {
@@ -1861,8 +1878,18 @@ app.post('/api/events/quick-add', aiLimiter, async (req, res) => {
       }
     }
 
-    // Parse the text using AI (same engine as /api/parse-schedule, with schedule context)
-    const parsedResult = await parseWithGemini(text, { busySlots, schedule });
+    // ── SEMANTIC ROUTING: Classify the request as Fast Track or Smart Track ──
+    const classification = classifyRequest(text);
+    console.log(`[Semantic Router][Quick-Add] Route: ${classification.route} | Reason: ${classification.reason} | Text: "${text.slice(0, 60)}..."`);
+
+    let parsedResult;
+    if (classification.route === 'fast') {
+      // FAST TRACK: User specified a specific time → no need to fetch busy slots
+      parsedResult = await parseWithGemini(text, { busySlots: [], schedule: {} });
+    } else {
+      // SMART TRACK: User made a general request → inject busy slots with 15-min buffer
+      parsedResult = await parseWithGeminiSmart(text, { busySlots, schedule });
+    }
     
     // Handle Shabbat block response from AI
     if (parsedResult.isBlocked === true) {
