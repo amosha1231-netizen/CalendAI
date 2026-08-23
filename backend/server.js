@@ -2192,10 +2192,37 @@ async function syncEventToGoogleCalendar(userId, event, locationId) {
 
 // POST /api/add-to-google-calendar - Add an event to the user's Google Calendar
 app.post('/api/add-to-google-calendar', async (req, res) => {
-  if (!req.isAuthenticated || !req.isAuthenticated() || !req.session.passport?.user?.accessToken) {
-    return res.status(401).json({ error: 'User not authenticated or token missing.' });
+  // Support both session-based auth (Google OAuth) and JWT token auth (email/password)
+  let accessToken = null;
+
+  // 1. Try JWT Bearer token auth first
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    try {
+      const token = authHeader.split(' ')[1];
+      const decoded = jwt.verify(token, JWT_SECRET);
+      if (decoded && decoded.id) {
+        // Look up the user's Google access token from MongoDB
+        const user = await User.findById(decoded.id).catch(() => null);
+        if (user && user.googleAccessToken) {
+          accessToken = user.googleAccessToken;
+        }
+      }
+    } catch (err) {
+      // Invalid token - fall through to session check
+    }
   }
 
+  // 2. Fall back to session-based auth (passport / Google OAuth)
+  if (!accessToken) {
+    if (req.isAuthenticated && req.isAuthenticated() && req.session.passport?.user?.accessToken) {
+      accessToken = req.session.passport.user.accessToken;
+    }
+  }
+
+  if (!accessToken) {
+    return res.status(401).json({ error: 'User not authenticated or Google Calendar token missing.' });
+  }
 
   const { event, location } = req.body;
   if (!event || !event.title || !event.startTime || !event.day) {
@@ -2206,7 +2233,6 @@ app.post('/api/add-to-google-calendar', async (req, res) => {
   const locData = LOCATIONS.find(loc => loc.id === locationId);
   const timeZone = locData ? locData.timezone : 'Asia/Jerusalem';
 
-  const accessToken = req.session.passport.user.accessToken;
   const oauth2Client = new google.auth.OAuth2();
   oauth2Client.setCredentials({ access_token: accessToken });
 

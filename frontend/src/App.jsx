@@ -881,10 +881,14 @@ function AppRoutes() {
       }
       const data = await res.json();
       if (user && data.events?.length > 0) {
+        const token = safeStorage.getItem('token') || safeStorage.getItem('calendai-jwt');
         await Promise.allSettled(data.events.map(ev =>
           fetch(`${API_BASE}/api/add-to-google-calendar`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+            },
             body: JSON.stringify({ event: ev }),
             credentials: "include"
           })
