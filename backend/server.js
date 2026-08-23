@@ -1786,16 +1786,24 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
 
     // ── GOOGLE CALENDAR SYNC: Automatically sync each added event to Google Calendar ──
     // This is non-blocking — failures are logged but never crash the response.
-    for (const ev of addedEvents) {
-      syncEventToGoogleCalendar(userId, ev, locationId).catch(() => {});
-    }
+    const googleSyncResults = await Promise.allSettled(
+      addedEvents.map(ev => syncEventToGoogleCalendar(userId, ev, locationId))
+    );
+    const googleSyncSuccessCount = googleSyncResults.filter(r => r.status === 'fulfilled' && r.value.success).length;
+    const googleSyncFailedCount = googleSyncResults.filter(r => r.status === 'fulfilled' && !r.value.success).length;
 
     res.json({ 
       events: addedEvents,
       replyMessage: replyMessage || `נוספו ${addedEvents.length} אירועים.`,
       totalEvents: Object.values(schedule).reduce((sum, arr) => sum + arr.length, 0),
       conflicts: conflictWarnings.length > 0 ? conflictWarnings : undefined,
-      aiCredits: remainingCredits
+      aiCredits: remainingCredits,
+      googleCalendar: {
+        synced: googleSyncSuccessCount,
+        failed: googleSyncFailedCount,
+        total: addedEvents.length,
+        link: googleSyncSuccessCount > 0 ? 'https://calendar.google.com' : undefined
+      }
     });
   } catch (error) {
     console.error(error);
@@ -1996,16 +2004,24 @@ app.post('/api/events/quick-add', aiLimiter, async (req, res) => {
 
     // ── GOOGLE CALENDAR SYNC: Automatically sync each added event to Google Calendar ──
     // This is non-blocking — failures are logged but never crash the response.
-    for (const ev of addedEvents) {
-      syncEventToGoogleCalendar(userId, ev, DEFAULT_LOCATION_ID).catch(() => {});
-    }
+    const googleSyncResults = await Promise.allSettled(
+      addedEvents.map(ev => syncEventToGoogleCalendar(userId, ev, DEFAULT_LOCATION_ID))
+    );
+    const googleSyncSuccessCount = googleSyncResults.filter(r => r.status === 'fulfilled' && r.value.success).length;
+    const googleSyncFailedCount = googleSyncResults.filter(r => r.status === 'fulfilled' && !r.value.success).length;
 
     res.json({
       success: true,
       message,
       events: addedEvents,
       count: eventCount,
-      aiCredits: remainingCredits
+      aiCredits: remainingCredits,
+      googleCalendar: {
+        synced: googleSyncSuccessCount,
+        failed: googleSyncFailedCount,
+        total: addedEvents.length,
+        link: googleSyncSuccessCount > 0 ? 'https://calendar.google.com' : undefined
+      }
     });
 
   } catch (error) {
@@ -2019,22 +2035,61 @@ app.post('/api/events/quick-add', aiLimiter, async (req, res) => {
 // ──────────────────────────────────────────────
 
 /**
- * Helper: Sync an event to the user's Google Calendar using stored tokens.
- * Uses the user's googleAccessToken and googleRefreshToken from the database.
- * This is called automatically after AI event creation.
- * Wrapped in try/catch so failures never crash the app.
- * @param {string} userId - The MongoDB ObjectId of the user
- * @param {Object} event - The event object with title, day, startTime, endTime, recurrence
- * @param {string} locationId - Optional location ID for timezone
- * @returns {Promise<{success: boolean, error?: string}>}
+ * Helper: Refresh Google access token and save to DB.
+ * Sets up token refresh handler on the OAuth2 client.
+ * @param {Object} user - The user document with googleAccessToken and googleRefreshToken
+ * @returns {Promise<google.auth.OAuth2>} Configured OAuth2 client with auto-refresh
  */
+async function createOAuth2ClientWithRefresh(user) {
+  const oauth2Client = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    process.env.GOOGLE_CALLBACK_URL
+  );
+
+  oauth2Client.setCredentials({
+    access_token: user.googleAccessToken,
+    refresh_token: user.googleRefreshToken || undefined
+  });
+
+  // Auto-refresh tokens: when Google issues a new access token, save it to DB
+  oauth2Client.on('tokens', async (tokens) => {
+    if (tokens.access_token) {
+      try {
+        await User.findByIdAndUpdate(user._id, {
+          googleAccessToken: tokens.access_token,
+          ...(tokens.refresh_token ? { googleRefreshToken: tokens.refresh_token } : {})
+        });
+        console.log(`[Google Calendar] Tokens refreshed for user ${user._id}`);
+      } catch (err) {
+        console.error('[Google Calendar] Failed to save refreshed tokens:', err.message);
+      }
+    }
+  });
+
+  // Force refresh if the current access token might be expired
+  try {
+    const tokenInfo = oauth2Client.credentials;
+    if (tokenInfo.refresh_token && tokenInfo.expiry_date && tokenInfo.expiry_date < Date.now()) {
+      console.log('[Google Calendar] Access token expired, refreshing...');
+      const { credentials } = await oauth2Client.refreshAccessToken();
+      oauth2Client.setCredentials(credentials);
+    }
+  } catch (refreshErr) {
+    console.warn('[Google Calendar] Token refresh pre-check failed:', refreshErr.message);
+    // Continue anyway — the actual API call will trigger a retry
+  }
+
+  return oauth2Client;
+}
+
 async function syncEventToGoogleCalendar(userId, event, locationId) {
   // Only sync for logged-in users with valid ObjectId
   if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
     return { success: false, error: 'Not a logged-in user' };
   }
   try {
-    const user = await User.findById(userId).lean();
+    const user = await User.findById(userId);
     if (!user || !user.googleAccessToken) {
       return { success: false, error: 'No Google token stored' };
     }
@@ -2043,17 +2098,8 @@ async function syncEventToGoogleCalendar(userId, event, locationId) {
     const locData = LOCATIONS.find(loc => loc.id === locId);
     const timeZone = locData ? locData.timezone : 'Asia/Jerusalem';
 
-    // Create OAuth2 client with stored tokens
-    const oauth2Client = new google.auth.OAuth2(
-      process.env.GOOGLE_CLIENT_ID,
-      process.env.GOOGLE_CLIENT_SECRET,
-      process.env.GOOGLE_CALLBACK_URL
-    );
-    oauth2Client.setCredentials({
-      access_token: user.googleAccessToken,
-      refresh_token: user.googleRefreshToken || undefined
-    });
-
+    // Create OAuth2 client with auto-refresh capability
+    const oauth2Client = await createOAuth2ClientWithRefresh(user);
     const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
     // Parse the event's day and time into a Date object
