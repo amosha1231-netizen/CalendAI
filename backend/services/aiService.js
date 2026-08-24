@@ -867,39 +867,81 @@ async function parseWithGemini(text, options = {}) {
 }
 
 /**
- * Clean a title by removing Hebrew prefix letters and temporal/duration phrases.
+ * Clean a title by removing Hebrew prefix letters, temporal/duration phrases,
+ * and time expressions (both Hebrew and English).
  */
 function cleanTitle(title) {
   if (!title || typeof title !== 'string') return 'פגישה / אירוע';
   
   let t = title.trim();
   
-  // Remove Hebrew prefix letters: ל, ב, כ, מ, ש, ה, ו
+  // ── Remove Hebrew prefix letters: ל, ב, כ, מ, ש, ה, ו ──
   t = t.replace(/^(ל|ב|כ|מ|ש|ה|ו|לה|לכ|למ|לש)(?:ה|ו)?\s+/, '').trim();
   t = t.replace(/^את\s+/, '').trim();
   
-  // Remove day-of-week references
-  t = t.replace(/\sב(יום\s+)?(שני|שלישי|רביעי|חמישי|שישי|שבת|ראשון|א|ב|ג|ד|ה|ו|ש)\s*/g, ' ').trim();
+  // ── Remove English time expressions ──
+  // "at 21:00", "at 9:00 PM", "at 9pm", "at 9:00pm", "at 9 AM", "at 9:00 am"
+  t = t.replace(/\s+at\s+\d{1,2}:\d{2}\s*(AM|PM|am|pm)?/gi, ' ').trim();
+  t = t.replace(/\s+at\s+\d{1,2}\s*(AM|PM|am|pm)/gi, ' ').trim();
+  // "21:00", "9:00 PM", "9pm" (standalone time without "at")
+  t = t.replace(/\s+\d{1,2}:\d{2}\s*(AM|PM|am|pm)?/g, ' ').trim();
+  t = t.replace(/\s+\d{1,2}\s*(AM|PM|am|pm)/g, ' ').trim();
+  // 4-digit time like "2100" (e.g., "at 2100" or "2100" alone)
+  t = t.replace(/\s+at\s+\d{4}/gi, ' ').trim();
+  t = t.replace(/\s+\b\d{4}\b/g, ' ').trim();
+  
+  // ── Remove Hebrew time expressions ──
+  // "בשעה 21:00", "בשעה 9", "ב-21:00", "ב-9"
+  t = t.replace(/\s+בשעה\s+\S+/g, ' ').trim();
+  t = t.replace(/\s+ב-\d{1,2}(:\d{2})?\s*/g, ' ').trim();
+  // "בשעה 9 בערב", "בשעה 10 בבוקר"
+  t = t.replace(/\s+בשעה\s+\d{1,2}\s+(בבוקר|בערב|בלילה|באחה"צ|אחה"צ|אחר הצהריים)/g, ' ').trim();
+  
+  // ── Remove Hebrew time-of-day qualifiers (בערב, בבוקר, בלילה, באחה"צ) ──
+  t = t.replace(/\s+(בערב|בבוקר|בלילה|באחה"צ|אחה"צ|אחר הצהריים)\s*/g, ' ').trim();
+  
+  // ── Remove standalone "בשעה" leftover after time was stripped ──
+  t = t.replace(/\s+בשעה\s*/g, ' ').trim();
+  
+  // ── Remove English day/time references ──
+  t = t.replace(/\s+(tomorrow|today|tonight|this\s+(morning|afternoon|evening|week|month))\b/gi, ' ').trim();
+  t = t.replace(/\s+(next|this|last)\s+(week|month|year|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/gi, ' ').trim();
+  t = t.replace(/\s+on\s+(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/gi, ' ').trim();
+  
+  // ── Remove Hebrew day/time references (without \b which doesn't work well for Hebrew) ──
+  t = t.replace(/\s+(מחר|מחרתיים|היום|הלילה|השבוע|החודש|השנה)(?:\s|$)/g, ' ').trim();
+  t = t.replace(/\s+(בשבוע|בחודש|בשנה)\s+(הבא|הבאה|הזה|הזאת)(?:\s|$)/g, ' ').trim();
+  
+  // ── Remove day-of-week references (Hebrew) ──
+  // Match patterns like "בראשון", "בשני", "ביום שני", "ביום שלישי" etc.
+  // Use word boundary \b to avoid matching inside words like "בשעה"
+  t = t.replace(/\s+ב(יום\s+)?(שני|שלישי|רביעי|חמישי|שישי|שבת|ראשון)\b/g, ' ').trim();
   t = t.replace(/\sביום\s+\S+/g, ' ').trim();
+  // Remove standalone day abbreviations (א, ב, ג, ד, ה, ו, ש) only when preceded by ב
+  t = t.replace(/\s+ב([אבגדהוש])\b/g, ' ').trim();
   
-  // Remove relative time phrases
-  t = t.replace(/\s(בעוד|עוד|in|after|לפני|בערך|כ|כמו)\s+\S+(\s+\S+)?/g, ' ').trim();
+  // ── Remove relative time phrases ──
+  t = t.replace(/\s(בעוד|עוד|in|after|before|לפני|בערך|כ|כמו)\s+\S+(\s+\S+)?/g, ' ').trim();
   
-  // Remove duration words
+  // ── Remove duration words ──
   t = t.replace(/\s+(עשרים|שלושים|ארבעים|חמישים|ששים|עשר|עשרה)\s*(דקות|דקה|שעות|שעה)\s*/g, ' ').trim();
   t = t.replace(/\s+\d+\s*(דקות|דקה|שעות|שעה|minutes?|min|hours?|hrs?)\s*/gi, ' ').trim();
   t = t.replace(/\s*(חצי\s*שעה|רבע\s*שעה|half\s*hour|quarter\s*hour)\s*/gi, ' ').trim();
   
-  // Remove standalone prefixes at word boundaries
+  // ── Remove standalone prefixes at word boundaries ──
   t = t.replace(/\bל(?:\s|$)/g, ' ').trim();
   
-  // Collapse multiple spaces
+  // ── Remove leftover "at" preposition at end or start ──
+  t = t.replace(/^at\s+/i, '').trim();
+  t = t.replace(/\s+at$/i, '').trim();
+  
+  // ── Collapse multiple spaces ──
   t = t.replace(/\s+/g, ' ').trim();
   
-  // Remove trailing/leading punctuation
+  // ── Remove trailing/leading punctuation ──
   t = t.replace(/^[,!?;:.\s]+|[,!?;:.\s]+$/g, '').trim();
   
-  // If too short or empty, use default
+  // ── If too short or empty, use default ──
   if (!t || t.length < 2) {
     return 'פגישה / אירוע';
   }
