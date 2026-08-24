@@ -2470,8 +2470,12 @@ app.post('/api/add-to-google-calendar', async (req, res) => {
   const startIsPM = event.startTime.includes('PM');
   const endIsPM = event.endTime.includes('PM');
 
-  const startDateTime = new Date(eventDate.setHours(startIsPM && startHour !== 12 ? startHour + 12 : startHour, startMinute, 0, 0));
-  const endDateTime = new Date(eventDate.setHours(endIsPM && endHour !== 12 ? endHour + 12 : endHour, endMinute, 0, 0));
+  // Convert to 24-hour format (CRITICAL: formatDateTimeWithTimezone expects hours in 0-23, not 12-hour)
+  const startHour24 = (startIsPM && startHour !== 12) ? startHour + 12 : (startHour === 12 && !startIsPM ? 0 : startHour);
+  const endHour24 = (endIsPM && endHour !== 12) ? endHour + 12 : (endHour === 12 && !endIsPM ? 0 : endHour);
+
+  const startDateTime = new Date(eventDate.setHours(startHour24, startMinute, 0, 0));
+  const endDateTime = new Date(eventDate.setHours(endHour24, endMinute, 0, 0));
 
   // Build RRULE for recurring events
   let recurrenceRule = null;
@@ -2499,8 +2503,8 @@ app.post('/api/add-to-google-calendar', async (req, res) => {
     const isReminderEvent = event.isReminder === true || event.eventType === 'reminder' || event.eventType === 'notification';
     const requestBody = {
       summary: event.title,
-      start: { dateTime: formatDateTimeWithTimezone(eventDate, startHour, startMinute, timeZone), timeZone },
-      end: { dateTime: formatDateTimeWithTimezone(eventDate, endHour, endMinute, timeZone), timeZone },
+      start: { dateTime: formatDateTimeWithTimezone(eventDate, startHour24, startMinute, timeZone), timeZone },
+      end: { dateTime: formatDateTimeWithTimezone(eventDate, endHour24, endMinute, timeZone), timeZone },
     };
 
     // Force popup reminders for notification/reminder events so the user gets a ping
