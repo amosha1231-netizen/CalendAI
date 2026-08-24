@@ -448,6 +448,7 @@ async function parseWithGemini(text, options = {}) {
       - "find time for a meeting with Danny" → summary: "Meeting with Danny"
       - "remind me to buy milk" → summary: "Buy milk"
       - "set a doctor appointment" → summary: "Doctor appointment"
+      - **CRITICAL EXAMPLE**: "Quality time with family today at 5 AM" → summary: "Quality time with family" (NOT "Quality time with family today at 5 AM")
 
     The summary must be concise (1-4 words) and meaningful. Never include words like "תמצא", "קבע", "תזמן", "schedule", "find", "set" — these are commands, not part of the event summary.
 
@@ -625,6 +626,7 @@ async function parseWithGemini(text, options = {}) {
        - If 24h format (e.g., "17:30") → use directly
 
     **CRITICAL REMINDER**: When the user says "חמש וחצי" or "five thirty" WITHOUT "בבוקר" / "in the morning", the time is 17:30, NOT 05:30. This is the most common mistake to avoid.
+    **BUT**: If the user explicitly says "5 AM" or "five AM" or "5:00 AM", the time is 05:00. The explicit marker ALWAYS wins.
 
     ─────────────────────────────────────────────
     STEP 6: SEAMLESS TEXT PARSING (CRITICAL)
@@ -782,6 +784,17 @@ async function parseWithGemini(text, options = {}) {
       ]
     }
 
+    Example 9 (English): Direct time with AM/PM
+    User text: "Quality time with family today at 5 AM"
+    Expected JSON:
+    {
+      "reasoning": "The user wants to schedule 'Quality time with family' today. '5 AM' means 05:00 (explicit AM marker, overrides low-hours default). Today is Monday. Default duration: 30 minutes.",
+      "replyMessage": "I've scheduled 'Quality time with family' for today (Monday) at 05:00 - 05:30.",
+      "events": [
+        { "summary": "Quality time with family", "day": "Monday", "startTime": "05:00", "endTime": "05:30", "recurrence": "once", "isRecurring": false, "isSleep": false, "hasAdvice": false, "aiAdvice": "" }
+      ]
+    }
+
     ─────────────────────────────────────────────
     REMINDER HANDLING
     ─────────────────────────────────────────────
@@ -822,11 +835,13 @@ async function parseWithGemini(text, options = {}) {
     const parsed = JSON.parse(raw);
 
     // Clean summaries on all events (map "summary" to "title" for internal consistency)
+    // NOTE: We trust the AI's output directly. The AI is instructed to return clean summaries.
+    // No regex post-processing is applied to avoid corrupting titles.
     if (parsed.events && Array.isArray(parsed.events)) {
       parsed.events = parsed.events.map(ev => ({
         ...ev,
-        title: cleanTitle(ev.summary || ev.title || text),
-        summary: cleanTitle(ev.summary || ev.title || text)
+        title: ev.summary || ev.title || text,
+        summary: ev.summary || ev.title || text
       }));
     }
 
@@ -873,8 +888,8 @@ async function parseWithGemini(text, options = {}) {
         replyMessage: isEnglish ? `Added ${count} new event(s).` : `נוספו ${count} אירועים חדשים.`,
         events: parsed.events.map(ev => ({
           ...ev,
-          title: cleanTitle(ev.summary || ev.title || text),
-          summary: cleanTitle(ev.summary || ev.title || text)
+          title: ev.summary || ev.title || text,
+          summary: ev.summary || ev.title || text
         }))
       };
     }
@@ -886,8 +901,8 @@ async function parseWithGemini(text, options = {}) {
         replyMessage: parsed.replyMessage,
         events: parsed.events.map(ev => ({
           ...ev,
-          title: cleanTitle(ev.summary || ev.title || text),
-          summary: cleanTitle(ev.summary || ev.title || text)
+          title: ev.summary || ev.title || text,
+          summary: ev.summary || ev.title || text
         }))
       };
     }
@@ -899,8 +914,8 @@ async function parseWithGemini(text, options = {}) {
         replyMessage: isEnglish ? `Added ${parsed.length} new events.` : `נוספו ${parsed.length} אירועים חדשים.`,
         events: parsed.map(ev => ({
           ...ev,
-          title: cleanTitle(ev.summary || ev.title || text),
-          summary: cleanTitle(ev.summary || ev.title || text)
+          title: ev.summary || ev.title || text,
+          summary: ev.summary || ev.title || text
         }))
       };
     }
@@ -912,8 +927,8 @@ async function parseWithGemini(text, options = {}) {
         replyMessage: parsed.replyMessage || (isEnglish ? 'Added one new event.' : 'נוסף אירוע אחד חדש.'),
         events: [{
           ...parsed,
-          title: cleanTitle(parsed.summary || text),
-          summary: cleanTitle(parsed.summary || text)
+          title: parsed.summary || text,
+          summary: parsed.summary || text
         }]
       };
     }
@@ -933,100 +948,14 @@ async function parseWithGemini(text, options = {}) {
 /**
  * Clean a title by removing Hebrew prefix letters, temporal/duration phrases,
  * and time expressions (both Hebrew and English).
+ * 
+ * NOTE: This function is kept as a minimal pass-through for the fallback parser.
+ * The main AI parser NO LONGER uses this function for post-processing — the AI
+ * is instructed to return clean summaries directly.
  */
 function cleanTitle(title) {
   if (!title || typeof title !== 'string') return 'פגישה / אירוע';
-  
-  let t = title.trim();
-  
-  // ── Remove Hebrew prefix letters: ל, ב, כ, מ, ש, ה, ו ──
-  t = t.replace(/^(ל|ב|כ|מ|ש|ה|ו|לה|לכ|למ|לש)(?:ה|ו)?\s+/, '').trim();
-  t = t.replace(/^את\s+/, '').trim();
-  
-  // ── Remove English time expressions ──
-  // "at 21:00", "at 9:00 PM", "at 9pm", "at 9:00pm", "at 9 AM", "at 9:00 am"
-  t = t.replace(/\s+at\s+\d{1,2}:\d{2}\s*(AM|PM|am|pm)?/gi, ' ').trim();
-  t = t.replace(/\s+at\s+\d{1,2}\s*(AM|PM|am|pm)/gi, ' ').trim();
-  // "21:00", "9:00 PM", "9pm" (standalone time without "at")
-  t = t.replace(/\s+\d{1,2}:\d{2}\s*(AM|PM|am|pm)?/g, ' ').trim();
-  t = t.replace(/\s+\d{1,2}\s*(AM|PM|am|pm)/g, ' ').trim();
-  // 4-digit time like "2100" (e.g., "at 2100" or "2100" alone)
-  t = t.replace(/\s+at\s+\d{4}/gi, ' ').trim();
-  t = t.replace(/\s+\b\d{4}\b/g, ' ').trim();
-  
-  // ── Remove Hebrew time expressions ──
-  // "בשעה 21:00", "בשעה 9", "ב-21:00", "ב-9"
-  t = t.replace(/\s+בשעה\s+\S+/g, ' ').trim();
-  t = t.replace(/\s+ב-\d{1,2}(:\d{2})?\s*/g, ' ').trim();
-  // "בשעה 9 בערב", "בשעה 10 בבוקר"
-  t = t.replace(/\s+בשעה\s+\d{1,2}\s+(בבוקר|בערב|בלילה|באחה"צ|אחה"צ|אחר הצהריים)/g, ' ').trim();
-  
-  // ── Remove Hebrew time-of-day qualifiers (בערב, בבוקר, בלילה, באחה"צ) ──
-  t = t.replace(/\s+(בערב|בבוקר|בלילה|באחה"צ|אחה"צ|אחר הצהריים)\s*/g, ' ').trim();
-  
-  // ── Remove standalone "בשעה" leftover after time was stripped ──
-  t = t.replace(/\s+בשעה\s*/g, ' ').trim();
-  
-  // ── Remove English day/time references ──
-  // Remove "today" / "TODAY" / "Today" at word boundaries OR at end of string
-  t = t.replace(/\s+(tomorrow|today|tonight|this\s+(morning|afternoon|evening|week|month))\b/gi, ' ').trim();
-  t = t.replace(/\s+(next|this|last)\s+(week|month|year|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/gi, ' ').trim();
-  t = t.replace(/\s+on\s+(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/gi, ' ').trim();
-  // Aggressive removal of standalone "today" / "TODAY" at end of string (no word boundary needed)
-  t = t.replace(/\s+today\s*$/gi, ' ').trim();
-  t = t.replace(/^today\s+/gi, ' ').trim();
-  // Remove standalone "at" (preposition) that may be left after time removal
-  t = t.replace(/\s+at\s+/gi, ' ').trim();
-  t = t.replace(/^at\s+/i, '').trim();
-  t = t.replace(/\s+at$/i, '').trim();
-  // Remove standalone "AM" / "PM" / "am" / "pm" that may be left after time removal
-  t = t.replace(/\s+(AM|PM|am|pm)\s*/g, ' ').trim();
-  t = t.replace(/^(AM|PM|am|pm)\s+/g, '').trim();
-  t = t.replace(/\s+(AM|PM|am|pm)$/g, '').trim();
-  // Remove "today at" / "TODAY AT" pattern (case-insensitive)
-  t = t.replace(/\s+today\s+at\s+/gi, ' ').trim();
-  t = t.replace(/^today\s+at\s+/gi, '').trim();
-  t = t.replace(/\s+today\s+at\s*$/gi, '').trim();
-  // Remove "today at X AM/PM" or "TODAY AT X AM/PM" (with number)
-  t = t.replace(/\s+today\s+at\s+\d{1,2}(:\d{2})?\s*(AM|PM|am|pm)?\s*/gi, ' ').trim();
-  t = t.replace(/^today\s+at\s+\d{1,2}(:\d{2})?\s*(AM|PM|am|pm)?\s*/gi, '').trim();
-  
-  // ── Remove Hebrew day/time references (without \b which doesn't work well for Hebrew) ──
-  t = t.replace(/\s+(מחר|מחרתיים|היום|הלילה|השבוע|החודש|השנה)(?:\s|$)/g, ' ').trim();
-  t = t.replace(/\s+(בשבוע|בחודש|בשנה)\s+(הבא|הבאה|הזה|הזאת)(?:\s|$)/g, ' ').trim();
-  
-  // ── Remove day-of-week references (Hebrew) ──
-  t = t.replace(/\s+ב(יום\s+)?(שני|שלישי|רביעי|חמישי|שישי|שבת|ראשון)\b/g, ' ').trim();
-  t = t.replace(/\sביום\s+\S+/g, ' ').trim();
-  t = t.replace(/\s+ב([אבגדהוש])\b/g, ' ').trim();
-  
-  // ── Remove relative time phrases ──
-  t = t.replace(/\s(בעוד|עוד|in|after|before|לפני|בערך|כ|כמו)\s+\S+(\s+\S+)?/g, ' ').trim();
-  
-  // ── Remove duration words ──
-  t = t.replace(/\s+(עשרים|שלושים|ארבעים|חמישים|ששים|עשר|עשרה)\s*(דקות|דקה|שעות|שעה)\s*/g, ' ').trim();
-  t = t.replace(/\s+\d+\s*(דקות|דקה|שעות|שעה|minutes?|min|hours?|hrs?)\s*/gi, ' ').trim();
-  t = t.replace(/\s*(חצי\s*שעה|רבע\s*שעה|half\s*hour|quarter\s*hour)\s*/gi, ' ').trim();
-  
-  // ── Remove standalone prefixes at word boundaries ──
-  t = t.replace(/\bל(?:\s|$)/g, ' ').trim();
-  
-  // ── Remove leftover "at" preposition at end or start ──
-  t = t.replace(/^at\s+/i, '').trim();
-  t = t.replace(/\s+at$/i, '').trim();
-  
-  // ── Collapse multiple spaces ──
-  t = t.replace(/\s+/g, ' ').trim();
-  
-  // ── Remove trailing/leading punctuation ──
-  t = t.replace(/^[,!?;:.\s]+|[,!?;:.\s]+$/g, '').trim();
-  
-  // ── If too short or empty, use default ──
-  if (!t || t.length < 2) {
-    return 'פגישה / אירוע';
-  }
-  
-  return t;
+  return title.trim();
 }
 
 /**
@@ -1383,6 +1312,7 @@ async function parseWithGeminiSmart(text, options = {}) {
       - "find time for a meeting with Danny" → summary: "Meeting with Danny"
       - "remind me to buy milk" → summary: "Buy milk"
       - "set a doctor appointment" → summary: "Doctor appointment"
+      - **CRITICAL EXAMPLE**: "Quality time with family today at 5 AM" → summary: "Quality time with family" (NOT "Quality time with family today at 5 AM")
 
     The summary must be concise (1-4 words) and meaningful. Never include words like "תמצא", "קבע", "תזמן", "schedule", "find", "set" — these are commands, not part of the event summary.
 
@@ -1492,11 +1422,12 @@ async function parseWithGeminiSmart(text, options = {}) {
     const parsed = JSON.parse(raw);
 
     // Clean summaries on all events
+    // NOTE: We trust the AI's output directly. No regex post-processing is applied.
     if (parsed.events && Array.isArray(parsed.events)) {
       parsed.events = parsed.events.map(ev => ({
         ...ev,
-        title: cleanTitle(ev.summary || ev.title || text),
-        summary: cleanTitle(ev.summary || ev.title || text)
+        title: ev.summary || ev.title || text,
+        summary: ev.summary || ev.title || text
       }));
     }
 
@@ -1543,8 +1474,8 @@ async function parseWithGeminiSmart(text, options = {}) {
         replyMessage: isEnglish ? `Added ${count} new event(s).` : `נוספו ${count} אירועים חדשים.`,
         events: parsed.events.map(ev => ({
           ...ev,
-          title: cleanTitle(ev.summary || ev.title || text),
-          summary: cleanTitle(ev.summary || ev.title || text)
+          title: ev.summary || ev.title || text,
+          summary: ev.summary || ev.title || text
         }))
       };
     }
@@ -1556,8 +1487,8 @@ async function parseWithGeminiSmart(text, options = {}) {
         replyMessage: parsed.replyMessage,
         events: parsed.events.map(ev => ({
           ...ev,
-          title: cleanTitle(ev.summary || ev.title || text),
-          summary: cleanTitle(ev.summary || ev.title || text)
+          title: ev.summary || ev.title || text,
+          summary: ev.summary || ev.title || text
         }))
       };
     }
@@ -1569,8 +1500,8 @@ async function parseWithGeminiSmart(text, options = {}) {
         replyMessage: isEnglish ? `Added ${parsed.length} new events.` : `נוספו ${parsed.length} אירועים חדשים.`,
         events: parsed.map(ev => ({
           ...ev,
-          title: cleanTitle(ev.summary || ev.title || text),
-          summary: cleanTitle(ev.summary || ev.title || text)
+          title: ev.summary || ev.title || text,
+          summary: ev.summary || ev.title || text
         }))
       };
     }
@@ -1582,8 +1513,8 @@ async function parseWithGeminiSmart(text, options = {}) {
         replyMessage: parsed.replyMessage || (isEnglish ? 'Added one new event.' : 'נוסף אירוע אחד חדש.'),
         events: [{
           ...parsed,
-          title: cleanTitle(parsed.summary || text),
-          summary: cleanTitle(parsed.summary || text)
+          title: parsed.summary || text,
+          summary: parsed.summary || text
         }]
       };
     }
