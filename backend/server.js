@@ -2172,6 +2172,44 @@ app.post('/api/events/quick-add', aiLimiter, async (req, res) => {
 // ──────────────────────────────────────────────
 
 /**
+ * Format a Date with given hours and minutes into an ISO 8601 string
+ * with the correct timezone offset for the given IANA timezone.
+ * This avoids the bug where toISOString() always outputs UTC (Z),
+ * which causes Google Calendar to misinterpret the time.
+ * @param {Date} date - The base date
+ * @param {number} hours - The hour (0-23) in the target timezone
+ * @param {number} minutes - The minute (0-59) in the target timezone
+ * @param {string} timeZone - IANA timezone string (e.g., 'Asia/Jerusalem')
+ * @returns {string} ISO 8601 string with offset (e.g., '2026-08-24T07:00:00+03:00')
+ */
+function formatDateTimeWithTimezone(date, hours, minutes, timeZone) {
+  // Get date components in the target timezone using Intl
+  const dateParts = new Intl.DateTimeFormat('en-CA', { // en-CA outputs YYYY-MM-DD
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).formatToParts(date);
+
+  const year = dateParts.find(p => p.type === 'year').value;
+  const month = dateParts.find(p => p.type === 'month').value;
+  const day = dateParts.find(p => p.type === 'day').value;
+
+  const hh = String(hours).padStart(2, '0');
+  const mm = String(minutes).padStart(2, '0');
+
+  // Extract the GMT offset from the timezone (e.g., "GMT+03:00" → "+03:00")
+  const formatted = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    timeZoneName: 'longOffset'
+  }).format(date);
+  const offsetMatch = formatted.match(/GMT([+-]\d{2}:\d{2})/);
+  const offset = offsetMatch ? offsetMatch[1] : '+03:00';
+
+  return `${year}-${month}-${day}T${hh}:${mm}:00${offset}`;
+}
+
+/**
  * Helper: Refresh Google access token and save to DB.
  * Sets up token refresh handler on the OAuth2 client.
  * @param {Object} user - The user document with googleAccessToken and googleRefreshToken
@@ -2264,17 +2302,17 @@ async function syncEventToGoogleCalendar(userId, event, locationId) {
     const startDateTime = new Date(eventDate);
     startDateTime.setHours(startHour, startMinute, 0, 0);
 
-    let endDateTime;
+    let endHour, endMinute;
     if (endMatch) {
-      let endHour = parseInt(endMatch[1], 10);
-      const endMinute = parseInt(endMatch[2], 10);
+      endHour = parseInt(endMatch[1], 10);
+      endMinute = parseInt(endMatch[2], 10);
       if (endMatch[3].toUpperCase() === 'PM' && endHour !== 12) endHour += 12;
       if (endMatch[3].toUpperCase() === 'AM' && endHour === 12) endHour = 0;
-      endDateTime = new Date(eventDate);
-      endDateTime.setHours(endHour, endMinute, 0, 0);
     } else {
-      // Default to 1 hour if no endTime
-      endDateTime = new Date(startDateTime.getTime() + 60 * 60 * 1000);
+      // Default to 1 hour after start
+      const totalEndMinutes = (startHour * 60 + startMinute + 60) % 1440;
+      endHour = Math.floor(totalEndMinutes / 60);
+      endMinute = totalEndMinutes % 60;
     }
 
     // Build request body
@@ -2282,8 +2320,8 @@ async function syncEventToGoogleCalendar(userId, event, locationId) {
     const requestBody = {
       summary: event.title || 'CalendAI Event',
       description: event.description || `Created by CalendAI for ${event.day}`,
-      start: { dateTime: startDateTime.toISOString(), timeZone },
-      end: { dateTime: endDateTime.toISOString(), timeZone },
+      start: { dateTime: formatDateTimeWithTimezone(eventDate, startHour, startMinute, timeZone), timeZone },
+      end: { dateTime: formatDateTimeWithTimezone(eventDate, endHour, endMinute, timeZone), timeZone },
     };
 
     // Force popup reminders for notification/reminder events so the user gets a ping
@@ -2419,8 +2457,8 @@ app.post('/api/add-to-google-calendar', async (req, res) => {
     const isReminderEvent = event.isReminder === true || event.eventType === 'reminder' || event.eventType === 'notification';
     const requestBody = {
       summary: event.title,
-      start: { dateTime: startDateTime.toISOString(), timeZone },
-      end: { dateTime: endDateTime.toISOString(), timeZone },
+      start: { dateTime: formatDateTimeWithTimezone(eventDate, startHour, startMinute, timeZone), timeZone },
+      end: { dateTime: formatDateTimeWithTimezone(eventDate, endHour, endMinute, timeZone), timeZone },
     };
 
     // Force popup reminders for notification/reminder events so the user gets a ping
