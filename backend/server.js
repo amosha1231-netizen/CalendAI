@@ -105,12 +105,15 @@ mongoose.connect(MONGO_URI)
 // ──────────────────────────────────────────────
 const userSchema = new mongoose.Schema({
   googleId: { type: String, sparse: true },
+  microsoftId: { type: String, sparse: true },
   email: { type: String, required: true, unique: true, lowercase: true },
   password: { type: String },
   displayName: { type: String },
   photo: { type: String },
   googleAccessToken: { type: String },
   googleRefreshToken: { type: String },
+  microsoftAccessToken: { type: String },
+  microsoftRefreshToken: { type: String },
   isPro: { type: Boolean, default: false },
   stripeCustomerId: { type: String },
   aiCredits: { type: Number, default: 15 }, // Freemium: 15 free AI credits for new users
@@ -950,6 +953,140 @@ app.get('/api/auth/google/callback',
     })(req, res, next);
   }
 );
+
+// ──────────────────────────────────────────────
+// Microsoft OAuth Routes (Outlook Calendar)
+// ──────────────────────────────────────────────
+
+const MICROSOFT_CLIENT_ID = process.env.MICROSOFT_CLIENT_ID;
+const MICROSOFT_CLIENT_SECRET = process.env.MICROSOFT_CLIENT_SECRET;
+const MICROSOFT_CALLBACK_URL = process.env.MICROSOFT_CALLBACK_URL || `${BACKEND_URL}/api/auth/microsoft/callback`;
+
+/**
+ * GET /api/auth/microsoft
+ * Redirects the user to Microsoft's OAuth2 consent page.
+ * Scopes: openid, profile, email, offline_access, Calendars.ReadWrite
+ */
+app.get('/api/auth/microsoft', (req, res) => {
+  if (!MICROSOFT_CLIENT_ID || MICROSOFT_CLIENT_ID === 'your_microsoft_client_id_here') {
+    return res.status(400).json({ error: 'Microsoft OAuth is not configured. Set MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET in .env' });
+  }
+
+  const redirectUri = MICROSOFT_CALLBACK_URL;
+  const scopes = [
+    'openid',
+    'profile',
+    'email',
+    'offline_access',
+    'Calendars.ReadWrite'
+  ].join(' ');
+
+  const authorizeUrl = `https://login.microsoftonline.com/common/oauth2/v2.0/authorize` +
+    `?client_id=${encodeURIComponent(MICROSOFT_CLIENT_ID)}` +
+    `&response_type=code` +
+    `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+    `&scope=${encodeURIComponent(scopes)}` +
+    `&response_mode=query`;
+
+  res.redirect(authorizeUrl);
+});
+
+/**
+ * GET /api/auth/microsoft/callback
+ * Handles the OAuth2 callback from Microsoft.
+ * Exchanges the authorization code for tokens, finds/creates the user,
+ * and redirects to the frontend with a JWT token.
+ */
+app.get('/api/auth/microsoft/callback', async (req, res) => {
+  const { code, error } = req.query;
+  const FRONTEND_URL = process.env.FRONTEND_URL || process.env.CLIENT_URL || 'https://calendai-q59p.onrender.com';
+
+  if (error) {
+    console.error('Microsoft OAuth error:', error);
+    return res.redirect(`${FRONTEND_URL}/?error=microsoft_auth_failed`);
+  }
+
+  if (!code) {
+    return res.redirect(`${FRONTEND_URL}/?error=microsoft_no_code`);
+  }
+
+  try {
+    // Exchange authorization code for tokens
+    const tokenResponse = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: MICROSOFT_CLIENT_ID,
+        client_secret: MICROSOFT_CLIENT_SECRET,
+        code,
+        redirect_uri: MICROSOFT_CALLBACK_URL,
+        grant_type: 'authorization_code'
+      })
+    });
+
+    if (!tokenResponse.ok) {
+      const tokenError = await tokenResponse.text();
+      console.error('Microsoft token exchange failed:', tokenError);
+      return res.redirect(`${FRONTEND_URL}/?error=microsoft_token_exchange_failed`);
+    }
+
+    const tokens = await tokenResponse.json();
+    const accessToken = tokens.access_token;
+    const refreshToken = tokens.refresh_token;
+
+    // Fetch user profile from Microsoft Graph API
+    const profileResponse = await fetch('https://graph.microsoft.com/v1.0/me', {
+      headers: { Authorization: `Bearer ${accessToken}` }
+    });
+
+    if (!profileResponse.ok) {
+      const profileError = await profileResponse.text();
+      console.error('Microsoft profile fetch failed:', profileError);
+      return res.redirect(`${FRONTEND_URL}/?error=microsoft_profile_failed`);
+    }
+
+    const profile = await profileResponse.json();
+    const microsoftId = profile.id;
+    const email = profile.mail || profile.userPrincipalName || '';
+    const displayName = profile.displayName || '';
+
+    // Find or create user in MongoDB
+    let user = await User.findOne({ microsoftId });
+    if (!user) {
+      user = await User.findOne({ email: email.toLowerCase() });
+      if (user) {
+        user.microsoftId = microsoftId;
+        if (!user.displayName) user.displayName = displayName;
+        await user.save();
+      } else {
+        user = await User.create({
+          microsoftId,
+          displayName,
+          email: email.toLowerCase(),
+          photo: ''
+        });
+      }
+    }
+
+    // Save Microsoft tokens
+    if (accessToken) {
+      user.microsoftAccessToken = accessToken;
+    }
+    if (refreshToken) {
+      user.microsoftRefreshToken = refreshToken;
+    }
+    await user.save();
+
+    // Generate JWT token
+    const jwtSecret = process.env.JWT_SECRET || 'calendai_secret';
+    const token = jwt.sign({ id: user._id || user.id }, jwtSecret, { expiresIn: '30d' });
+
+    res.redirect(`${FRONTEND_URL}?token=${token}`);
+  } catch (err) {
+    console.error('Microsoft OAuth callback error:', err);
+    res.redirect(`${FRONTEND_URL}/?error=microsoft_auth_failed`);
+  }
+});
 
 app.get('/api/auth/me', async (req, res) => {
   // Prevent caching of auth state - forces browser to always check with server

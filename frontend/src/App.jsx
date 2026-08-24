@@ -149,6 +149,10 @@ function AppRoutes() {
   const [locationFilter, setLocationFilter] = useState("all");
   const { user, isPro, isAuthenticated, authLoading, authStatus, handleLogin, handleLogout, setUser, setIsPro } = useAuth();
 
+  const handleMicrosoftLogin = useCallback(() => {
+    window.location.href = `${API_BASE}/api/auth/microsoft`;
+  }, []);
+
   // Smart Auth: show login prompt for save operations
   const [showLoginPrompt, setShowLoginPrompt] = useState(false);
   const [pendingAction, setPendingAction] = useState(null);
@@ -1213,6 +1217,7 @@ function AppRoutes() {
         t={t}
         lang={lang}
         onLogin={handleLogin}
+        onMicrosoftLogin={handleMicrosoftLogin}
         onTryGuest={handleTryGuest}
         toggleLanguage={toggleLanguage}
       />
