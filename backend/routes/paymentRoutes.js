@@ -47,7 +47,12 @@ router.post('/create-checkout', async (req, res) => {
       return res.status(500).json({ error: 'Payment service not configured.' });
     }
 
-    const storeId = '1301102';
+    const storeId = process.env.LEMON_SQUEEZY_STORE_ID?.trim();
+    if (!storeId) {
+      console.error('LEMON_SQUEEZY_STORE_ID is not configured');
+      return res.status(500).json({ error: 'Payment service misconfiguration: missing store ID.' });
+    }
+
     const variantId = '2035157';
 
     // ── Build Lemon Squeezy Checkout API request ──
