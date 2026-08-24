@@ -9,12 +9,12 @@ let model = null;
  */
 function initModel() {
   if (genAI) return;
-  if (!process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY === 'your_gemini_api_key_here') {
+  if (!process.env.GEMINI_API_KEY?.trim() || process.env.GEMINI_API_KEY?.trim() === 'your_gemini_api_key_here') {
     console.warn('GEMINI_API_KEY not configured. AI features will use fallback parser.');
     return;
   }
   try {
-    genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY?.trim());
     model = genAI.getGenerativeModel({
       model: 'gemini-1.5-flash',
       systemInstruction: `You are an intelligent calendar assistant for the "CalendAI" app.

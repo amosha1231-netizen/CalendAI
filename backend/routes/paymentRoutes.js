@@ -41,7 +41,7 @@ router.post('/create-checkout', async (req, res) => {
     }
 
     // ── Lemon Squeezy API Key check ──
-    const apiKey = process.env.LEMON_SQUEEZY_API_KEY;
+    const apiKey = process.env.LEMON_SQUEEZY_API_KEY?.trim();
     if (!apiKey) {
       console.error('LEMON_SQUEEZY_API_KEY is not configured');
       return res.status(500).json({ error: 'Payment service not configured.' });

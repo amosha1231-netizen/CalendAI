@@ -63,7 +63,7 @@ try {
 // CalendAI uses Lemon Squeezy for payment processing (not Stripe).
 let lemonSqueezyEnabled = false;
 try {
-  const lsApiKey = process.env.LEMON_SQUEEZY_API_KEY;
+  const lsApiKey = process.env.LEMON_SQUEEZY_API_KEY?.trim();
   if (lsApiKey && lsApiKey !== 'your_lemon_squeezy_api_key_here') {
     lemonSqueezyEnabled = true;
     console.log('✅ Lemon Squeezy payment service configured');
@@ -269,15 +269,15 @@ app.use('/api/', (req, res, next) => {
 // ──────────────────────────────────────────────
 // 2. Google OAuth Strategy (if keys are configured)
 // ──────────────────────────────────────────────
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
-const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID?.trim();
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET?.trim();
 
 if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET &&
     GOOGLE_CLIENT_ID !== 'your_google_client_id_here') {
   passport.use(new GoogleStrategy({
     clientID: GOOGLE_CLIENT_ID,
     clientSecret: GOOGLE_CLIENT_SECRET,
-    callbackURL: process.env.GOOGLE_CALLBACK_URL || `${BACKEND_URL}/api/auth/google/callback`
+    callbackURL: process.env.GOOGLE_CALLBACK_URL?.trim() || `${BACKEND_URL}/api/auth/google/callback`
   }, async (accessToken, refreshToken, profile, done) => {
     try {
       // Find or create user in MongoDB
@@ -928,7 +928,7 @@ app.get('/api/auth/google/callback',
 
       try {
         // Create a JWT token with 7-day expiry containing the user's _id
-        const jwtSecret = process.env.JWT_SECRET || 'calendai_secret';
+        const jwtSecret = process.env.JWT_SECRET?.trim() || 'calendai_secret';
         const token = jwt.sign({ id: user._id || user.id }, jwtSecret, { expiresIn: '30d' });
 
         console.log("Generated JWT Token:", token ? "SUCCESS" : "FAILED");
@@ -958,9 +958,9 @@ app.get('/api/auth/google/callback',
 // Microsoft OAuth Routes (Outlook Calendar)
 // ──────────────────────────────────────────────
 
-const MICROSOFT_CLIENT_ID = process.env.MICROSOFT_CLIENT_ID;
-const MICROSOFT_CLIENT_SECRET = process.env.MICROSOFT_CLIENT_SECRET;
-const MICROSOFT_CALLBACK_URL = process.env.MICROSOFT_CALLBACK_URL || `${BACKEND_URL}/api/auth/microsoft/callback`;
+const MICROSOFT_CLIENT_ID = process.env.MICROSOFT_CLIENT_ID?.trim();
+const MICROSOFT_CLIENT_SECRET = process.env.MICROSOFT_CLIENT_SECRET?.trim();
+const MICROSOFT_CALLBACK_URL = process.env.MICROSOFT_CALLBACK_URL?.trim() || `${BACKEND_URL}/api/auth/microsoft/callback`;
 
 /**
  * GET /api/auth/microsoft
@@ -2179,9 +2179,9 @@ app.post('/api/events/quick-add', aiLimiter, async (req, res) => {
  */
 async function createOAuth2ClientWithRefresh(user) {
   const oauth2Client = new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET,
-    process.env.GOOGLE_CALLBACK_URL
+    process.env.GOOGLE_CLIENT_ID?.trim(),
+    process.env.GOOGLE_CLIENT_SECRET?.trim(),
+    process.env.GOOGLE_CALLBACK_URL?.trim()
   );
 
   oauth2Client.setCredentials({
@@ -3406,7 +3406,7 @@ app.post('/api/payments/webhook',
       const rawBody = req.body; // Buffer from express.raw()
 
       // Verify HMAC-SHA256 signature using the Lemon Squeezy webhook secret
-      const secret = process.env.LEMON_SQUEEZY_WEBHOOK_SECRET;
+      const secret = process.env.LEMON_SQUEEZY_WEBHOOK_SECRET?.trim();
       if (!secret) {
         console.error('Lemon Squeezy webhook: LEMON_SQUEEZY_WEBHOOK_SECRET is not configured.');
         return res.status(500).json({ error: 'Webhook secret not configured' });
