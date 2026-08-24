@@ -313,12 +313,15 @@ function fallbackParse(text) {
     }
   }
 
-  if (text.includes('בערב') || text.includes('בלילה') || text.includes('באחה"צ') || text.includes('אחר הצהריים')) {
-    if (startHour < 12) startHour += 12;
-    if (endHour < 12) endHour += 12;
+  // ── EVENING / NIGHT DETECTION (CRITICAL): If the text contains evening/night keywords
+  // and the extracted hour is less than 12, add 12 to convert to PM.
+  if (text.includes('בערב') || text.includes('בלילה') || text.includes('באחה"צ') || text.includes('אחר הצהריים') || text.includes('אחהצ')) {
+    if (startHour > 0 && startHour < 12) startHour += 12;
+    if (endHour > 0 && endHour < 12) endHour += 12;
   } else if (text.includes('בבוקר') || text.includes('בבקר')) {
     // Morning → keep as AM
   } else {
+    // Low hours (1-7) without explicit marker → default to PM (afternoon/evening)
     if (startHour >= 1 && startHour <= 7) {
       startHour += 12;
       endHour += 12;

@@ -34,7 +34,7 @@ Current Schedule: [Existing events will be injected here dynamically]
 5. FULL CALENDAR FALLBACK: If you determine there are not enough free time windows this week to fulfill the user's request without conflicting with existing events, return a JSON with an error message:
 { "error": "לא מצאתי מספיק חלונות זמן פנויים השבוע כדי לשבץ את הפעילות מבלי להתנגש באירועים קיימים." }
 
-6. OVERLAP PROTECTION: Find available free slots that DO NOT overlap with existing events. Do not default to 09:00 AM if it is taken.
+6. OVERLAP PROTECTION: Find available free slots that DO NOT overlap with existing events. Do not default to 09:00 if it is taken.
 
 7. CONFLICT HANDLING: If the user specifically requests a time that is already taken, DO NOT generate the event. Return JSON:
 { "hasConflict": true, "message": "יש כבר פעילות בזמן הזה. האם להוסיף בכל זאת או לקבוע לזמן אחר?" }
@@ -47,7 +47,7 @@ This response MUST have hasConflict=true and MUST NOT contain an "events" array.
 Return ONLY valid JSON in this format:
 {
   "events": [
-    { "title": "string", "day": "string (e.g., Sunday)", "startTime": "HH:MM AM/PM", "endTime": "HH:MM AM/PM" }
+    { "title": "string", "day": "string (e.g., Sunday)", "startTime": "HH:MM (24-hour format, e.g., 14:30 or 18:00)", "endTime": "HH:MM (24-hour format, e.g., 15:30 or 19:00)" }
   ]
 }
 OR if it's Saturday:
@@ -62,7 +62,9 @@ OR if the requested time conflicts with an existing event:
 {
   "hasConflict": true,
   "message": "string"
-}`,
+}
+
+**CRITICAL — 24-HOUR FORMAT**: You MUST output ALL times in 24-hour format (e.g., "18:00" NOT "06:00 PM"). Never use AM/PM. If the user says "בשש בערב", output "18:00". If the user says "תשע בבוקר", output "09:00". If the user says "שמונה בערב", output "20:00". This is CRITICAL to avoid AM/PM confusion.`,
       generationConfig: {
         temperature: 0.3
       }
@@ -290,7 +292,7 @@ async function parseWithGemini(text, options = {}) {
     - If the user writes in English → respond in English (reasoning, replyMessage, title, aiAdvice all in English).
     - If the user writes in Hebrew → respond in Hebrew (reasoning, replyMessage, title, aiAdvice all in Hebrew).
     - The event "day" field must always be in English (Sunday, Monday, etc.).
-    - The event "startTime" and "endTime" must always be in "HH:MM AM/PM" format.
+    - The event "startTime" and "endTime" must always be in 24-hour format (e.g., "14:30" or "18:00", NEVER "02:30 PM" or "06:00 PM").
     - Detect the language from the user's text below.
 
     ─────────────────────────────────────────────

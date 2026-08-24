@@ -690,14 +690,26 @@ function expandEventsForYear(schedule, year) {
 
 function timeToMinutes(timeStr) {
   if (!timeStr) return null;
-  const match = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
-  if (!match) return null;
-  let hours = parseInt(match[1], 10);
-  const minutes = parseInt(match[2], 10);
-  const meridiem = match[3].toUpperCase();
-  if (meridiem === 'PM' && hours !== 12) hours += 12;
-  if (meridiem === 'AM' && hours === 12) hours = 0;
-  return hours * 60 + minutes;
+  // Try to parse HH:MM AM/PM format first
+  const ampmMatch = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+  if (ampmMatch) {
+    let hours = parseInt(ampmMatch[1], 10);
+    const minutes = parseInt(ampmMatch[2], 10);
+    const meridiem = ampmMatch[3].toUpperCase();
+    if (meridiem === 'PM' && hours !== 12) hours += 12;
+    if (meridiem === 'AM' && hours === 12) hours = 0;
+    return hours * 60 + minutes;
+  }
+  // Fallback to 24-hour format (e.g., "14:30" or "18:00")
+  const h24Match = timeStr.match(/(\d{1,2}):(\d{2})/);
+  if (h24Match) {
+    let hours = parseInt(h24Match[1], 10);
+    const minutes = parseInt(h24Match[2], 10);
+    // If hours are 0-7 with no AM/PM marker, treat as PM (per CalendAI rules)
+    // But if the string is purely numeric (24h format), trust it as-is
+    return hours * 60 + minutes;
+  }
+  return null;
 }
 
 function minutesToTime(totalMinutes) {
