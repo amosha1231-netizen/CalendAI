@@ -277,7 +277,9 @@ if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET &&
   passport.use(new GoogleStrategy({
     clientID: GOOGLE_CLIENT_ID,
     clientSecret: GOOGLE_CLIENT_SECRET,
-    callbackURL: process.env.GOOGLE_CALLBACK_URL?.trim() || `${BACKEND_URL}/api/auth/google/callback`
+    callbackURL: process.env.GOOGLE_CALLBACK_URL?.trim() || `${BACKEND_URL}/api/auth/google/callback`,
+    accessType: 'offline',
+    prompt: 'consent'
   }, async (accessToken, refreshToken, profile, done) => {
     try {
       // Find or create user in MongoDB
@@ -2420,9 +2422,37 @@ app.post('/api/add-to-google-calendar', async (req, res) => {
   const locData = LOCATIONS.find(loc => loc.id === locationId);
   const timeZone = locData ? locData.timezone : 'Asia/Jerusalem';
 
-  const oauth2Client = new google.auth.OAuth2();
-  oauth2Client.setCredentials({ access_token: accessToken });
+  // Look up the full user from MongoDB to get refresh_token for auto-refresh
+  let user = null;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    try {
+      const token = authHeader.split(' ')[1];
+      const decoded = jwt.verify(token, JWT_SECRET);
+      if (decoded && decoded.id) {
+        user = await User.findById(decoded.id).catch(() => null);
+      }
+    } catch (err) {
+      // fall through
+    }
+  }
+  if (!user && req.isAuthenticated && req.isAuthenticated()) {
+    const sessionUser = req.session?.passport?.user;
+    if (sessionUser?._id) {
+      user = await User.findById(sessionUser._id).catch(() => null);
+    }
+  }
 
+  if (!user) {
+    // Fallback: create a plain OAuth2 client with just the access token
+    const oauth2Client = new google.auth.OAuth2();
+    oauth2Client.setCredentials({ access_token: accessToken });
+    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+    // ... rest of the logic would use this fallback
+    return res.status(401).json({ error: 'User not found in database. Cannot sync to Google Calendar.' });
+  }
+
+  // Use the same createOAuth2ClientWithRefresh function that handles auto-refresh
+  const oauth2Client = await createOAuth2ClientWithRefresh(user);
   const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
   const dayMap = { Sunday: 0, Monday: 1, Tuesday: 2, Wednesday: 3, Thursday: 4, Friday: 5, Saturday: 6 };
