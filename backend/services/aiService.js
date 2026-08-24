@@ -575,6 +575,19 @@ async function parseWithGemini(text, options = {}) {
     ─────────────────────────────────────────────
     Apply the following AM/PM resolution rules STRICTLY:
 
+    0. **EXPLICIT AM/PM WRITTEN MARKERS OVERRIDE EVERYTHING (CRITICAL — NEW)**:
+       - If the user explicitly writes "AM" or "PM" (or "a.m." / "p.m.") AFTER a time, you MUST use that EXACTLY.
+       - "5 AM" → 05:00 (five in the morning). NOT 17:00.
+       - "5 PM" → 17:00 (five in the evening). NOT 05:00.
+       - "5:00 AM" → 05:00. NOT 17:00.
+       - "5:00 PM" → 17:00. NOT 05:00.
+       - "5am" → 05:00. NOT 17:00.
+       - "5pm" → 17:00. NOT 05:00.
+       - "at 5 AM" → 05:00. NOT 17:00.
+       - "at 5 PM" → 17:00. NOT 05:00.
+       - **THIS RULE (0) TAKES PRIORITY OVER ALL OTHER AM/PM RULES BELOW.**
+       - When "AM" or "PM" is explicitly present, do NOT apply the "low hours default to PM" rule. The explicit marker wins.
+
     1. **Explicit morning/evening markers override everything**:
        - "בבוקר" / "in the morning" / "AM" → treat as AM (morning)
        - "בערב" / "in the evening" / "PM" / "באחה"צ" / "אחר הצהריים" → treat as PM (afternoon/evening)
@@ -955,9 +968,28 @@ function cleanTitle(title) {
   t = t.replace(/\s+בשעה\s*/g, ' ').trim();
   
   // ── Remove English day/time references ──
+  // Remove "today" / "TODAY" / "Today" at word boundaries OR at end of string
   t = t.replace(/\s+(tomorrow|today|tonight|this\s+(morning|afternoon|evening|week|month))\b/gi, ' ').trim();
   t = t.replace(/\s+(next|this|last)\s+(week|month|year|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/gi, ' ').trim();
   t = t.replace(/\s+on\s+(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/gi, ' ').trim();
+  // Aggressive removal of standalone "today" / "TODAY" at end of string (no word boundary needed)
+  t = t.replace(/\s+today\s*$/gi, ' ').trim();
+  t = t.replace(/^today\s+/gi, ' ').trim();
+  // Remove standalone "at" (preposition) that may be left after time removal
+  t = t.replace(/\s+at\s+/gi, ' ').trim();
+  t = t.replace(/^at\s+/i, '').trim();
+  t = t.replace(/\s+at$/i, '').trim();
+  // Remove standalone "AM" / "PM" / "am" / "pm" that may be left after time removal
+  t = t.replace(/\s+(AM|PM|am|pm)\s*/g, ' ').trim();
+  t = t.replace(/^(AM|PM|am|pm)\s+/g, '').trim();
+  t = t.replace(/\s+(AM|PM|am|pm)$/g, '').trim();
+  // Remove "today at" / "TODAY AT" pattern (case-insensitive)
+  t = t.replace(/\s+today\s+at\s+/gi, ' ').trim();
+  t = t.replace(/^today\s+at\s+/gi, '').trim();
+  t = t.replace(/\s+today\s+at\s*$/gi, '').trim();
+  // Remove "today at X AM/PM" or "TODAY AT X AM/PM" (with number)
+  t = t.replace(/\s+today\s+at\s+\d{1,2}(:\d{2})?\s*(AM|PM|am|pm)?\s*/gi, ' ').trim();
+  t = t.replace(/^today\s+at\s+\d{1,2}(:\d{2})?\s*(AM|PM|am|pm)?\s*/gi, '').trim();
   
   // ── Remove Hebrew day/time references (without \b which doesn't work well for Hebrew) ──
   t = t.replace(/\s+(מחר|מחרתיים|היום|הלילה|השבוע|החודש|השנה)(?:\s|$)/g, ' ').trim();
