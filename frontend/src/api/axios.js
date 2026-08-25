@@ -15,11 +15,23 @@ const api = axios.create({
 // Reads the JWT token from safeStorage on EVERY outgoing request.
 // This ensures that after a page refresh, the token is always sent
 // with the /api/auth/me call and any other authenticated request.
+// CRITICAL: Falls back to direct localStorage read if safeStorage returns null,
+// because safeStorage may have fallen back to its in-memory Map on a previous
+// session, which is lost on page reload.
 api.interceptors.request.use(
   (config) => {
     let token = null;
     try {
+      // First try: safeStorage (reads from localStorage with in-memory fallback)
       token = safeStorage.getItem('token') || safeStorage.getItem('calendai-jwt');
+      if (!token) {
+        // Second try: localStorage directly (survives page reloads)
+        try {
+          token = localStorage.getItem('token') || localStorage.getItem('calendai-jwt');
+        } catch (e) {
+          // localStorage unavailable
+        }
+      }
     } catch (e) {
       // storage unavailable
     }

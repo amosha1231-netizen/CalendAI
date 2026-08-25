@@ -13,14 +13,57 @@ export function useAuth() {
 }
 
 // ── JWT Token Management ──
+// CRITICAL: Always persist to BOTH safeStorage AND localStorage directly.
+// safeStorage wraps localStorage with try/catch but has an in-memory fallback
+// (Map) that is LOST on page reload. Direct localStorage access ensures
+// the token survives tab closes, page refreshes, and cross-tab navigation.
 const getJwtToken = () => {
-  try { return safeStorage.getItem('token') || safeStorage.getItem('calendai-jwt'); } catch { return null; }
+  try {
+    // First try: safeStorage (reads from localStorage with fallback)
+    const fromSafe = safeStorage.getItem('token') || safeStorage.getItem('calendai-jwt');
+    if (fromSafe) return fromSafe;
+
+    // SECOND try: localStorage directly (catches cases where safeStorage
+    // fell back to in-memory store but localStorage is actually available)
+    try {
+      const fromLocal = localStorage.getItem('token') || localStorage.getItem('calendai-jwt');
+      if (fromLocal) return fromLocal;
+    } catch (e) {
+      // localStorage unavailable
+    }
+
+    return null;
+  } catch { return null; }
 };
+
 const setJwtToken = (token) => {
-  try { safeStorage.setItem('token', token); safeStorage.setItem('calendai-jwt', token); } catch (e) {}
+  try {
+    // Save to safeStorage (which tries localStorage first)
+    safeStorage.setItem('token', token);
+    safeStorage.setItem('calendai-jwt', token);
+  } catch (e) {}
+
+  try {
+    // ALWAYS save directly to localStorage as well (belt AND suspenders)
+    localStorage.setItem('token', token);
+    localStorage.setItem('calendai-jwt', token);
+  } catch (e) {
+    // localStorage may be unavailable (private mode)
+  }
 };
+
 const clearJwtToken = () => {
-  try { safeStorage.removeItem('token'); safeStorage.removeItem('calendai-jwt'); } catch (e) {}
+  try {
+    safeStorage.removeItem('token');
+    safeStorage.removeItem('calendai-jwt');
+  } catch (e) {}
+
+  try {
+    localStorage.removeItem('token');
+    localStorage.removeItem('calendai-jwt');
+  } catch (e) {
+    // localStorage may be unavailable
+  }
 };
 
 export function AuthProvider({ children }) {
@@ -34,6 +77,9 @@ export function AuthProvider({ children }) {
   });
   const [isPro, setIsPro] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    // Check BOTH safeStorage and localStorage directly for the token.
+    // This ensures the token survives page reloads even if safeStorage
+    // fell back to its in-memory store on the previous session.
     return Boolean(getJwtToken());
   });
   const [authLoading, setAuthLoading] = useState(true); // true until first auth check completes
@@ -98,6 +144,8 @@ export function AuthProvider({ children }) {
         clearJwtToken();
         safeStorage.removeItem('calendai-isLoggedIn');
         safeStorage.removeItem('calendai-user');
+        localStorage.removeItem('calendai-isLoggedIn');
+        localStorage.removeItem('calendai-user');
         setUser(null);
         setIsAuthenticated(false);
         setAuthStatus('guest');
@@ -125,6 +173,7 @@ export function AuthProvider({ children }) {
         // Save user data to localStorage for persistence across app restarts
         try {
           safeStorage.setItem('calendai-user', JSON.stringify(data.user));
+          localStorage.setItem('calendai-user', JSON.stringify(data.user));
         } catch (e) {}
 
         // Exchange session for a JWT token to persist login
@@ -133,6 +182,7 @@ export function AuthProvider({ children }) {
           if (tokenRes.data?.token) {
             setJwtToken(tokenRes.data.token);
             safeStorage.setItem('calendai-isLoggedIn', 'true');
+            localStorage.setItem('calendai-isLoggedIn', 'true');
           }
         } catch (tokenErr) {
           console.error('Failed to exchange session for JWT:', tokenErr);
@@ -166,8 +216,11 @@ export function AuthProvider({ children }) {
       setIsPro(false);
       setIsAuthenticated(false);
       setAuthStatus('guest');
+      clearJwtToken();
       safeStorage.removeItem('calendai-isLoggedIn');
       safeStorage.removeItem('calendai-user');
+      localStorage.removeItem('calendai-isLoggedIn');
+      localStorage.removeItem('calendai-user');
     } catch (err) { console.error(err); }
   }, []);
 
@@ -199,11 +252,10 @@ export function AuthProvider({ children }) {
 
     // ── Step 1: Extract token from URL query params (OAuth callback) ──
     if (urlToken) {
+      // Save token to ALL storage locations (safeStorage, localStorage)
       setJwtToken(urlToken);
       safeStorage.setItem('calendai-isLoggedIn', 'true');
       try {
-        localStorage.setItem('token', urlToken);
-        localStorage.setItem('calendai-jwt', urlToken);
         localStorage.setItem('calendai-isLoggedIn', 'true');
       } catch (e) {}
       api.defaults.headers.common['Authorization'] = `Bearer ${urlToken}`;
@@ -270,12 +322,15 @@ export function AuthProvider({ children }) {
           // Save user data to localStorage for persistence
           try {
             safeStorage.setItem('calendai-user', JSON.stringify(userData));
+            localStorage.setItem('calendai-user', JSON.stringify(userData));
           } catch (e) {}
         } else if (res.status === 401) {
           // 401 Unauthorized → token expired/invalid, clear and treat as guest
           clearJwtToken();
           safeStorage.removeItem('calendai-isLoggedIn');
           safeStorage.removeItem('calendai-user');
+          localStorage.removeItem('calendai-isLoggedIn');
+          localStorage.removeItem('calendai-user');
           setUser(null);
           setIsAuthenticated(false);
           setAuthStatus('guest');

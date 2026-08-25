@@ -1190,7 +1190,11 @@ function AppRoutes() {
   }
 
   console.log('🔄 [App render] authLoading:', authLoading, 'isAuthenticated:', isAuthenticated, 'currentView:', currentView, 'authStatus:', authStatus);
-  if (authLoading && !user && !localStorage.getItem('token')) {
+  // Loading guard: show loader while auth is being checked.
+  // Checks BOTH safeStorage and localStorage directly for the token.
+  // This prevents the landing page from flashing while the OAuth callback
+  // token is being saved to storage by AuthContext.
+  if (authLoading && !user && !safeStorage.getItem('token') && !safeStorage.getItem('calendai-jwt') && !localStorage.getItem('token') && !localStorage.getItem('calendai-jwt')) {
     return <LuxuryLoader statusText={t.parsing || 'AUTHENTICATING...'} />;
   }
 
