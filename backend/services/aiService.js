@@ -52,7 +52,7 @@ CRITICAL RULES:
      * Duration words: "30 דקות", "חצי שעה", "שעה", "30 minutes", "half hour", "an hour"
      * Command verbs: "תמצא לי", "תזמן", "קבע", "תפנה לי", "schedule", "find", "set", "remind"
      * Hebrew prefix letters: ל, ב, כ, מ, ש, ה, ו
-   - The summary MUST contain ONLY the clean activity name (1-4 words max).
+   - The summary MUST contain ONLY the clean activity name (no time/day info).
    - Examples:
      * "תמצא לי זמן לשיעור תורה בערב" → summary: "שיעור תורה"
      * "קבע לי אימון מחר ב-9 בבוקר" → summary: "אימון"
@@ -450,7 +450,7 @@ async function parseWithGemini(text, options = {}) {
       - "set a doctor appointment" → summary: "Doctor appointment"
       - **CRITICAL EXAMPLE**: "Quality time with family today at 5 AM" → summary: "Quality time with family" (NOT "Quality time with family today at 5 AM")
 
-    The summary must be concise (1-4 words) and meaningful. Never include words like "תמצא", "קבע", "תזמן", "schedule", "find", "set" — these are commands, not part of the event summary.
+    The summary must be concise and meaningful. Never include words like "תמצא", "קבע", "תזמן", "schedule", "find", "set" — these are commands, not part of the event summary.
 
     ═════════════════════════════════════════════════════
     STEP 3: COMMON SENSE RESOLUTION
@@ -656,7 +656,7 @@ async function parseWithGemini(text, options = {}) {
 
     4. **No time mentioned**: If no time expression is found, use the default time based on activity type (see STEP 3).
 
-    5. **Summary cleanup**: The summary should be the remaining text after removing time expressions, duration expressions, and filler words. Keep it concise (max 4 words).
+    5. **Summary cleanup**: The summary should be the remaining text after removing time expressions, duration expressions, and filler words. Keep it concise.
 
     ─────────────────────────────────────────────
     OUTPUT FORMAT
@@ -1314,7 +1314,7 @@ async function parseWithGeminiSmart(text, options = {}) {
       - "set a doctor appointment" → summary: "Doctor appointment"
       - **CRITICAL EXAMPLE**: "Quality time with family today at 5 AM" → summary: "Quality time with family" (NOT "Quality time with family today at 5 AM")
 
-    The summary must be concise (1-4 words) and meaningful. Never include words like "תמצא", "קבע", "תזמן", "schedule", "find", "set" — these are commands, not part of the event summary.
+    The summary must be concise and meaningful. Never include words like "תמצא", "קבע", "תזמן", "schedule", "find", "set" — these are commands, not part of the event summary.
 
     ═════════════════════════════════════════════════════
     STEP 3: COMMON SENSE RESOLUTION
@@ -1384,7 +1384,7 @@ async function parseWithGeminiSmart(text, options = {}) {
       "replyMessage": "string – friendly, conversational summary in the SAME LANGUAGE as the user's request",
       "events": [
         {
-          "summary": "string – Short Clean Title (max 4 words, in the SAME LANGUAGE as the user's request, NO time/day info)",
+          "summary": "string – Short Clean Title (in the SAME LANGUAGE as the user's request, NO time/day info)",
           "day": "string – English day name (Sunday, Monday, etc.)",
           "startTime": "string – HH:MM 24-hour format (e.g., 14:30 or 18:00)",
           "endTime": "string – HH:MM 24-hour format (e.g., 15:30 or 19:00)",

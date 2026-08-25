@@ -346,10 +346,16 @@ function fallbackParse(text) {
     .replace(/[,!?;:]/g, '')
     .trim();
 
-  if (title.length > 30) {
+  // NOTE: Do NOT truncate the title. The full title as entered by the user
+  // (or as extracted by the AI) should be preserved.
+  // Previously, this code used slice(-4) which incorrectly kept only the LAST
+  // 4 words, stripping the beginning of the title (e.g., "Quality time with family at 6 pm"
+  // became "family at 6 pm"). This was the critical bug.
+  // Titles are now kept as-is up to a reasonable length.
+  if (title.length > 80) {
     const titleWords = title.split(/\s+/);
-    if (titleWords.length > 4) {
-      title = titleWords.slice(-4).join(' ');
+    if (titleWords.length > 12) {
+      title = titleWords.slice(0, 12).join(' ');
     }
   }
 
