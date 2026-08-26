@@ -45,7 +45,7 @@ export default function LandingPage({ t, lang, onLogin, onMicrosoftLogin, onTryG
               onClick={onLogin}
               className="text-sm text-slate-500 hover:text-slate-800 px-3 py-1.5 rounded-lg border border-transparent hover:border-slate-200 hover:bg-white transition font-medium"
             >
-              {lang === 'he' ? 'כניסה' : (t.loginShort || 'Login')}
+              {t.loginShort}
             </button>
           </div>
         </div>
@@ -101,7 +101,7 @@ export default function LandingPage({ t, lang, onLogin, onMicrosoftLogin, onTryG
                   <rect x="1" y="11" width="9" height="9" fill="#00A4EF" />
                   <rect x="11" y="11" width="9" height="9" fill="#FFB900" />
                 </svg>
-                {lang === 'he' ? 'התחבר עם Outlook' : 'Connect with Outlook'}
+                {t.landingLoginOutlook}
               </button>
               <button
                 onClick={onTryGuest}

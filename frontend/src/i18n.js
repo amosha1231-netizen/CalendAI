@@ -410,6 +410,7 @@ const translations = {
     loginToSaveDesc: 'כדי לשמור אירועים בלוח השנה, עליך להתחבר קודם',
 
     // Landing Page
+    landingLoginOutlook: 'התחבר עם Outlook',
     landingHeroBadge: '🚀 ניהול לו"ז חכם עם AI',
     landingHeroTitle: 'לנהל את הזמן שלך. בחוכמה.',
     landingHeroSubtitle: 'CalendAI מנהל עבורך את הלו"ז בשפה טבעית. תאר את השבוע שלך וה-AI יתאם פגישות, יסדר משימות ויזכיר לך בזמן.',
@@ -435,6 +436,31 @@ const translations = {
     landingCtaTitle: 'מוכן לקחת שליטה על הזמן שלך?',
     landingCtaSubtitle: 'התחבר עם Google והתחל בחינם',
     landingFooterText: 'בנוי עם ❤️ כדי לעזור לך לנהל את הזמן שלך',
+
+    // General UI
+    advanced: 'מתקדם',
+    home: 'בית',
+    addEvent: 'הוסף',
+    credits: 'קרדיטים',
+    manualEvent: 'אירוע ידני',
+    manualEventTitle: 'הוספת אירוע ידנית',
+    manualEventSummary: 'כותרת',
+    manualEventSummaryPlaceholder: 'הכנס כותרת לאירוע',
+    manualEventDate: 'תאריך',
+    manualEventStartTime: 'שעת התחלה',
+    manualEventEndTime: 'שעת סיום',
+    manualEventSave: 'שמור אירוע',
+    manualEventSaving: 'שומר...',
+    manualEventSuccess: 'האירוע נוסף בהצלחה!',
+    manualEventError: 'שגיאה בהוספת האירוע',
+    manualEventRequired: 'אנא מלא את כל השדות הנדרשים',
+    showAllEvents: 'הצג הכל ({count} אירועים)',
+    dayDetailView: 'פירוט יומי מלא',
+    dayDetailTitle: 'פירוט יומי',
+    dayDetailEvents: 'אירועים',
+    dayDetailTotal: 'סה"כ',
+    close: 'סגור',
+    delete: 'מחק',
 
     // PWA Smart Install Banner
     pwaInstallBanner: '📱 התקן את CalendAI במסך הבית לגישה מהירה יותר',
@@ -964,6 +990,7 @@ const translations = {
     loginToSaveDesc: 'To save events to your calendar, please log in first',
 
     // Landing Page
+    landingLoginOutlook: 'Connect with Outlook',
     landingHeroBadge: '🚀 Smart AI Schedule Management',
     landingHeroTitle: 'Manage Your Time. Smarter.',
     landingHeroSubtitle: 'CalendAI manages your schedule in natural language. Describe your week and the AI will coordinate meetings, organize tasks, and remind you on time.',
@@ -989,6 +1016,31 @@ const translations = {
     landingCtaTitle: 'Ready to take control of your time?',
     landingCtaSubtitle: 'Login with Google and start free',
     landingFooterText: 'Built with ❤️ to help you manage your time',
+
+    // General UI
+    advanced: 'Advanced',
+    home: 'Home',
+    addEvent: 'Add',
+    credits: 'Credits',
+    manualEvent: 'Manual Event',
+    manualEventTitle: 'Add Manual Event',
+    manualEventSummary: 'Summary',
+    manualEventSummaryPlaceholder: 'Enter event title',
+    manualEventDate: 'Date',
+    manualEventStartTime: 'Start Time',
+    manualEventEndTime: 'End Time',
+    manualEventSave: 'Save Event',
+    manualEventSaving: 'Saving...',
+    manualEventSuccess: 'Event added successfully!',
+    manualEventError: 'Error adding event',
+    manualEventRequired: 'Please fill in all required fields',
+    showAllEvents: 'Show all ({count} events)',
+    dayDetailView: 'Full Day Details',
+    dayDetailTitle: 'Daily Details',
+    dayDetailEvents: 'events',
+    dayDetailTotal: 'Total',
+    close: 'Close',
+    delete: 'Delete',
 
     // PWA Smart Install Banner
     pwaInstallBanner: '📱 Install CalendAI on your home screen for faster access',

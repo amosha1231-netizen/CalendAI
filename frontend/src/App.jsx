@@ -9,6 +9,7 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import SidebarDrawer from "./components/SidebarDrawer";
 import MeetingWizard from "./components/MeetingWizard";
 import LuxuryLoader from "./components/LuxuryLoader";
+import ManualEventForm from "./components/ManualEventForm";
 
 // ── Lazy-loaded page chunks ──
 const LandingPage = lazy(() => import("./components/LandingPage"));
@@ -257,6 +258,7 @@ function AppRoutes() {
   }, [user, lang, setShowLoginPrompt, setError]);
 
   const [showWizard, setShowWizard] = useState(false);
+  const [showManualEvent, setShowManualEvent] = useState(false);
 
   const [installPrompt, setInstallPrompt] = useState(null);
   const [showPwaPopup, setShowPwaPopup] = useState(false);
@@ -1443,7 +1445,7 @@ function AppRoutes() {
                 className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 px-3 py-2 rounded-full hover:bg-slate-100 transition"
               >
                 {showAdvanced ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                {t.advanced || 'מתקדם'}
+                {t.advanced}
               </button>
             </div>
 
@@ -1452,28 +1454,28 @@ function AppRoutes() {
               <div className="mt-3 pt-3 border-t border-slate-200 space-y-3 animate-fade-in">
                 {/* Event Type */}
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs font-medium text-slate-500">{t.eventType || 'סוג:'}</span>
+                  <span className="text-xs font-medium text-slate-500">{t.eventType}</span>
                   <div className="flex rounded-lg border border-slate-300 overflow-hidden">
                     <button onClick={() => setEventType('activity')}
                       className={`px-3 py-1.5 text-xs font-medium transition ${eventType === 'activity' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>
-                      {t.typeActivity || 'פעילות'}
+                      {t.typeActivity}
                     </button>
                     <button onClick={() => setEventType('notification')}
                       className={`px-3 py-1.5 text-xs font-medium transition border-r border-slate-300 ${eventType === 'notification' ? 'bg-amber-500 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>
-                      {t.typeNotification || 'התראה'}
+                      {t.typeNotification}
                     </button>
                   </div>
                 </div>
                 {/* Recurrence */}
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs font-medium text-slate-500">{t.frequency || 'תדירות:'}</span>
+                  <span className="text-xs font-medium text-slate-500">{t.frequency}</span>
                   <div className="flex rounded-lg border border-slate-300 overflow-hidden">
                     {['once', 'weekly', 'monthly', 'yearly'].map((recVal) => {
                       const labels = {
-                        once: t.recurrenceOnce || 'חד פעמי',
-                        weekly: t.recurrenceWeekly || 'שבועי',
-                        monthly: t.recurrenceMonthly || 'חודשי',
-                        yearly: t.recurrenceYearly || 'שנתי'
+                        once: t.recurrenceOnce,
+                        weekly: t.recurrenceWeekly,
+                        monthly: t.recurrenceMonthly,
+                        yearly: t.recurrenceYearly
                       };
                       return (
                         <button key={recVal} onClick={() => setRecurrence(recVal)}
@@ -1507,7 +1509,7 @@ function AppRoutes() {
                     )}
                     <button onClick={() => { setFreeSlotsDay(c.day); handleOpenFreeSlots(c.day); }}
                       className="mt-2 w-full text-center px-3 py-1.5 text-xs rounded-lg border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 transition flex items-center justify-center gap-1">
-                      <Sun className="w-3 h-3" /> {t.seeAllFreeSlots || 'ראה את כל החלונות הפנויים'}
+                      <Sun className="w-3 h-3" /> {t.seeAllFreeSlots}
                     </button>
                   </div>
                 ))}
@@ -1612,19 +1614,19 @@ function AppRoutes() {
                               {!isExpanded && (
                                 <button onClick={() => toggleDayExpanded(dayKey)}
                                   className="w-full text-center px-3 py-1.5 text-xs rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition font-medium">
-                                  {t.showAllEvents ? t.showAllEvents.replace('{count}', sortedDayEvents.length) : `הצג הכל (${sortedDayEvents.length} אירועים)`}
+                                  {t.showAllEvents.replace('{count}', sortedDayEvents.length)}
                                 </button>
                               )}
                               <button onClick={() => openDayDetail(dayKey)}
                                 className="w-full text-center px-3 py-1.5 text-xs rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition">
-                                {t.dayDetailView || 'פירוט יומי מלא'}
+                                {t.dayDetailView}
                               </button>
                             </div>
                           )}
                           {isExpanded && !hasMoreThanMax && (
                             <button onClick={() => openDayDetail(dayKey)}
                               className="w-full text-center px-3 py-1.5 text-xs rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition">
-                              {t.dayDetailView || 'פירוט יומי מלא'}
+                              {t.dayDetailView}
                             </button>
                           )}
                         </>
@@ -1663,22 +1665,18 @@ function AppRoutes() {
               }`}
             >
               <Home className="w-5 h-5" />
-              <span className="text-[10px] font-medium">{t.home || 'בית'}</span>
+              <span className="text-[10px] font-medium">{t.home}</span>
             </button>
 
-            {/* Center Add Button */}
+            {/* Center Add Button - opens manual event form */}
             <button
-              onClick={() => {
-                const ta = document.querySelector('textarea');
-                if (ta) ta.focus();
-                window.scrollTo({ top: 0, behavior: 'smooth' });
-              }}
+              onClick={() => setShowManualEvent(true)}
               className="flex flex-col items-center -mt-5"
             >
               <div className="w-12 h-12 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-full flex items-center justify-center shadow-lg shadow-blue-200 hover:shadow-xl hover:-translate-y-0.5 transition-all active:translate-y-0">
                 <Plus className="w-6 h-6 text-white" />
               </div>
-              <span className="text-[10px] font-medium text-slate-500 mt-0.5">{t.addEvent || 'הוסף'}</span>
+              <span className="text-[10px] font-medium text-slate-500 mt-0.5">{t.addEvent}</span>
             </button>
 
             {/* Credits Tab */}
@@ -1695,7 +1693,7 @@ function AppRoutes() {
               }`}
             >
               <Zap className="w-5 h-5" />
-              <span className="text-[10px] font-medium">{t.credits || 'קרדיטים'}</span>
+              <span className="text-[10px] font-medium">{t.credits}</span>
             </button>
           </div>
         </nav>
@@ -1933,8 +1931,8 @@ function AppRoutes() {
             <div className="flex items-center justify-between mb-4 shrink-0">
               <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
                 <CalendarDays className="w-5 h-5 text-blue-600" />
-                {t.dayDetailTitle || 'פירוט יומי'}: {dayDetailModal.dayLabel}
-                <span className="text-sm font-normal text-slate-400">({dayDetailModal.events.length} {t.dayDetailEvents || 'אירועים'})</span>
+                {t.dayDetailTitle}: {dayDetailModal.dayLabel}
+                <span className="text-sm font-normal text-slate-400">({dayDetailModal.events.length} {t.dayDetailEvents})</span>
               </h3>
               <button onClick={() => setDayDetailModal(null)} className="p-1 rounded-full hover:bg-slate-100"><X className="w-5 h-5 text-slate-500" /></button>
             </div>
@@ -1986,8 +1984,8 @@ function AppRoutes() {
               </div>
             )}
             <div className="mt-4 pt-3 border-t border-slate-100 shrink-0 flex items-center justify-between">
-              <p className="text-xs text-slate-400">{t.dayDetailTotal || 'סה"כ'} {dayDetailModal.events.length} {t.dayDetailEvents || 'אירועים'}</p>
-              <button onClick={() => setDayDetailModal(null)} className="px-4 py-2 text-sm text-slate-600 hover:text-slate-800 bg-slate-50 hover:bg-slate-100 rounded-lg transition">{t.close || 'סגור'}</button>
+              <p className="text-xs text-slate-400">{t.dayDetailTotal} {dayDetailModal.events.length} {t.dayDetailEvents}</p>
+              <button onClick={() => setDayDetailModal(null)} className="px-4 py-2 text-sm text-slate-600 hover:text-slate-800 bg-slate-50 hover:bg-slate-100 rounded-lg transition">{t.close}</button>
             </div>
           </div>
         </div>
@@ -2227,6 +2225,20 @@ function AppRoutes() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Manual Event Form Modal */}
+      {showManualEvent && (
+        <ManualEventForm
+          t={t}
+          lang={lang}
+          user={user}
+          onClose={() => setShowManualEvent(false)}
+          onSuccess={() => {
+            setShowManualEvent(false);
+            fetchSchedule();
+          }}
+        />
       )}
 
       {/* Meeting Wizard Modal */}
