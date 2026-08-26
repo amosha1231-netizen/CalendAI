@@ -31,7 +31,7 @@ try {
   classifyRequest = (text) => ({ route: 'smart', reason: 'Semantic router unavailable, defaulting to smart track.' });
 }
 
-// ── User Model ──
+// ── User Model (shared with server.js) ──
 const userSchema = new mongoose.Schema({
   googleId: { type: String, sparse: true },
   email: { type: String, required: true, unique: true, lowercase: true },
@@ -48,32 +48,8 @@ const userSchema = new mongoose.Schema({
 // Use existing model if already compiled, otherwise create it
 const User = mongoose.models.User || mongoose.model('User', userSchema);
 
-// ── Event Model (Multi-Tenancy Isolated) ──
-const eventSchema = new mongoose.Schema({
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
-  title: { type: String, required: true },
-  day: { type: String, required: true }, // Sunday, Monday, ...
-  startTime: { type: String },
-  endTime: { type: String },
-  recurrence: { type: String, default: 'once' },
-  location: { type: String, default: 'jerusalem' },
-  eventType: { type: String, default: 'activity' },
-  duration: { type: Number, default: 60 },
-  isSleep: { type: Boolean, default: false },
-  isReminder: { type: Boolean, default: false },
-  reminderMinutesBefore: { type: Number, default: 0 },
-  targetDate: { type: Date },
-  createdMonth: { type: Number },
-  hasAdvice: { type: Boolean, default: false },
-  aiAdvice: { type: String },
-  guestName: { type: String },
-  bookingId: { type: String },
-  recurrenceEndType: { type: String, default: 'never' },
-  recurrenceEndDate: { type: String },
-  createdAt: { type: Date, default: Date.now }
-});
-
-const Event = mongoose.models.Event || mongoose.model('Event', eventSchema);
+// ── Event Model (shared from ../models/Event.js — Multi-Tenancy Isolated) ──
+const Event = require('../models/Event');
 
 // ── Helper: Check Shabbat Block ──
 function isShabbatTime(date) {

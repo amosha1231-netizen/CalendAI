@@ -408,8 +408,14 @@ function getDefaultSchedule() {
   };
 }
 
-function getUserId(req) {
-  // 1. JWT Bearer token auth (email/password users)
+/**
+ * Extract the authenticated user's database _id from the request.
+ * Priority: JWT Bearer token → Passport session.
+ * NEVER falls back to 'anonymous' — returns null if not authenticated.
+ * This is the CRITICAL gate for multi-tenant data isolation.
+ */
+function getAuthenticatedUserId(req) {
+  // 1. JWT Bearer token auth (email/password / Google OAuth JWT)
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) {
     try {
@@ -417,15 +423,23 @@ function getUserId(req) {
       const decoded = jwt.verify(token, JWT_SECRET);
       if (decoded && decoded.id) return decoded.id;
     } catch (err) {
-      // Invalid token - fall through to session check
+      // Invalid token — return null, caller must handle 401
     }
   }
   // 2. Session-based auth (passport / Google OAuth)
   if (req.isAuthenticated && req.isAuthenticated()) {
     const fullUser = req.session?.passport?.user;
-    return fullUser?._id || fullUser?.id || fullUser?.googleId || 'anonymous';
+    const id = fullUser?._id || fullUser?.id;
+    if (id) return id;
   }
-  return 'anonymous';
+  return null;
+}
+
+// Legacy wrapper — returns 'anonymous' for non-authenticated users.
+// Used ONLY for endpoints that support anonymous/guest usage.
+function getUserId(req) {
+  const authed = getAuthenticatedUserId(req);
+  return authed || 'anonymous';
 }
 
 // ── Semantic Router (fast vs smart track classification)
@@ -556,7 +570,16 @@ function expandEventForMonth(event, year, month) {
   const targetDayOfWeek = dayMap[event.day];
   if (targetDayOfWeek === undefined) return results;
 
-  const storedTargetDate = event.targetDate && new Date(event.targetDate);
+  // Parse targetDate as LOCAL date string (YYYY-MM-DD) to avoid UTC/timezone off-by-one bugs.
+  // If targetDate is a Date object or ISO string, extract the local date components.
+  let targetLocalDateStr = null;
+  if (event.targetDate) {
+    const d = event.targetDate instanceof Date ? event.targetDate : new Date(event.targetDate);
+    if (!isNaN(d.getTime())) {
+      // Use local timezone methods to get year/month/day — this is CRITICAL for timezone correctness.
+      targetLocalDateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    }
+  }
 
   for (let d = 1; d <= daysInMonth; d++) {
     const date = new Date(year, month, d);
@@ -568,10 +591,9 @@ function expandEventForMonth(event, year, month) {
 
     switch (event.recurrence || 'weekly') {
       case 'once': {
-        if (storedTargetDate) {
+        if (targetLocalDateStr) {
           const thisDateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-          const targetDateStr = `${storedTargetDate.getFullYear()}-${String(storedTargetDate.getMonth()+1).padStart(2,'0')}-${String(storedTargetDate.getDate()).padStart(2,'0')}`;
-          if (thisDateStr === targetDateStr) {
+          if (thisDateStr === targetLocalDateStr) {
             include = true;
           }
         } else {
@@ -2298,10 +2320,24 @@ async function syncEventToGoogleCalendar(userId, event, locationId) {
       return { success: false, error: 'Invalid day for Google Calendar event.' };
     }
 
-    const today = new Date();
-    const eventDate = new Date(today);
-    // Calculate the next occurrence of the target day
-    eventDate.setDate(today.getDate() + ((targetDay + 7 - today.getDay()) % 7));
+    // CRITICAL TIMEZONE FIX: If the event has a targetDate (e.g., "2026-09-07"),
+    // use that exact date instead of calculating the "next occurrence" of the day.
+    // This prevents future-dated events from being scheduled on today's date.
+    let eventDate;
+    if (event.targetDate) {
+      const td = event.targetDate instanceof Date ? event.targetDate : new Date(event.targetDate);
+      if (!isNaN(td.getTime())) {
+        // Use local date components to avoid UTC off-by-one errors
+        eventDate = new Date(td.getFullYear(), td.getMonth(), td.getDate());
+      } else {
+        eventDate = new Date();
+      }
+    } else {
+      const today = new Date();
+      eventDate = new Date(today);
+      // Calculate the next occurrence of the target day
+      eventDate.setDate(today.getDate() + ((targetDay + 7 - today.getDay()) % 7));
+    }
 
     // Parse start/end times from "HH:MM AM/PM" format
     const startMatch = event.startTime && event.startTime.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
@@ -2461,9 +2497,23 @@ app.post('/api/add-to-google-calendar', async (req, res) => {
     return res.status(400).json({ error: 'Invalid day for Google Calendar event.' });
   }
 
-  const today = new Date();
-  const eventDate = new Date(today);
-  eventDate.setDate(today.getDate() + (targetDay + 7 - today.getDay()) % 7);
+  // CRITICAL TIMEZONE FIX: If the event has a targetDate, use that exact date
+  // instead of calculating the "next occurrence" of the day.
+  let eventDate;
+  if (event.targetDate) {
+    const td = event.targetDate instanceof Date ? event.targetDate : new Date(event.targetDate);
+    if (!isNaN(td.getTime())) {
+      eventDate = new Date(td.getFullYear(), td.getMonth(), td.getDate());
+    } else {
+      const today = new Date();
+      eventDate = new Date(today);
+      eventDate.setDate(today.getDate() + (targetDay + 7 - today.getDay()) % 7);
+    }
+  } else {
+    const today = new Date();
+    eventDate = new Date(today);
+    eventDate.setDate(today.getDate() + (targetDay + 7 - today.getDay()) % 7);
+  }
 
   const [startHour, startMinute] = event.startTime.match(/\d+/g).map(Number);
   const [endHour, endMinute] = event.endTime.match(/\d+/g).map(Number);
