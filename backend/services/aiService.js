@@ -834,6 +834,12 @@ async function parseWithGemini(text, options = {}) {
     const raw = completion.choices?.[0]?.message?.content || '{}';
     const parsed = JSON.parse(raw);
 
+    // ── Extract token usage from OpenRouter response ──
+    const usage = completion.usage || null;
+    if (usage) {
+      console.log(`[Token Usage] parseWithGemini — Prompt: ${usage.prompt_tokens}, Completion: ${usage.completion_tokens}, Total: ${usage.total_tokens}`);
+    }
+
     // Clean summaries on all events (map "summary" to "title" for internal consistency)
     // NOTE: We trust the AI's output directly. The AI is instructed to return clean summaries.
     // No regex post-processing is applied to avoid corrupting titles.
@@ -1421,6 +1427,12 @@ async function parseWithGeminiSmart(text, options = {}) {
     const raw = completion.choices?.[0]?.message?.content || '{}';
     const parsed = JSON.parse(raw);
 
+    // ── Extract token usage from OpenRouter response ──
+    const usage = completion.usage || null;
+    if (usage) {
+      console.log(`[Token Usage] parseWithGeminiSmart — Prompt: ${usage.prompt_tokens}, Completion: ${usage.completion_tokens}, Total: ${usage.total_tokens}`);
+    }
+
     // Clean summaries on all events
     // NOTE: We trust the AI's output directly. No regex post-processing is applied.
     if (parsed.events && Array.isArray(parsed.events)) {
@@ -1597,6 +1609,12 @@ async function rescheduleWithGemini(currentSchedule, reason) {
 
     const raw = completion.choices?.[0]?.message?.content || '{}';
     const parsed = JSON.parse(raw);
+
+    // ── Extract token usage from OpenRouter response ──
+    const usage = completion.usage || null;
+    if (usage) {
+      console.log(`[Token Usage] rescheduleWithGemini — Prompt: ${usage.prompt_tokens}, Completion: ${usage.completion_tokens}, Total: ${usage.total_tokens}`);
+    }
 
     if (!parsed.newSchedule || !parsed.summary) {
       throw new Error("AI response is missing 'newSchedule' or 'summary'.");

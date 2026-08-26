@@ -116,7 +116,8 @@ const userSchema = new mongoose.Schema({
   microsoftRefreshToken: { type: String },
   isPro: { type: Boolean, default: false },
   stripeCustomerId: { type: String },
-  aiCredits: { type: Number, default: 15 }, // Freemium: 15 free AI credits for new users
+  aiCredits: { type: Number, default: 100 }, // Freemium: 100 free AI credits for new users (token-based PAYG)
+  aiCreditsLedger: { type: Array, default: [] }, // Array of { timestamp, action, promptTokens, completionTokens, totalTokens, costCredits, rawCostUSD, costUSD, modelName }
   schedule: {
     type: mongoose.Schema.Types.Mixed,
     default: {
@@ -445,6 +446,9 @@ function getUserId(req) {
 // ── Semantic Router (fast vs smart track classification)
 const { classifyRequest } = require('./services/semanticRouter');
 
+// ── Token Usage Tracker (Pay-As-You-Go billing)
+const { calculateCost, formatCostBreakdown } = require('./services/tokenTracker');
+
 // ──────────────────────────────────────────────
 // AI Credit System (Pay As You Go / PAYG)
 // ──────────────────────────────────────────────
@@ -478,21 +482,59 @@ async function checkAICredits(userId) {
 }
 
 /**
- * Deduct 1 AI credit from the user. Only called AFTER a successful AI request.
- * @returns {Promise<number|null>} The remaining credits, or null if not applicable.
+ * Deduct AI credits from the user based on token usage from OpenRouter.
+ * Calculates cost from token usage, applies markup, and deducts credits.
+ * Also logs the deduction to the user's aiCreditsLedger.
+ * 
+ * @param {string} userId - The user's MongoDB _id.
+ * @param {Object} usage - The usage object from OpenRouter response ({ prompt_tokens, completion_tokens, total_tokens }).
+ * @param {string} [modelName] - The model name (e.g., 'deepseek/deepseek-chat').
+ * @param {string} [action] - The action that triggered the deduction (e.g., 'parse-schedule', 'quick-add', 'reschedule').
+ * @returns {Promise<{remainingCredits: number|null, costInfo: Object|null}>}
  */
-async function deductAICredit(userId) {
-  if (!mongoose.Types.ObjectId.isValid(userId)) return null;
+async function deductAICredit(userId, usage = null, modelName = 'deepseek/deepseek-chat', action = 'ai-call') {
+  if (!mongoose.Types.ObjectId.isValid(userId)) {
+    return { remainingCredits: null, costInfo: null };
+  }
+
+  // Calculate cost from token usage
+  const costInfo = calculateCost(usage, modelName);
+
+  // Log the token usage and cost
+  console.log(`[PAYG] User ${userId} | Action: ${action}`);
+  console.log(formatCostBreakdown(costInfo));
+
   try {
     const updated = await User.findByIdAndUpdate(
       userId,
-      { $inc: { aiCredits: -1 } },
+      {
+        $inc: { aiCredits: -costInfo.costCredits },
+        $push: {
+          aiCreditsLedger: {
+            $each: [{
+              timestamp: new Date().toISOString(),
+              action,
+              promptTokens: costInfo.promptTokens,
+              completionTokens: costInfo.completionTokens,
+              totalTokens: costInfo.totalTokens,
+              costCredits: costInfo.costCredits,
+              rawCostUSD: costInfo.rawCostUSD,
+              costUSD: costInfo.costUSD,
+              modelName: costInfo.modelName,
+              markupMultiplier: costInfo.markupMultiplier
+            }],
+            $position: 0 // newest first
+          }
+        }
+      },
       { new: true }
     );
-    return updated?.aiCredits ?? null;
+    const remaining = updated?.aiCredits ?? null;
+    console.log(`[PAYG] Credits deducted: ${costInfo.costCredits} | Remaining: ${remaining}`);
+    return { remainingCredits: remaining, costInfo };
   } catch (err) {
     console.error('Failed to deduct AI credit:', err.message);
-    return null;
+    return { remainingCredits: null, costInfo };
   }
 }
 
