@@ -189,6 +189,17 @@ const translations = {
     calendarToggleMonth: 'הצג חודש',
     calendarToggleYear: 'הצג שנה מלאה',
 
+    // View Navigation
+    viewDay: 'היום',
+    viewWeekly: 'שבועי',
+    viewMonthly: 'חודשי',
+    viewYearly: 'שנתי',
+    view100Year: '100 שנה',
+    viewToday: 'היום',
+
+    // Hebrew Date
+    hebrewDatePrefix: 'תאריך עברי',
+
     // Calendar slot click
     slotClickPrefix: 'ביום',
     slotClickFrom: 'מ-',
@@ -770,6 +781,17 @@ const translations = {
     calendarYearViewDesc: 'Rolling view - 12 months ahead from current month',
     calendarToggleMonth: 'Show Month',
     calendarToggleYear: 'Show Full Year',
+
+    // View Navigation
+    viewDay: 'Today',
+    viewWeekly: 'Weekly',
+    viewMonthly: 'Monthly',
+    viewYearly: 'Yearly',
+    view100Year: '100 Year',
+    viewToday: 'Today',
+
+    // Hebrew Date
+    hebrewDatePrefix: 'Hebrew Date',
 
     // AI Success message (used as fallback when backend doesn't provide replyMessage)
     successAIMessage: 'Successfully added {count} event(s) from your text.',

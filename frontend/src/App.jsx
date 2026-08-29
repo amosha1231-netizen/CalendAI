@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef, Suspense, lazy } from "react";
 import { BrowserRouter } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
-import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Menu, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff, Home, Plus, Zap, ChevronDown, ChevronUp, FileText } from "lucide-react";
+import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Menu, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff, Home, Plus, Zap, ChevronDown, ChevronUp, FileText, Layout } from "lucide-react";
 import MonthlyCalendar from "./components/MonthlyCalendar";
+import DayView from "./components/DayView";
+import ViewNavigation from "./components/ViewNavigation";
 import LocationSelector from "./components/LocationSelector";
 import Privacy from "./components/Privacy";
 import ErrorBoundary from "./components/ErrorBoundary";
@@ -195,6 +197,10 @@ function AppRoutes() {
 
   const [expandedDays, setExpandedDays] = useState({});
   const [dayDetailModal, setDayDetailModal] = useState(null);
+  
+  // ── Calendar View State (day / weekly / monthly / yearly / 100year) ──
+  const [calendarView, setCalendarView] = useState('day');
+  const [dayOffset, setDayOffset] = useState(0); // 0 = today, 1 = tomorrow, -1 = yesterday
 
   function getInitialNotificationPerm() {
     try {
@@ -1518,7 +1524,7 @@ function AppRoutes() {
             )}
           </div>
 
-          {/* ── Weekly Schedule - Clean Cards ── */}
+          {/* ── Schedule View with Navigation ── */}
           <div className="bg-white p-5 rounded-3xl shadow-sm border border-slate-100">
             <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
               <h2 className="text-lg font-bold text-slate-800">{t.weeklyScheduleTitle}</h2>
@@ -1540,110 +1546,125 @@ function AppRoutes() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {orderedDayKeys.map(dayKey => {
-                if (dayKey === "Today" && (!schedule[dayKey] || schedule[dayKey].length === 0)) return null;
-                const dayEvents = getFilteredEvents(dayKey);
-                const sortedDayEvents = getSortedDayEvents(dayKey);
-                const isTodayColumn = dayKey === todayName;
-                const maxVisible = 2;
-                const isExpanded = expandedDays[dayKey] || false;
-                const visibleEvents = isExpanded ? sortedDayEvents : sortedDayEvents.slice(0, maxVisible);
-                const hasMoreThanMax = sortedDayEvents.length > maxVisible;
-                return (
-                  <div key={dayKey} className={`rounded-xl p-3 flex flex-col min-h-[120px] ${isTodayColumn ? 'bg-blue-50 border border-blue-300' : 'bg-slate-50 border border-slate-200'}`}>
-                    <div
-                      className={`font-bold text-sm text-slate-700 mb-2 pb-1.5 border-b text-center cursor-pointer hover:text-indigo-600 transition ${isTodayColumn ? 'border-blue-200' : 'border-slate-200'}`}
-                      onClick={() => openDayDetail(dayKey)}
-                    >
-                      {dayTranslations[dayKey]}
-                      {dayEvents.length > 0 && <span className="text-xs text-slate-400 mr-1">({dayEvents.length})</span>}
-                    </div>
-                    <div className="flex-1 flex flex-col gap-2">
-                      {dayKey === 'Saturday' && (
-                        <div className="text-center py-2 px-2 mb-2 bg-blue-50/50 rounded-xl border border-blue-100">
-                          <p className="text-sm font-semibold text-blue-900">שבת שלום 🕯️🕯️</p>
-                          <p className="text-[10px] text-gray-500 mt-0.5">נחזור לפעילות במוצאי השבת</p>
-                        </div>
-                      )}
-                      {dayEvents.length > 0 ? (
-                        <>
-                          {visibleEvents.map((event, index) => {
-                            const actualIndex = schedule[dayKey]?.findIndex(e => e === event);
-                            return (
-                              <div key={index}
-                                className={`group relative p-3 rounded-xl border-r-[3px] flex flex-col gap-1 hover:shadow-md transition cursor-pointer ${getEventAccent(event)}`}
-                                onClick={() => actualIndex >= 0 && handleOpenEditModal(dayKey, actualIndex)}>
-                                <button onClick={e => { e.stopPropagation(); if (actualIndex >= 0) handleRemoveEvent(dayKey, actualIndex); }}
-                                  className="absolute -top-1.5 -left-1.5 opacity-0 group-hover:opacity-100 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center transition shadow-sm z-10">
-                                  <Trash2 className="w-3 h-3" />
-                                </button>
-                                <div className="font-semibold text-sm text-slate-800 flex items-center gap-1.5">
-                                  {event.isSleep && <Moon className="w-3.5 h-3.5 text-indigo-500 shrink-0" />}
-                                  {event.reminderMinutesBefore > 0 && <Bell className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
-                                  <span className="truncate">{event.title}</span>
-                                  <Edit3 className="w-3 h-3 text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity mr-auto shrink-0" />
-                                </div>
-                                <div className="flex items-center gap-1 text-xs text-slate-500">
-                                  <Clock className="w-3 h-3 text-slate-400 shrink-0" />
-                                  <span dir="ltr">{event.startTime} - {event.endTime}</span>
-                                  {event.isSleep && <span className="text-[10px] text-indigo-500 mr-1">{t.sleepLabel}</span>}
-                                </div>
-                                {event.reminderMinutesBefore > 0 && (
-                                  <div className="flex items-center gap-1 text-[10px] text-amber-600">
-                                    <BellRing className="w-2.5 h-2.5" />
-                                    <span>{t.reminderColon} {event.reminderMinutesBefore} {t.reminderMinutes}</span>
-                                  </div>
-                                )}
-                                {event.location && (
-                                  <div className="flex items-center gap-1 text-[10px] text-slate-400">
-                                    <MapPin className="w-2.5 h-2.5" />
-                                    <span>{LOCATION_LABELS[event.location] || event.location}</span>
-                                  </div>
-                                )}
-                                {event.recurrence && <span className="text-[10px] text-blue-500 font-medium">{recurrenceLabels[event.recurrence] || event.recurrence}</span>}
-                                {event.hasAdvice && event.aiAdvice && (
-                                  <div className="mt-1 bg-amber-50 border border-amber-200 rounded-lg p-2 text-xs text-amber-900">
-                                    <div className="flex items-start gap-1.5"><span className="text-sm">💡</span><span>{event.aiAdvice}</span></div>
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
-                          {hasMoreThanMax && (
-                            <div className="flex flex-col gap-1">
-                              {!isExpanded && (
-                                <button onClick={() => toggleDayExpanded(dayKey)}
-                                  className="w-full text-center px-3 py-1.5 text-xs rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition font-medium">
-                                  {t.showAllEvents.replace('{count}', sortedDayEvents.length)}
-                                </button>
-                              )}
-                              <button onClick={() => openDayDetail(dayKey)}
-                                className="w-full text-center px-3 py-1.5 text-xs rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition">
-                                {t.dayDetailView}
-                              </button>
-                            </div>
-                          )}
-                          {isExpanded && !hasMoreThanMax && (
-                            <button onClick={() => openDayDetail(dayKey)}
-                              className="w-full text-center px-3 py-1.5 text-xs rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition">
-                              {t.dayDetailView}
-                            </button>
-                          )}
-                        </>
-                      ) : (
-                        dayKey !== 'Saturday' && (
-                          <p className="text-xs text-slate-300 text-center my-auto font-light">{t.noEvents}</p>
-                        )
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+            <ViewNavigation
+              currentView={calendarView}
+              onViewChange={setCalendarView}
+              onPrev={() => setDayOffset(prev => prev - 1)}
+              onNext={() => setDayOffset(prev => prev + 1)}
+              onToday={() => setDayOffset(0)}
+              t={t}
+            />
 
-          <MonthlyCalendar schedule={schedule} lang={lang} />
+            {/* Day View (default) */}
+            {calendarView === 'day' && (
+              <DayView
+                date={(() => {
+                  const d = new Date();
+                  d.setDate(d.getDate() + dayOffset);
+                  return d;
+                })()}
+                schedule={schedule}
+                dayKey={(() => {
+                  const d = new Date();
+                  d.setDate(d.getDate() + dayOffset);
+                  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+                  return dayNames[d.getDay()];
+                })()}
+                lang={lang}
+                t={t}
+                onEditEvent={handleOpenEditModal}
+                onRemoveEvent={handleRemoveEvent}
+                onSlotClick={handleSlotClick}
+                locationFilter={locationFilter}
+                LOCATION_LABELS={LOCATION_LABELS}
+              />
+            )}
+
+            {/* Weekly View (compact grid, original style) */}
+            {calendarView === 'weekly' && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {orderedDayKeys.map(dayKey => {
+                  if (dayKey === "Today" && (!schedule[dayKey] || schedule[dayKey].length === 0)) return null;
+                  const dayEvents = getFilteredEvents(dayKey);
+                  const sortedDayEvents = getSortedDayEvents(dayKey);
+                  const isTodayColumn = dayKey === todayName;
+                  const maxVisible = 3;
+                  const isExpanded = expandedDays[dayKey] || false;
+                  const visibleEvents = isExpanded ? sortedDayEvents : sortedDayEvents.slice(0, maxVisible);
+                  const hasMoreThanMax = sortedDayEvents.length > maxVisible;
+                  return (
+                    <div key={dayKey} className={`rounded-xl p-3 flex flex-col min-h-[120px] ${isTodayColumn ? 'bg-blue-50 border border-blue-300' : 'bg-slate-50 border border-slate-200'}`}>
+                      <div
+                        className={`font-bold text-sm text-slate-700 mb-2 pb-1.5 border-b text-center cursor-pointer hover:text-indigo-600 transition ${isTodayColumn ? 'border-blue-200' : 'border-slate-200'}`}
+                        onClick={() => { setCalendarView('day'); }}
+                      >
+                        {dayTranslations[dayKey]}
+                        {dayEvents.length > 0 && <span className="text-xs text-slate-400 mr-1">({dayEvents.length})</span>}
+                      </div>
+                      <div className="flex-1 flex flex-col gap-2">
+                        {dayEvents.length > 0 ? (
+                          <>
+                            {visibleEvents.map((event, index) => {
+                              const actualIndex = schedule[dayKey]?.findIndex(e => e === event);
+                              return (
+                                <div key={index}
+                                  className={`group relative p-3 rounded-xl border-r-[3px] flex flex-col gap-1 hover:shadow-md transition cursor-pointer ${getEventAccent(event)}`}
+                                  onClick={() => actualIndex >= 0 && handleOpenEditModal(dayKey, actualIndex)}>
+                                  <button onClick={e => { e.stopPropagation(); if (actualIndex >= 0) handleRemoveEvent(dayKey, actualIndex); }}
+                                    className="absolute -top-1.5 -left-1.5 opacity-0 group-hover:opacity-100 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center transition shadow-sm z-10">
+                                    <Trash2 className="w-3 h-3" />
+                                  </button>
+                                  <div className="font-semibold text-sm text-slate-800 flex items-center gap-1.5">
+                                    {event.isSleep && <Moon className="w-3.5 h-3.5 text-indigo-500 shrink-0" />}
+                                    {event.reminderMinutesBefore > 0 && <Bell className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
+                                    <span className="truncate">{event.title}</span>
+                                    <Edit3 className="w-3 h-3 text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity mr-auto shrink-0" />
+                                  </div>
+                                  <div className="flex items-center gap-1 text-xs text-slate-500">
+                                    <Clock className="w-3 h-3 text-slate-400 shrink-0" />
+                                    <span dir="ltr">{event.startTime} - {event.endTime}</span>
+                                    {event.isSleep && <span className="text-[10px] text-indigo-500 mr-1">{t.sleepLabel}</span>}
+                                  </div>
+                                  {event.reminderMinutesBefore > 0 && (
+                                    <div className="flex items-center gap-1 text-[10px] text-amber-600">
+                                      <BellRing className="w-2.5 h-2.5" />
+                                      <span>{t.reminderColon} {event.reminderMinutesBefore} {t.reminderMinutes}</span>
+                                    </div>
+                                  )}
+                                  {event.location && (
+                                    <div className="flex items-center gap-1 text-[10px] text-slate-400">
+                                      <MapPin className="w-2.5 h-2.5" />
+                                      <span>{LOCATION_LABELS[event.location] || event.location}</span>
+                                    </div>
+                                  )}
+                                  {event.recurrence && <span className="text-[10px] text-blue-500 font-medium">{recurrenceLabels[event.recurrence] || event.recurrence}</span>}
+                                </div>
+                              );
+                            })}
+                            {hasMoreThanMax && (
+                              <button onClick={() => toggleDayExpanded(dayKey)}
+                                className="w-full text-center px-3 py-1.5 text-xs rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition font-medium">
+                                {t.showAllEvents.replace('{count}', sortedDayEvents.length)}
+                              </button>
+                            )}
+                          </>
+                        ) : (
+                          dayKey !== 'Saturday' && (
+                            <p className="text-xs text-slate-300 text-center my-auto font-light">{t.noEvents}</p>
+                          )
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Monthly & Yearly */}
+            {(calendarView === 'monthly' || calendarView === 'yearly' || calendarView === '100year') && (
+              <MonthlyCalendar schedule={schedule} lang={lang} />
+            )}
+          </div>
         </main>
 
         <footer className="max-w-6xl mx-auto mt-8 text-center text-xs text-slate-400 border-t pt-4 px-4">
