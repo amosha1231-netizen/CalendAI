@@ -6,7 +6,13 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "cap:sync": "npx cap sync",
+    "cap:android": "npx cap open android",
+    "cap:ios": "npx cap open ios",
+    "cap:build": "vite build && npx cap copy",
+    "cap:build:android": "vite build && npx cap copy && npx cap sync android",
+    "cap:build:ios": "vite build && npx cap copy && npx cap sync ios"
   },
   "dependencies": {
     "axios": "^1.19.0",

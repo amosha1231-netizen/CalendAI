@@ -3,6 +3,7 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
+  base: "./",
   define: {
     __BUILD_TIME__: JSON.stringify(new Date().toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem', hour12: false }).replace(',', ' בשעה'))
   },
@@ -17,6 +18,7 @@ export default defineConfig({
   },
   build: {
     sourcemap: true,
-    minify: false
+    minify: false,
+    outDir: "dist"
   }
 });

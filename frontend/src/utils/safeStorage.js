@@ -6,6 +6,9 @@
  * Falls back to in-memory storage ONLY when the browser blocks access
  * (e.g., Safari private mode, WKWebView in WhatsApp/Instagram, etc.).
  * 
+ * In Capacitor (iOS/Android), localStorage works natively through WebView
+ * and persists across app restarts, so no special handling is needed.
+ * 
  * Usage:
  *   import safeStorage from '../utils/safeStorage';
  *   safeStorage.getItem('myKey');
@@ -117,6 +120,54 @@ const safeStorage = {
       return false;
     }
   },
+
+  // ── Capacitor Persistent Sync (optional enhancement) ──
+  // On Capacitor (iOS/Android), localStorage persists naturally in WebView.
+  // @capacitor/preferences can be used as an additional backup layer.
+  // Call this to migrate any existing data to Capacitor Preferences.
+  async syncToCapacitor() {
+    try {
+      const { Preferences } = await import('@capacitor/preferences');
+      const keys = Object.keys(localStorage);
+      for (const key of keys) {
+        const value = localStorage.getItem(key);
+        if (value !== null) {
+          await Preferences.set({ key, value });
+        }
+      }
+    } catch (e) {
+      // Not running in Capacitor or @capacitor/preferences not installed
+    }
+  },
+
+  // Restore data from Capacitor Preferences to localStorage (if localStorage is empty)
+  async restoreFromCapacitor() {
+    try {
+      const { Preferences } = await import('@capacitor/preferences');
+      const { keys } = await Preferences.keys();
+      for (const key of keys) {
+        if (!localStorage.getItem(key)) {
+          const { value } = await Preferences.get({ key });
+          if (value !== null) {
+            try {
+              localStorage.setItem(key, value);
+            } catch (e) {
+              memoryStore.set(key, value);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      // Not running in Capacitor or @capacitor/preferences not installed
+    }
+  },
+
+  // Detect if running inside Capacitor native wrapper
+  isCapacitorNative: () => {
+    return typeof window !== 'undefined' && 
+           window.Capacitor && 
+           window.Capacitor.isNative;
+  }
 };
 
 export default safeStorage;

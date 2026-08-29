@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <meta name="theme-color" content="#2563eb" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -13,6 +13,15 @@
     <title>CalendAI - Smart Schedule Parser</title>
     <link rel="manifest" href="/manifest.json" />
     <link rel="apple-touch-icon" href="/icon.svg" />
+    <!-- Capacitor-specific: disable zoom on native -->
+    <script>
+      // Wait for Capacitor to be ready before app starts
+      window.addEventListener('DOMContentLoaded', function() {
+        if (window.Capacitor) {
+          document.documentElement.classList.add('capacitor-native');
+        }
+      });
+    </script>
   </head>
   <body>
     <div id="root">
