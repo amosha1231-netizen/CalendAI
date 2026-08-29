@@ -93,15 +93,51 @@ function setJwtToken(token) {
   try { safeStorage.setItem('token', token); safeStorage.setItem('calendai-jwt', token); } catch (e) {}
 }
 
+// ── Language configuration ──
+const LANGUAGE_CYCLE = ['he', 'en', 'fr', 'es'];
+const LANGUAGE_NEXT_LABELS = {
+  he: '🌐 EN',
+  en: '🌐 FR',
+  fr: '🌐 ES',
+  es: '🌐 HE'
+};
+
+// ── Timezone options ──
+const TIMEZONE_OPTIONS = [
+  { value: 'Asia/Jerusalem', label: 'Jerusalem (UTC+2/UTC+3)' },
+  { value: 'America/New_York', label: 'New York (UTC-5/UTC-4)' },
+  { value: 'America/Chicago', label: 'Chicago (UTC-6/UTC-5)' },
+  { value: 'America/Denver', label: 'Denver (UTC-7/UTC-6)' },
+  { value: 'America/Los_Angeles', label: 'Los Angeles (UTC-8/UTC-7)' },
+  { value: 'Europe/London', label: 'London (UTC+0/UTC+1)' },
+  { value: 'Europe/Paris', label: 'Paris (UTC+1/UTC+2)' },
+  { value: 'Europe/Berlin', label: 'Berlin (UTC+1/UTC+2)' },
+  { value: 'Europe/Madrid', label: 'Madrid (UTC+1/UTC+2)' },
+  { value: 'Asia/Dubai', label: 'Dubai (UTC+4)' },
+  { value: 'Asia/Tokyo', label: 'Tokyo (UTC+9)' },
+  { value: 'Asia/Shanghai', label: 'Shanghai (UTC+8)' },
+  { value: 'Australia/Sydney', label: 'Sydney (UTC+10/UTC+11)' },
+  { value: 'Pacific/Auckland', label: 'Auckland (UTC+12/UTC+13)' },
+];
+
 // ── Inner component that runs INSIDE BrowserRouter + AuthProvider ──
 function AppRoutes() {
   // Language state - load from localStorage or default to 'he'
   const [lang, setLang] = useState(() => {
     try {
-      return safeStorage.getItem('calendai-lang') || 'he';
+      const saved = safeStorage.getItem('calendai-lang');
+      if (saved && LANGUAGE_CYCLE.includes(saved)) return saved;
+      return 'he';
     } catch { return 'he'; }
   });
   const t = translations[lang] || translations['he'];
+
+  // Timezone state
+  const [selectedTimezone, setSelectedTimezone] = useState(() => {
+    try {
+      return safeStorage.getItem('calendai-timezone') || Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Jerusalem';
+    } catch { return 'Asia/Jerusalem'; }
+  });
 
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [inputText, setInputText] = useState("");
@@ -696,9 +732,16 @@ function AppRoutes() {
   }, [schedule, selectedLocation, fetchSchedule, t, handleLoginRequired, checkGuestActionLimit, user, incrementGuestUsage, saveGuestTempData]);
 
   const toggleLanguage = () => {
-    const newLang = lang === 'he' ? 'en' : 'he';
+    const currentIndex = LANGUAGE_CYCLE.indexOf(lang);
+    const nextIndex = (currentIndex + 1) % LANGUAGE_CYCLE.length;
+    const newLang = LANGUAGE_CYCLE[nextIndex];
     setLang(newLang);
     safeStorage.setItem('calendai-lang', newLang);
+  };
+
+  const handleTimezoneChange = (newTimezone) => {
+    setSelectedTimezone(newTimezone);
+    safeStorage.setItem('calendai-timezone', newTimezone);
   };
 
   const requestNotificationPermission = useCallback(async () => {
@@ -1369,9 +1412,9 @@ function AppRoutes() {
                 <span>{user.aiCredits}</span>
               </button>
             )}
-            {/* Language Toggle */}
+            {/* Language Toggle - cycles through HE → EN → FR → ES → HE */}
             <button onClick={toggleLanguage} className="text-xs font-medium px-2.5 py-1.5 rounded-full border border-slate-200 text-slate-600 hover:bg-slate-50 transition">
-              {t.languageLabel}
+              {LANGUAGE_NEXT_LABELS[lang] || '🌐 EN'}
             </button>
             {/* Auth */}
             {user ? (
@@ -2274,6 +2317,10 @@ function AppRoutes() {
         onClose={() => setIsSidebarOpen(false)}
         schedule={schedule}
         lang={lang}
+        onLangChange={(newLang) => {
+          setLang(newLang);
+          safeStorage.setItem('calendai-lang', newLang);
+        }}
         t={t}
         user={user}
         isPro={isPro}
@@ -2284,6 +2331,9 @@ function AppRoutes() {
           setProfileLocation(loc);
           safeStorage.setItem('calendai-profile-location', loc);
         }}
+        selectedTimezone={selectedTimezone}
+        onTimezoneChange={handleTimezoneChange}
+        timezoneOptions={TIMEZONE_OPTIONS}
       />
     </>
   );

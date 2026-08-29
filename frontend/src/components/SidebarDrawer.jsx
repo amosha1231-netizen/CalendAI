@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { X, BarChart3, Zap, Settings, Download, Moon, Sun, Target, Clock, Trophy, Activity, Share2, MapPin, Loader2, ExternalLink, CheckCircle, Mic } from 'lucide-react';
+import { X, BarChart3, Zap, Settings, Download, Moon, Sun, Target, Clock, Trophy, Activity, Share2, MapPin, Loader2, ExternalLink, CheckCircle, Mic, Globe } from 'lucide-react';
 import safeStorage from '../utils/safeStorage';
 
 const CATEGORY_KEYWORDS = {
@@ -7,6 +7,13 @@ const CATEGORY_KEYWORDS = {
   work: ['עבודה', 'פגישה', 'ישיבה', 'כנס', 'משרד', 'לקוח', 'פרויקט', 'work', 'meeting', 'session', 'conference', 'office', 'client', 'project'],
   sleep: ['שינה', 'sleep', 'לילה', 'night'],
   leisure: ['פנאי', 'משפחה', 'חברים', 'אוכל', 'בישול', 'קניות', 'סידורים', 'טלוויזיה', 'סרט', 'מנוחה', 'leisure', 'family', 'friends', 'food', 'cook', 'shop', 'errands', 'tv', 'movie', 'rest']
+};
+
+const LANGUAGE_NAMES = {
+  he: 'עברית',
+  en: 'English',
+  fr: 'Français',
+  es: 'Español'
 };
 
 function categorizeEvent(title) {
@@ -115,8 +122,8 @@ function isStandalone() {
   return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
 }
 
-export default function SidebarDrawer({ isOpen, onClose, schedule, lang, t, user, isPro, onUpgradeToPro, onLogout, onOpenShareModal, selectedLocation, onLocationChange }) {
-  const [activeTab, setActiveTab] = useState('analytics');
+export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangChange, t, user, isPro, onUpgradeToPro, onLogout, onOpenShareModal, selectedLocation, onLocationChange, selectedTimezone, onTimezoneChange, timezoneOptions }) {
+  const [activeTab, setActiveTab] = useState('settings');
   const [settingsData, setSettingsData] = useState({
     lang: lang,
     defaultStart: '06:00',
@@ -167,7 +174,7 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, t, user
       if (!geoRes.ok) throw new Error('Geocoding failed');
       const geoData = await geoRes.json();
       const city = geoData.address?.city || geoData.address?.town || geoData.address?.village || geoData.address?.county || 'Unknown';
-      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const detectedTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
       
       setDetectedCity(city);
       
@@ -175,7 +182,7 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, t, user
       try {
         safeStorage.setItem('calendai-detected-location', JSON.stringify({
           city,
-          timezone,
+          timezone: detectedTimezone,
           lat: latitude,
           lng: longitude,
           timestamp: Date.now()
@@ -192,6 +199,14 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, t, user
       
       if (matchedLocation !== 'none' && onLocationChange) {
         onLocationChange(matchedLocation);
+      }
+      
+      // Auto-detect timezone
+      if (detectedTimezone && onTimezoneChange) {
+        const tzMatch = timezoneOptions?.find(tz => tz.value === detectedTimezone);
+        if (tzMatch) {
+          onTimezoneChange(detectedTimezone);
+        }
       }
       
       // Show success via settingsSaved styled message
@@ -247,6 +262,13 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, t, user
       setSettingsSaved(true);
       setTimeout(() => setSettingsSaved(false), 2000);
     } catch (e) {}
+  };
+
+  const handleLanguageChange = (newLang) => {
+    setSettingsData(prev => ({ ...prev, lang: newLang }));
+    if (onLangChange) {
+      onLangChange(newLang);
+    }
   };
 
   const categoryColors = {
@@ -508,18 +530,40 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, t, user
                 {t.settingsTitle}
               </h3>
 
+              {/* Language Selector */}
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">{t.settingsLanguage}</label>
                 <select
-                  value={settingsData.lang}
+                  value={lang}
                   onChange={(e) => {
-                    setSettingsData(prev => ({ ...prev, lang: e.target.value }));
-                    // Toggle language is handled by the parent's toggleLanguage
+                    if (onLangChange) onLangChange(e.target.value);
                   }}
                   className="w-full max-w-full box-border px-3 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500"
                 >
                   <option value="he">עברית</option>
                   <option value="en">English</option>
+                  <option value="fr">Français</option>
+                  <option value="es">Español</option>
+                </select>
+              </div>
+
+              {/* Timezone Selector */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-1.5">
+                  <Globe className="w-4 h-4 text-slate-500" />
+                  {t.settingsTimezone || 'Timezone'}
+                </label>
+                <p className="text-xs text-slate-400 mb-2">{t.settingsTimezoneDesc || 'Select your timezone for time display and event scheduling'}</p>
+                <select
+                  value={selectedTimezone || 'Asia/Jerusalem'}
+                  onChange={(e) => {
+                    if (onTimezoneChange) onTimezoneChange(e.target.value);
+                  }}
+                  className="w-full max-w-full box-border px-3 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500"
+                >
+                  {(timezoneOptions || []).map(tz => (
+                    <option key={tz.value} value={tz.value}>{tz.label}</option>
+                  ))}
                 </select>
               </div>
 
