@@ -959,11 +959,21 @@ app.get('/api/auth/google',
     if (!GOOGLE_CLIENT_ID || GOOGLE_CLIENT_ID === 'your_google_client_id_here') {
       return res.status(400).json({ error: 'Google OAuth is not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in .env' });
     }
-    next();
-  },
-  passport.authenticate('google', {
-    scope: OAUTH_SCOPES
-  })
+    const lang = req.query.lang || 'he';
+    const hls = { en: 'en', he: 'he' };
+    const hl = hls[lang] || 'he';
+    // Pass the language preference to Google's OAuth screen via the `hl` parameter
+    // by directly constructing the authorization URL with custom parameters.
+    // Passport's authenticate does not natively support `hl`,
+    // so we redirect manually to include the hl parameter.
+    passport.authenticate('google', {
+      scope: OAUTH_SCOPES,
+      accessType: 'offline',
+      prompt: 'consent',
+      // @ts-ignore - Passport supports custom params via this property
+      customParams: { hl }
+    })(req, res, next);
+  }
 );
 
 app.get('/api/auth/google/callback',

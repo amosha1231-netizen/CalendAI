@@ -55,6 +55,10 @@ router.post('/create-checkout', async (req, res) => {
 
     const variantId = '2035157';
 
+    // Include language preference in checkout custom data
+    // so the Lemon Squeezy checkout page and webhook can respect it
+    const userLang = req.body?.lang || 'he';
+
     // ── Build Lemon Squeezy Checkout API request ──
     const response = await fetch('https://api.lemonsqueezy.com/v1/checkouts', {
       method: 'POST',
@@ -69,7 +73,8 @@ router.post('/create-checkout', async (req, res) => {
           attributes: {
             checkout_data: {
               custom: {
-                userId: userId.toString()
+                userId: userId.toString(),
+                lang: userLang
               }
             }
           },

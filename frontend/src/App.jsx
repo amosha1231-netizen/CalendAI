@@ -239,6 +239,7 @@ function AppRoutes() {
           "Content-Type": "application/json",
           ...(token ? { 'Authorization': `Bearer ${token}` } : {})
         },
+        body: JSON.stringify({ lang }),
         credentials: "include"
       });
       const data = await res.json();
@@ -1222,7 +1223,7 @@ function AppRoutes() {
       <LandingPage
         t={t}
         lang={lang}
-        onLogin={handleLogin}
+        onLogin={() => handleLogin(lang)}
         onMicrosoftLogin={handleMicrosoftLogin}
         onTryGuest={handleTryGuest}
         toggleLanguage={toggleLanguage}
@@ -1373,7 +1374,7 @@ function AppRoutes() {
                 <span className="hidden sm:inline">{t.logout}</span>
               </button>
             ) : (
-              <button onClick={handleLogin} className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full bg-blue-600 text-white hover:bg-blue-700 transition shadow-sm">
+              <button onClick={() => handleLogin(lang)} className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full bg-blue-600 text-white hover:bg-blue-700 transition shadow-sm">
                 <LogIn className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline">{t.loginWithGoogle}</span>
               </button>
@@ -2106,7 +2107,7 @@ function AppRoutes() {
             </div>
             <h3 className="text-lg font-bold text-slate-800 mb-2">{t.loginToSave}</h3>
             <p className="text-sm text-slate-500 mb-6">{t.loginToSaveDesc}</p>
-            <button onClick={handleLogin} className="w-full px-4 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition shadow-lg">{t.loginWithGoogle}</button>
+            <button onClick={() => handleLogin(lang)} className="w-full px-4 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition shadow-lg">{t.loginWithGoogle}</button>
             <button onClick={() => setShowLoginPrompt(false)} className="w-full mt-3 text-sm text-slate-400 hover:text-slate-600 py-2 transition">{t.cancel}</button>
           </div>
         </div>
@@ -2136,7 +2137,7 @@ function AppRoutes() {
             </div>
             <h3 className="text-lg font-bold text-slate-800 mb-2">{t.guestLimitTitle}</h3>
             <p className="text-sm text-slate-500 mb-6">{t.guestLimitDesc}</p>
-            <button onClick={handleLogin} className="w-full px-4 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition shadow-lg flex items-center justify-center gap-2"><LogIn className="w-4 h-4" /> {t.loginWithGoogle}</button>
+            <button onClick={() => handleLogin(lang)} className="w-full px-4 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition shadow-lg flex items-center justify-center gap-2"><LogIn className="w-4 h-4" /> {t.loginWithGoogle}</button>
             <button onClick={() => { setShowGuestLimitModal(false); setShowEmailAuth(true); setAuthMode('login'); }}
               className="w-full mt-2 px-4 py-3 bg-white border border-slate-300 text-slate-700 rounded-xl font-medium hover:bg-slate-50 transition shadow-sm flex items-center justify-center gap-2"><Mail className="w-4 h-4" /> {lang === 'he' ? 'התחבר עם אימייל' : 'Login with Email'}</button>
             <button onClick={() => setShowGuestLimitModal(false)} className="w-full mt-3 text-sm text-slate-400 hover:text-slate-600 py-2 transition">{t.cancel}</button>
@@ -2218,7 +2219,7 @@ function AppRoutes() {
                 <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-200" /></div>
                 <div className="relative flex justify-center text-xs"><span className="bg-white px-2 text-slate-400">{lang === 'he' ? 'או' : 'or'}</span></div>
               </div>
-              <button onClick={() => { setShowEmailAuth(false); handleLogin(); }}
+              <button onClick={() => { setShowEmailAuth(false); handleLogin(lang); }}
                 className="w-full px-4 py-3 bg-white border border-slate-300 text-slate-700 rounded-xl font-medium hover:bg-slate-50 transition shadow-sm flex items-center justify-center gap-2">
                 <LogIn className="w-4 h-4" /> {t.loginWithGoogle}
               </button>

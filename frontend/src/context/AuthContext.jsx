@@ -205,8 +205,20 @@ export function AuthProvider({ children }) {
     }
   }, [syncGuestData]);
 
-  const handleLogin = useCallback(() => {
-    window.location.href = `${API_BASE}/api/auth/google`;
+  const handleLogin = useCallback((lang) => {
+    const baseUrl = `${API_BASE}/api/auth/google`;
+    const url = lang ? `${baseUrl}?lang=${lang}` : baseUrl;
+    window.location.href = url;
+  }, []);
+
+  // ── Set Authorization header from localStorage token on app init ──
+  // This ensures API calls include the bearer token even on page refresh
+  // before AuthContext's useEffect processes the stored token.
+  useEffect(() => {
+    const token = getJwtToken();
+    if (token) {
+      api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+    }
   }, []);
 
   const handleLogout = useCallback(async () => {
