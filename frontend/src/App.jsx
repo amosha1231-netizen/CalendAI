@@ -23,6 +23,7 @@ import TermsPage from "./pages/Terms";
 import translations from "./i18n";
 import safeStorage from "./utils/safeStorage";
 import { isIosWhatsApp, isIosSafari, isIosNonSafari, isStandalone } from "./utils/browserDetection";
+import { normalizeCredits, normalizeUserCredits } from "./utils/credits";
 
 // ── Module-level declarations (using var/function to avoid TDZ) ──
 var API_BASE = import.meta.env.VITE_API_URL || "";
@@ -617,8 +618,9 @@ function AppRoutes() {
       if (res.ok) {
         const data = await res.json();
         if (data.user) {
-          setUser(data.user);
-          try { safeStorage.setItem('calendai-user', JSON.stringify(data.user)); } catch (e) {}
+          const normalizedUser = normalizeUserCredits(data.user);
+          setUser(normalizedUser);
+          try { safeStorage.setItem('calendai-user', JSON.stringify(normalizedUser)); } catch (e) {}
         }
       }
     } catch (e) {
@@ -953,11 +955,12 @@ function AppRoutes() {
       if (data.conflicts?.length > 0) setConflicts(data.conflicts);
       else setConflicts([]);
       if (data.aiCredits !== undefined && data.aiCredits !== null) {
-        setUser(prev => prev ? { ...prev, aiCredits: data.aiCredits } : prev);
+        const normalizedCredits = normalizeCredits(data.aiCredits);
+        setUser(prev => prev ? { ...prev, aiCredits: normalizedCredits } : prev);
         try {
           const stored = JSON.parse(safeStorage.getItem('calendai-user') || 'null');
           if (stored) {
-            stored.aiCredits = data.aiCredits;
+            stored.aiCredits = normalizedCredits;
             safeStorage.setItem('calendai-user', JSON.stringify(stored));
           }
         } catch (e) {}
@@ -1398,20 +1401,24 @@ function AppRoutes() {
           </div>
           <div className="flex items-center gap-2">
             {/* AI Credits Badge */}
-            {user && user.aiCredits !== undefined && user.aiCredits !== null && (
-              <button
-                onClick={handleBuyCredits}
-                disabled={checkoutLoading}
-                className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full border shadow-sm transition ${
-                  user.aiCredits > 0
-                    ? 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'
-                    : 'bg-red-50 text-red-600 border-red-200 hover:bg-red-100 animate-pulse'
-                }`}
-              >
-                <Zap className="w-3.5 h-3.5" />
-                <span>{user.aiCredits}</span>
-              </button>
-            )}
+            {(() => {
+              const credits = user ? normalizeCredits(user.aiCredits) : undefined;
+              if (credits === undefined || credits === null) return null;
+              return (
+                <button
+                  onClick={handleBuyCredits}
+                  disabled={checkoutLoading}
+                  className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full border shadow-sm transition ${
+                    credits > 0
+                      ? 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'
+                      : 'bg-red-50 text-red-600 border-red-200 hover:bg-red-100 animate-pulse'
+                  }`}
+                >
+                  <Zap className="w-3.5 h-3.5" />
+                  <span>{credits}</span>
+                </button>
+              );
+            })()}
             {/* Language Toggle - cycles through HE → EN → FR → ES → HE */}
             <button onClick={toggleLanguage} className="text-xs font-medium px-2.5 py-1.5 rounded-full border border-slate-200 text-slate-600 hover:bg-slate-50 transition">
               {LANGUAGE_NEXT_LABELS[lang] || '🌐 EN'}
@@ -2253,10 +2260,10 @@ function AppRoutes() {
                   const data = await res.json();
                   if (!res.ok) throw new Error(data.error || 'Authentication failed');
                   setJwtToken(data.token);
-                  if (setUser) setUser(data.user);
+                  if (setUser) setUser(normalizeUserCredits(data.user));
                   if (setIsPro) setIsPro(data.user?.isPro === true || data.user?.isPro === 'true');
                   safeStorage.setItem('calendai-isLoggedIn', 'true');
-                  safeStorage.setItem('calendai-user', JSON.stringify(data.user));
+                  safeStorage.setItem('calendai-user', JSON.stringify(normalizeUserCredits(data.user)));
                   setShowEmailAuth(false);
                   setShowLoginPrompt(false);
                   setShowGuestLimitModal(false);

@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import api from '../api/axios';
 import safeStorage from '../utils/safeStorage';
+import { normalizeUserCredits } from '../utils/credits';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
@@ -67,14 +68,29 @@ const clearJwtToken = () => {
 };
 
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(() => {
+  // ── Safe setUser wrapper: ALWAYS normalizes aiCredits to a plain number ──
+  const [user, setUserRaw] = useState(() => {
     try {
       const savedUser = safeStorage.getItem('calendai-user');
-      return savedUser ? JSON.parse(savedUser) : null;
+      if (!savedUser) return null;
+      const parsed = JSON.parse(savedUser);
+      const normalized = normalizeUserCredits(parsed);
+      // If the raw value was different from the normalized value, update the cache
+      if (JSON.stringify(normalized) !== JSON.stringify(parsed)) {
+        safeStorage.setItem('calendai-user', JSON.stringify(normalized));
+        try { localStorage.setItem('calendai-user', JSON.stringify(normalized)); } catch (e) {}
+      }
+      return normalized;
     } catch (e) {
       return null;
     }
   });
+  const setUser = useCallback((userOrUpdater) => {
+    setUserRaw(prev => {
+      const next = typeof userOrUpdater === 'function' ? userOrUpdater(prev) : userOrUpdater;
+      return normalizeUserCredits(next);
+    });
+  }, []);
   const [isPro, setIsPro] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
     // Check BOTH safeStorage and localStorage directly for the token.
@@ -165,15 +181,16 @@ export function AuthProvider({ children }) {
       // ── 200 OK → authenticated! ──
       const data = res.data;
       if (data.user) {
-        setUser(data.user);
+        const normalizedUser = normalizeUserCredits(data.user);
+        setUser(normalizedUser);
         setIsPro(data.user?.isPro === true || data.user?.isPro === 'true');
         setIsAuthenticated(true);
         setAuthStatus('authenticated');
 
         // Save user data to localStorage for persistence across app restarts
         try {
-          safeStorage.setItem('calendai-user', JSON.stringify(data.user));
-          localStorage.setItem('calendai-user', JSON.stringify(data.user));
+          safeStorage.setItem('calendai-user', JSON.stringify(normalizedUser));
+          localStorage.setItem('calendai-user', JSON.stringify(normalizedUser));
         } catch (e) {}
 
         // Exchange session for a JWT token to persist login
@@ -312,7 +329,7 @@ export function AuthProvider({ children }) {
       try {
         const cachedUser = safeStorage.getItem('calendai-user');
         if (cachedUser) {
-          const parsed = JSON.parse(cachedUser);
+          const parsed = normalizeUserCredits(JSON.parse(cachedUser));
           setUser(parsed);
           setIsPro(parsed?.isPro === true || parsed?.isPro === 'true');
         }
@@ -328,13 +345,14 @@ export function AuthProvider({ children }) {
         });
         if (res.status === 200 && res.data) {
           const userData = res.data.user || res.data;
-          setUser(userData);
+          const normalizedUserData = normalizeUserCredits(userData);
+          setUser(normalizedUserData);
           setIsAuthenticated(true);
           setAuthStatus('authenticated');
           // Save user data to localStorage for persistence
           try {
-            safeStorage.setItem('calendai-user', JSON.stringify(userData));
-            localStorage.setItem('calendai-user', JSON.stringify(userData));
+            safeStorage.setItem('calendai-user', JSON.stringify(normalizedUserData));
+            localStorage.setItem('calendai-user', JSON.stringify(normalizedUserData));
           } catch (e) {}
         } else if (res.status === 401) {
           // 401 Unauthorized → token expired/invalid, clear and treat as guest
