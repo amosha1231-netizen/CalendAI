@@ -446,6 +446,15 @@ function getUserId(req) {
 // ── Semantic Router (fast vs smart track classification)
 const { classifyRequest } = require('./services/semanticRouter');
 
+// ── Public Goals & Challenges Routes ──
+const goalRoutes = require('./routes/goalRoutes');
+
+// Expose schedule helper functions for goal routes to auto-add challenge events to user schedules
+app.set('getUserSchedule', getUserSchedule);
+app.set('saveSchedulesNow', saveSchedulesNow);
+app.set('saveScheduleToMongo', saveScheduleToMongo);
+app.set('syncTodayWithCurrentDay', syncTodayWithCurrentDay);
+
 // ── Token Usage Tracker (Pay-As-You-Go billing)
 const { calculateCost, formatCostBreakdown } = require('./services/tokenTracker');
 
@@ -599,8 +608,34 @@ function isShabbat(day) {
 // ──────────────────────────────────────────────
 
 /**
+ * Get the cutoff date for recurring event expansion.
+ * Events beyond this date (30 days from today) are excluded.
+ * @returns {Date} The cutoff date (30 days from now, at 23:59:59)
+ */
+function getRecurrenceCutoffDate() {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() + 30);
+  cutoff.setHours(23, 59, 59, 999);
+  return cutoff;
+}
+
+/**
+ * Check if a given date (year, month, day) is within the recurrence cutoff (30 days from today).
+ * @param {number} year
+ * @param {number} month (0-based)
+ * @param {number} day
+ * @returns {boolean}
+ */
+function isWithinRecurrenceLimit(year, month, day) {
+  const cutoff = getRecurrenceCutoffDate();
+  const eventDate = new Date(year, month, day, 0, 0, 0, 0);
+  return eventDate <= cutoff;
+}
+
+/**
  * Expand a recurring event into actual dates within a given month/year.
  * recurrence can be: "once", "daily", "weekly", "monthly", "yearly", "forever"
+ * CRITICAL: All recurring events are STRICTLY limited to the next 30 days from today.
  */
 function expandEventForMonth(event, year, month) {
   const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -654,6 +689,7 @@ function expandEventForMonth(event, year, month) {
         break;
       }
       case 'daily':
+        include = true;
         break;
       case 'weekly':
         include = true;
@@ -678,6 +714,11 @@ function expandEventForMonth(event, year, month) {
         include = true;
     }
 
+    // CRITICAL: Apply 30-day recurrence limit — skip events beyond the cutoff date
+    if (include && !isWithinRecurrenceLimit(year, month, d)) {
+      include = false;
+    }
+
     if (include) {
       results.push({
         ...event,
@@ -693,12 +734,16 @@ function expandEventForMonth(event, year, month) {
 
 /**
  * Expand a daily recurring event into ALL dates within a given month/year.
+ * CRITICAL: All recurring events are STRICTLY limited to the next 30 days from today.
  */
 function expandDailyEventForMonth(event, year, month) {
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const results = [];
 
   for (let d = 1; d <= daysInMonth; d++) {
+    // CRITICAL: Apply 30-day recurrence limit — skip events beyond the cutoff date
+    if (!isWithinRecurrenceLimit(year, month, d)) continue;
+
     results.push({
       ...event,
       date: `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`,
@@ -2007,7 +2052,7 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
     }
 
     // ── PAYG CREDIT DEDUCTION: Only charge AFTER a successful AI response ──
-    const remainingCredits = await deductAICredit(userId);
+    const { remainingCredits } = await deductAICredit(userId);
 
     // ── GOOGLE CALENDAR SYNC: Automatically sync each added event to Google Calendar ──
     // This is non-blocking — failures are logged but never crash the response.
@@ -2016,6 +2061,16 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
     );
     const googleSyncSuccessCount = googleSyncResults.filter(r => r.status === 'fulfilled' && r.value.success).length;
     const googleSyncFailedCount = googleSyncResults.filter(r => r.status === 'fulfilled' && !r.value.success).length;
+
+    // ── LOG ACTION HISTORY: Record this parse action for undo ──
+    const googleEventIds = googleSyncResults
+      .filter(r => r.status === 'fulfilled' && r.value.success && r.value.eventId)
+      .map(r => r.value.eventId);
+    const authedUserId = getAuthenticatedUserId(req);
+    if (authedUserId) {
+      // Fire-and-forget: don't block the response
+      logActionHistory(authedUserId, text, googleEventIds, addedEvents, 'parse').catch(() => {});
+    }
 
     res.json({ 
       events: addedEvents,
@@ -2225,7 +2280,7 @@ app.post('/api/events/quick-add', aiLimiter, async (req, res) => {
     }
 
     // ── PAYG CREDIT DEDUCTION: Only charge AFTER a successful AI response ──
-    const remainingCredits = await deductAICredit(userId);
+    const { remainingCredits } = await deductAICredit(userId);
 
     // ── GOOGLE CALENDAR SYNC: Automatically sync each added event to Google Calendar ──
     // This is non-blocking — failures are logged but never crash the response.
@@ -2234,6 +2289,15 @@ app.post('/api/events/quick-add', aiLimiter, async (req, res) => {
     );
     const googleSyncSuccessCount = googleSyncResults.filter(r => r.status === 'fulfilled' && r.value.success).length;
     const googleSyncFailedCount = googleSyncResults.filter(r => r.status === 'fulfilled' && !r.value.success).length;
+
+    // ── LOG ACTION HISTORY: Record this quick-add action for undo ──
+    const googleEventIds = googleSyncResults
+      .filter(r => r.status === 'fulfilled' && r.value.success && r.value.eventId)
+      .map(r => r.value.eventId);
+    if (userId && mongoose.Types.ObjectId.isValid(userId)) {
+      // Fire-and-forget: don't block the response
+      logActionHistory(userId, text, googleEventIds, addedEvents, 'quick-add').catch(() => {});
+    }
 
     res.json({
       success: true,
@@ -2349,12 +2413,12 @@ async function createOAuth2ClientWithRefresh(user) {
 async function syncEventToGoogleCalendar(userId, event, locationId) {
   // Only sync for logged-in users with valid ObjectId
   if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
-    return { success: false, error: 'Not a logged-in user' };
+    return { success: false, error: 'Not a logged-in user', eventId: null };
   }
   try {
     const user = await User.findById(userId);
     if (!user || !user.googleAccessToken) {
-      return { success: false, error: 'No Google token stored' };
+      return { success: false, error: 'No Google token stored', eventId: null };
     }
 
     const locId = locationId || DEFAULT_LOCATION_ID;
@@ -2369,7 +2433,7 @@ async function syncEventToGoogleCalendar(userId, event, locationId) {
     const dayMap = { Sunday: 0, Monday: 1, Tuesday: 2, Wednesday: 3, Thursday: 4, Friday: 5, Saturday: 6 };
     const targetDay = dayMap[event.day];
     if (targetDay === undefined) {
-      return { success: false, error: 'Invalid day for Google Calendar event.' };
+      return { success: false, error: 'Invalid day for Google Calendar event.', eventId: null };
     }
 
     // CRITICAL TIMEZONE FIX: If the event has a targetDate (e.g., "2026-09-07"),
@@ -2394,7 +2458,7 @@ async function syncEventToGoogleCalendar(userId, event, locationId) {
     // Parse start/end times from "HH:MM AM/PM" format
     const startMatch = event.startTime && event.startTime.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
     const endMatch = event.endTime && event.endTime.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
-    if (!startMatch) return { success: false, error: 'Invalid startTime format' };
+    if (!startMatch) return { success: false, error: 'Invalid startTime format', eventId: null };
 
     let startHour = parseInt(startMatch[1], 10);
     const startMinute = parseInt(startMatch[2], 10);
@@ -2451,19 +2515,20 @@ async function syncEventToGoogleCalendar(userId, event, locationId) {
       }
     }
 
-    await calendar.events.insert({
+    const gcalResponse = await calendar.events.insert({
       calendarId: 'primary',
       requestBody,
     });
 
-    return { success: true };
+    const gcalEventId = gcalResponse?.data?.id || null;
+    return { success: true, eventId: gcalEventId };
   } catch (error) {
     // Log but never crash - event is already saved locally
     console.error('Google Calendar sync failed (non-fatal):', error.message);
     if (error.code === 401 || error.code === 403) {
       console.warn('Google token may be expired for user:', userId);
     }
-    return { success: false, error: error.message };
+    return { success: false, error: error.message, eventId: null };
   }
 }
 
@@ -2665,7 +2730,7 @@ app.post('/api/reschedule', aiLimiter, async (req, res) => {
     }
 
     // ── PAYG CREDIT DEDUCTION: Only charge AFTER a successful AI response ──
-    const remainingCredits = await deductAICredit(userId);
+    const { remainingCredits } = await deductAICredit(userId);
 
     res.json({
       summary: result.summary,
@@ -3799,6 +3864,43 @@ app.use('/api/events', eventRoutes);
 // ── Lemon Squeezy Payment Routes ──
 const paymentRoutes = require('./routes/paymentRoutes');
 app.use('/api/payments', paymentRoutes);
+
+// ── Action History Routes (undo & history) ──
+const actionHistoryRoutes = require('./routes/actionHistoryRoutes');
+app.use('/api/action-history', actionHistoryRoutes);
+
+// ── Public Goals & Challenges Routes ──
+app.use('/api/goals', goalRoutes);
+
+// ──────────────────────────────────────────────
+// Action History Helper — logs user actions for undo
+// ──────────────────────────────────────────────
+const ActionHistory = require('./models/ActionHistory');
+
+async function logActionHistory(userId, promptText, googleEventIds, addedEvents, actionType = 'parse') {
+  try {
+    if (!userId || !mongoose.Types.ObjectId.isValid(userId)) return;
+
+    // Build internal event identifiers as fallback when Google sync fails
+    const internalEventIds = (addedEvents || []).map(ev => {
+      return `${ev.title}|${ev.day}|${ev.startTime || ''}|${ev.recurrence || 'once'}`;
+    });
+
+    await ActionHistory.create({
+      userId: new mongoose.Types.ObjectId(userId),
+      promptText: promptText || '',
+      createdEventIds: googleEventIds.length > 0 ? googleEventIds : internalEventIds,
+      actionType,
+      metadata: {
+        eventCount: (addedEvents || []).length,
+        internalEventIds
+      }
+    });
+    console.log(`[ActionHistory] Logged "${actionType}" for user ${userId} (${addedEvents?.length || 0} events)`);
+  } catch (err) {
+    console.error('[ActionHistory] Failed to log action:', err.message);
+  }
+}
 
 // ──────────────────────────────────────────────
 // 11. Health & Fallback

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, Suspense, lazy } from "react";
 import { BrowserRouter } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
-import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Menu, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff, Home, Plus, Zap, ChevronDown, ChevronUp, FileText, Layout } from "lucide-react";
+import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Menu, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff, Home, Plus, Zap, ChevronDown, ChevronUp, FileText, Layout, Trophy } from "lucide-react";
 import MonthlyCalendar from "./components/MonthlyCalendar";
 import DayView from "./components/DayView";
 import ViewNavigation from "./components/ViewNavigation";
@@ -12,6 +12,8 @@ import SidebarDrawer from "./components/SidebarDrawer";
 import MeetingWizard from "./components/MeetingWizard";
 import LuxuryLoader from "./components/LuxuryLoader";
 import ManualEventForm from "./components/ManualEventForm";
+import HistoryModal from "./components/HistoryModal";
+import PublicGoals from "./components/PublicGoals";
 
 // ── Lazy-loaded page chunks ──
 const LandingPage = lazy(() => import("./components/LandingPage"));
@@ -142,9 +144,11 @@ function AppRoutes() {
 
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [inputText, setInputText] = useState("");
-  const [recurrence, setRecurrence] = useState("weekly");
-  const [eventType, setEventType] = useState("activity");
-  const [activityDuration, setActivityDuration] = useState(60);
+  // recurrence and eventType are now determined by the AI from natural language text
+  // Manual dropdowns have been removed — the AI parses schedules and frequencies intelligently.
+  const DEFAULT_RECURRENCE = 'weekly';
+  const DEFAULT_EVENT_TYPE = 'activity';
+  const DEFAULT_DURATION = 60;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -231,6 +235,7 @@ function AppRoutes() {
     Thursday: [], Friday: [], Saturday: [], Today: []
   });
   const scheduleHistoryRef = useRef([]);
+  const [actionHistoryCount, setActionHistoryCount] = useState(0);
 
   const [expandedDays, setExpandedDays] = useState({});
   const [dayDetailModal, setDayDetailModal] = useState(null);
@@ -303,6 +308,8 @@ function AppRoutes() {
 
   const [showWizard, setShowWizard] = useState(false);
   const [showManualEvent, setShowManualEvent] = useState(false);
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [showPublicGoals, setShowPublicGoals] = useState(false);
 
   const [installPrompt, setInstallPrompt] = useState(null);
   const [showPwaPopup, setShowPwaPopup] = useState(false);
@@ -630,6 +637,7 @@ function AppRoutes() {
 
   const saveScheduleState = useCallback(() => {
     scheduleHistoryRef.current.push(JSON.parse(JSON.stringify(schedule)));
+    setActionHistoryCount(prev => prev + 1);
   }, [schedule]);
 
   useEffect(() => {
@@ -874,6 +882,7 @@ function AppRoutes() {
   const handleUndo = async () => {
     if (scheduleHistoryRef.current.length === 0) return;
     const previousSchedule = scheduleHistoryRef.current.pop();
+    setActionHistoryCount(prev => prev - 1);
     setSchedule(previousSchedule);
     try {
       await fetch(`${API_BASE}/api/schedule`, {
@@ -882,7 +891,15 @@ function AppRoutes() {
         body: JSON.stringify({ schedule: previousSchedule }),
         credentials: "include"
       });
-      setSuccess(t.undo + "!");
+      const toastId = Date.now();
+      setToasts(prev => [...prev, {
+        id: toastId,
+        title: t.undoToast || 'Undo successful',
+        message: ''
+      }]);
+      setTimeout(() => {
+        setToasts(prev => prev.filter(t => t.id !== toastId));
+      }, 4000);
     } catch (err) {
       console.error("Undo sync failed:", err);
     }
@@ -916,7 +933,7 @@ function AppRoutes() {
       const res = await fetch(`${API_BASE}/api/parse-schedule`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: inputText, recurrence, location: selectedLocation, eventType, duration: eventType === 'notification' ? 0 : activityDuration }),
+        body: JSON.stringify({ text: inputText, recurrence: DEFAULT_RECURRENCE, location: selectedLocation, eventType: DEFAULT_EVENT_TYPE, duration: DEFAULT_DURATION }),
         credentials: "include"
       });
       if (!res.ok) {
@@ -972,7 +989,7 @@ function AppRoutes() {
       setInputText("");
       if (!user) {
         incrementGuestUsage();
-        saveGuestTempData('parse', { text: inputText, recurrence, location: selectedLocation });
+        saveGuestTempData('parse', { text: inputText, recurrence: DEFAULT_RECURRENCE, location: selectedLocation });
       }
     } catch (err) {
       setError(err.message);
@@ -1114,7 +1131,7 @@ function AppRoutes() {
     try {
       const res = await fetch(`${API_BASE}/api/schedule/add-to-free-slot`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ day: freeSlotsData.day, startTime: slot.startTime, endTime: slot.endTime, title, recurrence, location: selectedLocation }),
+        body: JSON.stringify({ day: freeSlotsData.day, startTime: slot.startTime, endTime: slot.endTime, title, recurrence: DEFAULT_RECURRENCE, location: selectedLocation }),
         credentials: "include"
       });
       const data = await res.json();
@@ -1375,18 +1392,25 @@ function AppRoutes() {
         {/* Toast Notifications */}
         {toasts.length > 0 && (
           <div className={`fixed top-4 ${isRTL ? 'left-4' : 'right-4'} z-[100] flex flex-col gap-2 max-w-sm`}>
-            {toasts.map(ti => (
-              <div key={ti.id} className={`bg-white ${isRTL ? 'border-r-4' : 'border-l-4'} border-amber-500 rounded-lg shadow-lg p-4 animate-slide-in flex items-start gap-3`}>
-                <BellRing className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
-                <div className="flex-1 min-w-0">
-                  <div className="font-bold text-sm text-slate-800">{t.toastReminder} {ti.title}</div>
-                  <div className="text-xs text-slate-500 mt-0.5">{ti.message}</div>
+            {toasts.map(ti => {
+              const isUndoToast = ti.title === (t.undoToast || 'Undo successful');
+              return (
+                <div key={ti.id} className={`bg-white ${isRTL ? 'border-r-4' : 'border-l-4'} ${isUndoToast ? 'border-emerald-500' : 'border-amber-500'} rounded-lg shadow-lg p-4 animate-slide-in flex items-start gap-3`}>
+                  {isUndoToast ? (
+                    <RotateCcw className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />
+                  ) : (
+                    <BellRing className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <div className="font-bold text-sm text-slate-800">{ti.title}</div>
+                    {ti.message && <div className="text-xs text-slate-500 mt-0.5">{ti.message}</div>}
+                  </div>
+                  <button onClick={() => setToasts(prev => prev.filter(x => x.id !== ti.id))} className="text-slate-300 hover:text-slate-500">
+                    <X className="w-4 h-4" />
+                  </button>
                 </div>
-                <button onClick={() => setToasts(prev => prev.filter(x => x.id !== ti.id))} className="text-slate-300 hover:text-slate-500">
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 
@@ -1419,6 +1443,15 @@ function AppRoutes() {
                 </button>
               );
             })()}
+            {/* Public Goals & Challenges Button */}
+            <button
+              onClick={() => setShowPublicGoals(true)}
+              className="flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 rounded-full border border-amber-200 text-amber-700 bg-amber-50 hover:bg-amber-100 transition"
+              title={lang === "he" ? "🎯 אתגרים ומטרות משותפות" : "🎯 Public Goals & Challenges"}
+            >
+              <Trophy className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">{lang === "he" ? "אתגרים" : "Goals"}</span>
+            </button>
             {/* Language Toggle - cycles through HE → EN → FR → ES → HE */}
             <button onClick={toggleLanguage} className="text-xs font-medium px-2.5 py-1.5 rounded-full border border-slate-200 text-slate-600 hover:bg-slate-50 transition">
               {LANGUAGE_NEXT_LABELS[lang] || '🌐 EN'}
@@ -1495,6 +1528,7 @@ function AppRoutes() {
               </button>
               <button onClick={handleUndo} disabled={scheduleHistoryRef.current.length === 0} className="flex items-center gap-2 text-slate-500 hover:text-slate-700 px-3 py-2.5 rounded-full hover:bg-slate-100 transition text-sm disabled:opacity-30 disabled:cursor-not-allowed">
                 <RotateCcw className="w-4 h-4" />
+                <span className="hidden sm:inline">{t.undo}</span>
               </button>
               {/* Advanced Toggle */}
               <button
@@ -1506,45 +1540,8 @@ function AppRoutes() {
               </button>
             </div>
 
-            {/* ── Advanced Options (collapsible) ── */}
-            {showAdvanced && (
-              <div className="mt-3 pt-3 border-t border-slate-200 space-y-3 animate-fade-in">
-                {/* Event Type */}
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs font-medium text-slate-500">{t.eventType}</span>
-                  <div className="flex rounded-lg border border-slate-300 overflow-hidden">
-                    <button onClick={() => setEventType('activity')}
-                      className={`px-3 py-1.5 text-xs font-medium transition ${eventType === 'activity' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>
-                      {t.typeActivity}
-                    </button>
-                    <button onClick={() => setEventType('notification')}
-                      className={`px-3 py-1.5 text-xs font-medium transition border-r border-slate-300 ${eventType === 'notification' ? 'bg-amber-500 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>
-                      {t.typeNotification}
-                    </button>
-                  </div>
-                </div>
-                {/* Recurrence */}
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs font-medium text-slate-500">{t.frequency}</span>
-                  <div className="flex rounded-lg border border-slate-300 overflow-hidden">
-                    {['once', 'weekly', 'monthly', 'yearly'].map((recVal) => {
-                      const labels = {
-                        once: t.recurrenceOnce,
-                        weekly: t.recurrenceWeekly,
-                        monthly: t.recurrenceMonthly,
-                        yearly: t.recurrenceYearly
-                      };
-                      return (
-                        <button key={recVal} onClick={() => setRecurrence(recVal)}
-                          className={`px-3 py-1.5 text-xs font-medium transition border-r border-slate-300 last:border-r-0 ${recurrence === recVal ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>
-                          {labels[recVal]}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-            )}
+            {/* ── Advanced Options have been removed ── */}
+            {/* AI now parses recurrence and event type from natural language text intelligently */}
 
             {error && <div className="flex items-center gap-2 text-red-600 text-sm mt-3 bg-red-50 p-3 rounded-lg border border-red-200"><AlertCircle className="w-4 h-4 shrink-0" /><span>{error}</span></div>}
             {success && <div className="flex items-center gap-2 text-green-700 text-sm mt-3 bg-green-50 p-3 rounded-lg border border-green-200"><Sparkles className="w-4 h-4 text-green-600 shrink-0" /><span>{success}</span></div>}
@@ -2318,6 +2315,19 @@ function AppRoutes() {
         <MeetingWizard schedule={schedule} lang={lang} t={t} onClose={() => setShowWizard(false)} />
       )}
 
+      {/* History Modal */}
+      <HistoryModal
+        isOpen={showHistoryModal}
+        onClose={() => setShowHistoryModal(false)}
+        t={t}
+        lang={lang}
+        onUndoSuccess={() => {
+          // After undoing, refresh the schedule
+          fetchSchedule();
+          setSuccess(lang === 'he' ? '✅ הפעולה בוטלה בהצלחה!' : '✅ Action undone successfully!');
+        }}
+      />
+
       {/* Sidebar Drawer */}
       <SidebarDrawer
         isOpen={isSidebarOpen}
@@ -2333,6 +2343,7 @@ function AppRoutes() {
         isPro={isPro}
         onLogout={handleLogout}
         onOpenShareModal={() => setShowShareModal(true)}
+        onOpenHistory={() => setShowHistoryModal(true)}
         selectedLocation={profileLocation !== 'none' ? profileLocation : selectedLocation}
         onLocationChange={(loc) => {
           setProfileLocation(loc);
@@ -2342,6 +2353,19 @@ function AppRoutes() {
         onTimezoneChange={handleTimezoneChange}
         timezoneOptions={TIMEZONE_OPTIONS}
       />
+
+      {/* Public Goals & Challenges Modal */}
+      {showPublicGoals && (
+        <PublicGoals
+          lang={lang}
+          user={user}
+          onClose={() => setShowPublicGoals(false)}
+          onJoinChallenge={(goal) => {
+            fetchSchedule();
+            setSuccess(lang === "he" ? "🎯 הצטרפת לאתגר! האירוע נוסף ליומן." : "🎯 Joined the challenge! Event added to your schedule.");
+          }}
+        />
+      )}
     </>
   );
 }
