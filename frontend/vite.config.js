@@ -19,6 +19,9 @@ export default defineConfig({
   build: {
     sourcemap: true,
     minify: false,
-    outDir: "dist"
+    outDir: "dist",
+    rollupOptions: {
+      external: ['@capacitor/preferences']
+    }
   }
 });
