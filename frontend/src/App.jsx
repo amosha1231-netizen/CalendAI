@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, Suspense, lazy } from "react";
 import { BrowserRouter } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
-import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Menu, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff, Home, Plus, Zap, ChevronDown, ChevronUp, FileText, Layout, Trophy } from "lucide-react";
+import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Menu, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff, Home, Plus, Zap, ChevronDown, ChevronUp, FileText, Layout, Trophy, Image, Upload } from "lucide-react";
 import MonthlyCalendar from "./components/MonthlyCalendar";
 import DayView from "./components/DayView";
 import ViewNavigation from "./components/ViewNavigation";
@@ -917,6 +917,71 @@ function AppRoutes() {
     if (ta) ta.focus();
   };
 
+  const [selectedImage, setSelectedImage] = useState(null);
+  const [selectedImagePreview, setSelectedImagePreview] = useState(null);
+  const [imageParsing, setImageParsing] = useState(false);
+
+  const handleImageSelect = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setSelectedImage(file);
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      setSelectedImagePreview(ev.target.result);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemoveImage = () => {
+    setSelectedImage(null);
+    setSelectedImagePreview(null);
+    if (imageInputRef.current) imageInputRef.current.value = '';
+  };
+
+  const handleParseImage = async () => {
+    if (!selectedImage) return;
+    if (showShabbatOverlay) {
+      setError(t.shabbatBlockError || 'לא ניתן לתזמן פעילויות בשבת. נחזור לפעילות בצאת השבת.');
+      return;
+    }
+    if (handleLoginRequired('parse')) return;
+    if (!checkGuestActionLimit()) return;
+    saveScheduleState();
+    setImageParsing(true);
+    setError("");
+    setSuccess("");
+    try {
+      const formData = new FormData();
+      formData.append('image', selectedImage);
+      const token = safeStorage.getItem('token') || safeStorage.getItem('calendai-jwt');
+      const res = await fetch(`${API_BASE}/api/parse-image`, {
+        method: "POST",
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+        body: formData,
+        credentials: "include"
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        if (data.error) throw new Error(data.error);
+        else throw new Error(t.failedRequest + " " + res.status);
+      }
+      setSuccess(data.replyMessage || `${t.successAdded} ${data.count || 0} ${t.successEvents}`);
+      setSelectedImage(null);
+      setSelectedImagePreview(null);
+      if (imageInputRef.current) imageInputRef.current.value = '';
+      if (data.aiCredits !== undefined) {
+        setUser(prev => prev ? { ...prev, aiCredits: data.aiCredits } : prev);
+      }
+      await fetchSchedule();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setImageParsing(false);
+    }
+  };
+
+  const imageInputRef = useRef(null);
+
   const handleParse = async () => {
     if (!inputText.trim()) return;
     if (showShabbatOverlay) {
@@ -926,6 +991,8 @@ function AppRoutes() {
     if (handleLoginRequired('parse')) return;
     if (!checkGuestActionLimit()) return;
     saveScheduleState();
+    // Clear input immediately and reset button state for responsive UX
+    setInputText("");
     setLoading(true);
     setError("");
     setSuccess("");
@@ -1526,6 +1593,46 @@ function AppRoutes() {
                 className="flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-5 py-2.5 rounded-full font-semibold transition-all duration-200 shadow-md shadow-blue-200 hover:shadow-lg disabled:from-blue-400 disabled:to-indigo-400 disabled:cursor-not-allowed disabled:shadow-none flex-1 sm:flex-none sm:w-44">
                 {loading ? <><Loader2 className="w-4 h-4 animate-spin" /> {t.parsing}</> : <><Sparkles className="w-5 h-5" /> {t.parseButton}</>}
               </button>
+              {/* Image Upload Button */}
+              <div className="relative">
+                <input
+                  ref={imageInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleImageSelect}
+                  className="hidden"
+                  id="image-upload-input"
+                />
+                {selectedImagePreview ? (
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={handleParseImage}
+                      disabled={imageParsing}
+                      className="flex items-center gap-1 px-3 py-2.5 rounded-full bg-emerald-500 text-white hover:bg-emerald-600 transition text-xs font-medium disabled:bg-emerald-300 disabled:cursor-not-allowed"
+                      title={t.parseImage || 'עבד תמונה'}
+                    >
+                      {imageParsing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+                      <span className="hidden sm:inline">{t.parseImage || 'עבד'}</span>
+                    </button>
+                    <button
+                      onClick={handleRemoveImage}
+                      className="p-2 text-slate-400 hover:text-red-500 transition"
+                      title={t.removeImage || 'הסר תמונה'}
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                ) : (
+                  <label
+                    htmlFor="image-upload-input"
+                    className="flex items-center gap-1 px-3 py-2.5 rounded-full text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition cursor-pointer text-xs"
+                    title={t.uploadImage || 'העלה תמונה'}
+                  >
+                    <Image className="w-4 h-4" />
+                    <span className="hidden sm:inline">{t.uploadImage || 'תמונה'}</span>
+                  </label>
+                )}
+              </div>
               <button onClick={handleUndo} disabled={scheduleHistoryRef.current.length === 0} className="flex items-center gap-2 text-slate-500 hover:text-slate-700 px-3 py-2.5 rounded-full hover:bg-slate-100 transition text-sm disabled:opacity-30 disabled:cursor-not-allowed">
                 <RotateCcw className="w-4 h-4" />
                 <span className="hidden sm:inline">{t.undo}</span>
@@ -1539,6 +1646,17 @@ function AppRoutes() {
                 {t.advanced}
               </button>
             </div>
+            {/* Image Preview */}
+            {selectedImagePreview && !selectedImage && (
+              <div className="mt-2 relative inline-block">
+                <img src={selectedImagePreview} alt="Preview" className="h-20 rounded-lg border border-slate-200 object-cover" />
+              </div>
+            )}
+            {selectedImagePreview && (
+              <div className="mt-2 relative inline-block">
+                <img src={selectedImagePreview} alt="Preview" className="h-20 rounded-lg border border-slate-200 object-cover" />
+              </div>
+            )}
 
             {/* ── Advanced Options have been removed ── */}
             {/* AI now parses recurrence and event type from natural language text intelligently */}

@@ -965,6 +965,120 @@ function cleanTitle(title) {
 }
 
 /**
+ * Parse an image (screenshot, class schedule,calendar image)using a vision-capable model via OpenRouter.
+ * The image is sent as base64 data URL, and the AI extracts schedule events from it.
+ * @param {string} base64Image - The base64-encoded image data (without data URL prefix).
+ * @param {string} [mimeType] - The MIME type of the image(e.g.,'image/jpeg','image/png').
+ * @returns {Promise<Object>} Parsed result with events, replyMessage, etc.
+ */
+async function parseImageWithVision(base64Image,mimeType = 'image/jpeg') {
+  initModel();
+  if (!openaiClient) {
+    const{ fallbackParseAdvice } = require('./aiFallback');
+    return fallbackParseAdvice('[תמונה] התמונה לא עובדה עקב חוסר ב-AI.'); 
+  }
+
+  const now = new Date();
+  const todayString = now.toLocaleDateString('he-IL',{ weekday: 'long', day: 'numeric', month: 'numeric', year: 'numeric' });  
+  const dayNames = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']; 
+  const todayEnglish = dayNames[now.getDay()];
+
+  const systemInstruction = `You are an intelligent calendar assistant for the "CalendAI" app. Your job is to analyze an image (such as a screenshot of a class schedule, a calendar image, or a photo of written schedule notes) and extract all the events/schedule items visible in the image.
+
+Return a JSON array of events in this exact format:
+{
+  "events": [
+    {
+      "summary": "string — Clean title of the event, in Hebrew if detected",
+      "day": "string — English day name (Sunday, Monday, etc.)",
+      "startTime": "string — HH:MM in 24-hour format (e.g., 14:30 or 09:00)",
+      "endTime": "string — HH:MMin 24-hour format (e.g., 15:30 or 10:00)",
+      "recurrence": "string — 'once','weekly','daily','monthly','yearly'"
+    }
+  ],
+  "replyMessage": "string — Friendly Hebrew message summarizing what was found",
+  "reasoning": "string — Brief explanation of what was detected in the image"
+}
+
+RULES:
+1. Extract ALL visible schedule items from the image.
+2. If a day name is written in Hebrew (e.g., "יום ראשון","שני","שלישי", etc.),convert it to English.
+3. If no specific time is visible, use logical defaults (09:00 for morning, 14:00 for afternoon).
+4. If no specific duration is visible, default to 30 minutes per event.
+5. Set recurrence to "once" unless the image clearly indicates a recurring pattern (e.g., "every week". 
+6. The "summary" should be a clean title of the event/activity in the same language as the image.
+7. If the image contains no recognizable schedule information, return:
+   { "error": "לא זוהו אירועים בתמונה. נסה לצלם תמונה ברורה יותר של לוח הזמנים." }
+
+Current date context: ${todayString}, day: ${todayEnglish}`;
+
+  const userPrompt = [
+    {
+      type: 'text',
+      text: `Analyze this image and extract all the schedule events visible in it. Today is ${todayString} (${todayEnglish}). Respond in Hebrew.`
+    },
+    {
+      type: 'image_url',
+      image_url: {
+        url: `data:${mimeType};base64,${base64Image}`,
+        detail: 'high'
+      }
+    }
+  ];
+
+  try {
+    // Use a vision-capable model via OpenRouter
+    const visionModel = 'google/gemini-2.0-flash-exp';  // Supports vision
+    const completion = await openaiClient.chat.completions.create({
+      model: visionModel,
+      messages: [
+        { role: 'system', content: systemInstruction },
+        { role: 'user', content: userPrompt }
+      ],
+      temperature:0.2,
+      response_format: { type: 'json_object' },
+      max_tokens: 4096
+    });
+
+    const raw = completion.choices?.[0]?.message?.content || '{}';
+    const parsed = JSON.parse(raw);
+
+    // Handle error response
+    if (parsed.error) {
+      return {
+        isBlocked: false,
+        error: parsed.error,
+        events: [],
+        replyMessage: parsed.error
+      };
+    }
+
+    if (parsed.events && Array.isArray(parsed.events)) {
+      return {
+        reasoning: parsed.reasoning || 'Events extracted from image.',
+        replyMessage: parsed.replyMessage || `זוהו ${parsed.events.length} אירועים מהתמונה.`,
+        events: parsed.events.map(ev => ({
+          ...ev,
+          title: ev.summary || 'אירוע',
+          summary: ev.summary || 'אירוע'
+        }))
+      };
+    }
+
+    // Fallback
+    console.warn('Vision model returned unexpected structure, using fallback.');
+    const { fallbackParseAdvice } = require('./aiFallback');
+    return fallbackParseAdvice('[תמונה] לא זוהו אירועים.');
+
+  } catch (error) {
+    console.error('Vision parse failed:', error.message);
+    // Try fallback
+    const { fallbackParseAdvice } = require('./aiFallback');
+    return fallbackParseAdvice('[תמונה] שגיאה בעיבוד התמונה.');
+  }
+}
+
+/**
  * Parse a free-text scheduling request using the SMART TRACK.
  * This is used when the user makes a GENERAL request (e.g., "תמצא לי זמן לאימון מחר")
  * and the system MUST fetch existing events, inject them into the prompt,
@@ -1628,4 +1742,4 @@ async function rescheduleWithGemini(currentSchedule, reason) {
   }
 }
 
-module.exports = { parseWithGemini, parseWithGeminiSmart, rescheduleWithGemini, cleanTitle };
+module.exports = { parseWithGemini, parseWithGeminiSmart, parseImageWithVision, rescheduleWithGemini, cleanTitle };

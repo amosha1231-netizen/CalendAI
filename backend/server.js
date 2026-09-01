@@ -30,6 +30,8 @@ const fs = require('fs');
 const path = require('path');
 const rateLimit = require('express-rate-limit');
 const crypto = require('crypto'); // For Lemon Squeezy webhook HMAC signature verification
+const multer = require('multer');
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }); // 10MB max
 
 dotenv.config({ path: path.join(__dirname, '.env') });
 
@@ -39,13 +41,14 @@ dotenv.config({ path: path.join(__dirname, '.env') });
 
 // Safe import of AI service - if @google/generative-ai is missing,
 // the server still starts and uses the fallback parser.
-let parseWithGemini, parseWithGeminiSmart, rescheduleWithGemini, cleanTitle;
+let parseWithGemini, parseWithGeminiSmart, rescheduleWithGemini, cleanTitle, parseImageWithVision;
 try {
   const aiService = require('./services/aiService');
   parseWithGemini = aiService.parseWithGemini;
   parseWithGeminiSmart = aiService.parseWithGeminiSmart;
   rescheduleWithGemini = aiService.rescheduleWithGemini;
   cleanTitle = aiService.cleanTitle;
+  parseImageWithVision = aiService.parseImageWithVision;
   console.log('✅ AI Service loaded successfully');
 } catch (aiErr) {
   console.error('⚠️ Failed to load AI service:', aiErr.message);
@@ -53,6 +56,12 @@ try {
   // Provide safe fallbacks so the server never crashes
   const { fallbackParseAdvice } = require('./services/aiFallback');
   parseWithGemini = async (text, options = {}) => fallbackParseAdvice(text);
+  parseImageWithVision = async (base64Image, mimeType) => ({
+    isBlocked: false,
+    error: 'AI vision parsing unavailable - fallback mode',
+    events: [],
+    replyMessage: 'עיבוד תמונה לא זמין כרגע.'
+  });
   rescheduleWithGemini = async (currentSchedule, reason) => {
     throw new Error('AI reschedule unavailable - fallback mode');
   };
@@ -2103,6 +2112,129 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
  * Auth: Bearer Token (required)
  * Response: { success: true, message: "string", event: eventData }
  */
+// ──────────────────────────────────────────────
+// 8e. Parse Image (Vision / OCR) endpoint
+// ──────────────────────────────────────────────
+
+/**
+ * POST /api/parse-image
+ * Accepts an image upload (screenshot, class schedule, calendar image),
+ * sends it to a vision-capable AI model via OpenRouter, and returns
+ * parsed events that can be added to the schedule.
+ * Body: multipart/form-data with field "image" containing the file.
+ * Response: { success, events, replyMessage, aiCredits }
+ */
+app.post('/api/parse-image', aiLimiter, upload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, error: 'No image file uploaded.' });
+    }
+
+    const userId = getUserId(req);
+
+    // ── PAYG CREDIT CHECK: Block if user has no AI credits left ──
+    const creditCheck = await checkAICredits(userId);
+    if (!creditCheck.allowed) {
+      return res.status(402).json({ success: false, error: creditCheck.error });
+    }
+
+    // Convert the uploaded image buffer to base64
+    const base64Image = req.file.buffer.toString('base64');
+    const mimeType = req.file.mimetype || 'image/jpeg';
+
+    // Call the AI vision parser
+    const parsedResult = await parseImageWithVision(base64Image, mimeType);
+
+    // Handle errors from the vision model
+    if (parsedResult.error) {
+      return res.status(400).json({
+        success: false,
+        error: parsedResult.error,
+        replyMessage: parsedResult.replyMessage || parsedResult.error,
+        events: []
+      });
+    }
+
+    const { events: parsedEvents, replyMessage } = parsedResult;
+
+    if (!parsedEvents || parsedEvents.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'לא זוהו אירועים בתמונה.',
+        events: []
+      });
+    }
+
+    // Add parsed events to the user's schedule
+    const schedule = getUserSchedule(userId);
+    const todayName = getTodayDayName();
+    const addedEvents = [];
+    const shabbatFilteredEvents = [];
+
+    for (const event of parsedEvents) {
+      let day = event.day || todayName;
+      if (day === 'Today') {
+        day = todayName;
+      }
+
+      // ── HARD SHABBAT GUARD ──
+      if (isShabbat(day)) {
+        console.warn(`[Vision Shabbat Guard] Blocked event "${event.title}" with day "${day}".`);
+        shabbatFilteredEvents.push(event);
+        continue;
+      }
+
+      const eventRecurrence = event.recurrence || 'once';
+      const eventWithRecurrence = {
+        ...event,
+        day,
+        recurrence: eventRecurrence,
+        location: DEFAULT_LOCATION_ID
+      };
+
+      if (schedule[day]) {
+        schedule[day].push(eventWithRecurrence);
+      } else {
+        schedule['Today'].push(eventWithRecurrence);
+      }
+      addedEvents.push(eventWithRecurrence);
+    }
+
+    // If ALL events were filtered out for Shabbat, return an error
+    if (addedEvents.length === 0 && shabbatFilteredEvents.length > 0) {
+      return res.status(400).json({
+        success: false,
+        isBlocked: true,
+        blockedMessage: 'שבת שלום 🕯️ המערכת אינה מאפשרת קביעת פעילויות בשבת.',
+        events: []
+      });
+    }
+
+    syncTodayWithCurrentDay(schedule);
+    saveSchedulesNow();
+
+    // Save to MongoDB for logged-in users
+    if (mongoose.Types.ObjectId.isValid(userId)) {
+      await saveScheduleToMongo(userId, schedule);
+    }
+
+    // ── PAYG CREDIT DEDUCTION ──
+    const { remainingCredits } = await deductAICredit(userId);
+
+    res.json({
+      success: true,
+      events: addedEvents,
+      replyMessage: replyMessage || `זוהו ${addedEvents.length} אירועים מהתמונה.`,
+      aiCredits: remainingCredits,
+      count: addedEvents.length
+    });
+
+  } catch (error) {
+    console.error('Parse image error:', error);
+    res.status(500).json({ success: false, error: 'Failed to process image.' });
+  }
+});
+
 app.post('/api/events/quick-add', aiLimiter, async (req, res) => {
   try {
     const { text } = req.body;
