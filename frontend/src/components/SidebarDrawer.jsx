@@ -498,12 +498,20 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangC
                       setUpgradeLoading(true);
                       setUpgradeError("");
                       try {
-                        const res = await fetch('/api/payments/create-checkout-session', {
+                        const res = await fetch('/api/payments/create-checkout', {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json' },
                           credentials: 'include'
                         });
-                        const data = await res.json();
+                        // Handle empty or non-JSON responses safely
+                        let data;
+                        const text = await res.text();
+                        try {
+                          data = JSON.parse(text);
+                        } catch (parseErr) {
+                          console.error('Upgrade response was not valid JSON:', text);
+                          throw new Error(lang === 'he' ? 'תשובה לא תקינה מהשרת. נסה שוב מאוחר יותר.' : 'Invalid response from server. Please try again later.');
+                        }
                         if (!res.ok) throw new Error(data.error || 'Failed to create checkout session');
                         if (data.url) {
                           window.location.href = data.url;

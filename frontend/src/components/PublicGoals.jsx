@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { Search, Users, Trophy, CheckCircle, X, Plus, Loader2, ChevronDown, Filter } from "lucide-react";
+import { Search, Users, Trophy, CheckCircle, X, Plus, Loader2, ChevronDown, Filter, Check } from "lucide-react";
 import translations from "../i18n";
 import safeStorage from "../utils/safeStorage";
 
@@ -321,10 +321,10 @@ export default function PublicGoals({ lang, user, onClose, onJoinChallenge }) {
 
             <button
               onClick={() => setShowCreateForm(!showCreateForm)}
-              className="px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition text-sm font-medium flex items-center gap-1"
+              className="px-3 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition text-sm font-medium flex items-center gap-1"
             >
               <Plus className="w-4 h-4" />
-              {lang === "he" ? "צור אתגר" : "Create Goal"}
+              {lang === "he" ? "צור אתגר חדש" : "New Goal"}
             </button>
           </div>
         </div>
@@ -379,14 +379,14 @@ export default function PublicGoals({ lang, user, onClose, onJoinChallenge }) {
                 </select>
               </div>
               <div className="flex gap-2">
-                <button
-                  onClick={handleCreate}
-                  disabled={createLoading || !createTitle.trim()}
-                  className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2"
-                >
-                  {createLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                  {lang === "he" ? "צור אתגר" : "Create Goal"}
-                </button>
+                  <button
+                    onClick={handleCreate}
+                    disabled={createLoading || !createTitle.trim()}
+                    className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {createLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                    {lang === "he" ? "צור" : "Create"}
+                  </button>
                 <button
                   onClick={() => setShowCreateForm(false)}
                   className="px-4 py-2 bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-500 transition text-sm"

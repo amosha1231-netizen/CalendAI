@@ -7,7 +7,7 @@ const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
 const Goal = require('../models/Goal');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'calendai-jwt-secret-change-in-production';
+const JWT_SECRET = process.env.JWT_SECRET || 'calendai_secret';
 
 /**
  * Extract user ID from JWT Bearer token or session.
@@ -49,6 +49,10 @@ router.post('/create', async (req, res) => {
       return res.status(400).json({ error: 'נדרשת כותרת לאתגר.' });
     }
 
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({ error: 'מזהה משתמש לא תקין.' });
+    }
+
     const goal = await Goal.create({
       title: title.trim(),
       creatorId: new mongoose.Types.ObjectId(userId),
@@ -65,6 +69,10 @@ router.post('/create', async (req, res) => {
     res.status(201).json({ ok: true, goal });
   } catch (err) {
     console.error('Create goal error:', err);
+    // Always return JSON, never HTML — even on validation errors
+    if (err.name === 'ValidationError') {
+      return res.status(400).json({ error: 'נתוני האתגר לא תקינים. אנא בדוק את השדות.' });
+    }
     res.status(500).json({ error: 'שגיאה ביצירת האתגר.' });
   }
 });
