@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, Suspense, lazy } from 
 import { BrowserRouter } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Menu, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff, Home, Plus, Zap, ChevronDown, ChevronUp, FileText, Layout, Trophy, Image, Upload } from "lucide-react";
+import GlobalSearch from "./components/GlobalSearch";
 import MonthlyCalendar from "./components/MonthlyCalendar";
 import DayView from "./components/DayView";
 import ViewNavigation from "./components/ViewNavigation";
@@ -1482,15 +1483,36 @@ function AppRoutes() {
         )}
 
         {/* ── Minimal Header ── */}
-        <header className="px-4 py-3 flex items-center justify-between max-w-6xl mx-auto">
-          <div className="flex items-center gap-2">
+        <header className="px-4 py-3 flex items-center gap-2 max-w-6xl mx-auto">
+          {/* Left: Hamburger + Logo */}
+          <div className="flex items-center gap-2 shrink-0">
             <button onClick={() => setIsSidebarOpen(true)} className="flex items-center justify-center w-8 h-8 rounded-lg hover:bg-slate-100 transition text-slate-600">
               <Menu className="w-5 h-5" />
             </button>
             <Calendar className="w-6 h-6 text-blue-600" />
             <h1 className="text-lg font-bold text-slate-900">CalendAI</h1>
           </div>
-          <div className="flex items-center gap-2">
+
+          {/* Center: Global Search */}
+          <div className="hidden sm:flex flex-1 justify-center">
+            <GlobalSearch
+              lang={lang}
+              user={user}
+              onJoinChallenge={(goal) => {
+                fetchSchedule();
+                setSuccess(lang === "he" ? "🎯 הצטרפת לאתגר! האירוע נוסף ליומן." : "🎯 Joined the challenge! Event added to your schedule.");
+              }}
+              onViewProfile={(profileUser) => {
+                // For now, we open the PublicGoals modal as a way to discover more
+                // In the future this could open a dedicated profile page
+                setShowPublicGoals(true);
+              }}
+              onOpenPublicGoals={() => setShowPublicGoals(true)}
+            />
+          </div>
+
+          {/* Right: Credits, Trophy, Lang, Auth */}
+          <div className="flex items-center gap-2 shrink-0">
             {/* AI Credits Badge */}
             {(() => {
               const credits = user ? normalizeCredits(user.aiCredits) : undefined;
@@ -1519,6 +1541,19 @@ function AppRoutes() {
               <Trophy className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">{lang === "he" ? "אתגרים" : "Goals"}</span>
             </button>
+            {/* Mobile Search Toggle (visible on small screens) */}
+            <div className="sm:hidden flex-1 max-w-[120px]">
+              <GlobalSearch
+                lang={lang}
+                user={user}
+                onJoinChallenge={(goal) => {
+                  fetchSchedule();
+                  setSuccess(lang === "he" ? "🎯 הצטרפת לאתגר! האירוע נוסף ליומן." : "🎯 Joined the challenge! Event added to your schedule.");
+                }}
+                onViewProfile={(profileUser) => setShowPublicGoals(true)}
+                onOpenPublicGoals={() => setShowPublicGoals(true)}
+              />
+            </div>
             {/* Language Toggle - cycles through HE → EN → FR → ES → HE */}
             <button onClick={toggleLanguage} className="text-xs font-medium px-2.5 py-1.5 rounded-full border border-slate-200 text-slate-600 hover:bg-slate-50 transition">
               {LANGUAGE_NEXT_LABELS[lang] || '🌐 EN'}

@@ -4005,6 +4005,41 @@ app.use('/api/action-history', actionHistoryRoutes);
 app.use('/api/goals', goalRoutes);
 
 // ──────────────────────────────────────────────
+// User Search Endpoint — for GlobalSearch component
+// ──────────────────────────────────────────────
+
+/**
+ * GET /api/users/search
+ * Search users by displayName or email.
+ * Query: ?q=keyword
+ * Returns matching users (limited to 10).
+ */
+app.get('/api/users/search', async (req, res) => {
+  try {
+    const { q } = req.query;
+    if (!q || !q.trim()) {
+      return res.json({ users: [] });
+    }
+
+    const regex = new RegExp(q.trim(), 'i');
+    const users = await User.find({
+      $or: [
+        { displayName: { $regex: regex } },
+        { email: { $regex: regex } }
+      ]
+    })
+      .select('displayName photo email')
+      .limit(10)
+      .lean();
+
+    res.json({ users, count: users.length });
+  } catch (err) {
+    console.error('User search error:', err);
+    res.status(500).json({ error: 'שגיאה בחיפוש משתמשים.' });
+  }
+});
+
+// ──────────────────────────────────────────────
 // Action History Helper — logs user actions for undo
 // ──────────────────────────────────────────────
 const ActionHistory = require('./models/ActionHistory');
