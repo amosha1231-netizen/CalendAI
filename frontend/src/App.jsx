@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, Suspense, lazy } from "react";
 import { BrowserRouter } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
-import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Menu, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff, Home, Plus, Zap, ChevronDown, ChevronUp, FileText, Layout, Trophy, Image, Upload } from "lucide-react";
+import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Menu, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff, Home, Plus, Zap, ChevronDown, ChevronUp, FileText, Layout, Trophy, Image, Upload, Search } from "lucide-react";
 import GlobalSearch from "./components/GlobalSearch";
 import MonthlyCalendar from "./components/MonthlyCalendar";
 import DayView from "./components/DayView";
@@ -311,6 +311,7 @@ function AppRoutes() {
   const [showManualEvent, setShowManualEvent] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [showPublicGoals, setShowPublicGoals] = useState(false);
+  const [showMobileSearch, setShowMobileSearch] = useState(false);
 
   const [installPrompt, setInstallPrompt] = useState(null);
   const [showPwaPopup, setShowPwaPopup] = useState(false);
@@ -1483,7 +1484,7 @@ function AppRoutes() {
         )}
 
         {/* ── Minimal Header ── */}
-        <header className="px-4 py-3 flex items-center gap-2 max-w-6xl mx-auto">
+        <header className="px-4 py-3 flex flex-wrap items-center gap-2 max-w-6xl mx-auto">
           {/* Left: Hamburger + Logo */}
           <div className="flex items-center gap-2 shrink-0">
             <button onClick={() => setIsSidebarOpen(true)} className="flex items-center justify-center w-8 h-8 rounded-lg hover:bg-slate-100 transition text-slate-600">
@@ -1493,8 +1494,8 @@ function AppRoutes() {
             <h1 className="text-lg font-bold text-slate-900">CalendAI</h1>
           </div>
 
-          {/* Center: Global Search */}
-          <div className="hidden sm:flex flex-1 justify-center">
+          {/* Center: Global Search (desktop) */}
+          <div className="hidden sm:flex flex-1 justify-center min-w-0">
             <GlobalSearch
               lang={lang}
               user={user}
@@ -1503,16 +1504,14 @@ function AppRoutes() {
                 setSuccess(lang === "he" ? "🎯 הצטרפת לאתגר! האירוע נוסף ליומן." : "🎯 Joined the challenge! Event added to your schedule.");
               }}
               onViewProfile={(profileUser) => {
-                // For now, we open the PublicGoals modal as a way to discover more
-                // In the future this could open a dedicated profile page
                 setShowPublicGoals(true);
               }}
               onOpenPublicGoals={() => setShowPublicGoals(true)}
             />
           </div>
 
-          {/* Right: Credits, Trophy, Lang, Auth */}
-          <div className="flex items-center gap-2 shrink-0">
+          {/* Right: Credits, Trophy, Search Icon, Lang, Auth */}
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 ml-auto">
             {/* AI Credits Badge */}
             {(() => {
               const credits = user ? normalizeCredits(user.aiCredits) : undefined;
@@ -1521,57 +1520,71 @@ function AppRoutes() {
                 <button
                   onClick={handleBuyCredits}
                   disabled={checkoutLoading}
-                  className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full border shadow-sm transition ${
+                  className={`flex items-center gap-1 text-xs font-medium px-2 sm:px-3 py-1.5 rounded-full border shadow-sm transition ${
                     credits > 0
                       ? 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'
                       : 'bg-red-50 text-red-600 border-red-200 hover:bg-red-100 animate-pulse'
                   }`}
                 >
                   <Zap className="w-3.5 h-3.5" />
-                  <span>{credits}</span>
+                  <span className="text-[11px] sm:text-xs">{credits}</span>
                 </button>
               );
             })()}
             {/* Public Goals & Challenges Button */}
             <button
               onClick={() => setShowPublicGoals(true)}
-              className="flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 rounded-full border border-amber-200 text-amber-700 bg-amber-50 hover:bg-amber-100 transition"
+              className="flex items-center gap-1 text-xs font-medium px-2 sm:px-2.5 py-1.5 rounded-full border border-amber-200 text-amber-700 bg-amber-50 hover:bg-amber-100 transition"
               title={lang === "he" ? "🎯 אתגרים ומטרות משותפות" : "🎯 Public Goals & Challenges"}
             >
               <Trophy className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">{lang === "he" ? "אתגרים" : "Goals"}</span>
             </button>
-            {/* Mobile Search Toggle (visible on small screens) */}
-            <div className="sm:hidden flex-1 max-w-[120px]">
-              <GlobalSearch
-                lang={lang}
-                user={user}
-                onJoinChallenge={(goal) => {
-                  fetchSchedule();
-                  setSuccess(lang === "he" ? "🎯 הצטרפת לאתגר! האירוע נוסף ליומן." : "🎯 Joined the challenge! Event added to your schedule.");
-                }}
-                onViewProfile={(profileUser) => setShowPublicGoals(true)}
-                onOpenPublicGoals={() => setShowPublicGoals(true)}
-              />
-            </div>
-            {/* Language Toggle - cycles through HE → EN → FR → ES → HE */}
-            <button onClick={toggleLanguage} className="text-xs font-medium px-2.5 py-1.5 rounded-full border border-slate-200 text-slate-600 hover:bg-slate-50 transition">
+            {/* Mobile Search Icon Toggle */}
+            <button
+              onClick={() => setShowMobileSearch(prev => !prev)}
+              className="sm:hidden flex items-center justify-center w-8 h-8 rounded-lg hover:bg-slate-100 transition text-slate-500"
+              title={lang === "he" ? "חיפוש" : "Search"}
+            >
+              <Search className="w-4.5 h-4.5" />
+            </button>
+            {/* Language Toggle */}
+            <button onClick={toggleLanguage} className="text-[11px] sm:text-xs font-medium px-1.5 sm:px-2.5 py-1.5 rounded-full border border-slate-200 text-slate-600 hover:bg-slate-50 transition">
               {LANGUAGE_NEXT_LABELS[lang] || '🌐 EN'}
             </button>
             {/* Auth */}
             {user ? (
-              <button onClick={handleLogout} className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-full border border-slate-200 text-slate-600 hover:bg-slate-50 transition">
+              <button onClick={handleLogout} className="flex items-center gap-1 text-xs font-medium px-2 sm:px-2.5 py-1.5 rounded-full border border-slate-200 text-slate-600 hover:bg-slate-50 transition">
                 {user?.photo ? <img src={user.photo} alt="" className="w-5 h-5 rounded-full" /> : <User className="w-4 h-4" />}
                 <span className="hidden sm:inline">{t.logout}</span>
               </button>
             ) : (
-              <button onClick={() => handleLogin(lang)} className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full bg-blue-600 text-white hover:bg-blue-700 transition shadow-sm">
+              <button onClick={() => handleLogin(lang)} className="flex items-center gap-1 text-xs font-medium px-2 sm:px-3 py-1.5 rounded-full bg-blue-600 text-white hover:bg-blue-700 transition shadow-sm">
                 <LogIn className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline">{t.loginWithGoogle}</span>
               </button>
             )}
           </div>
         </header>
+
+        {/* Mobile Search Bar (collapsible, below header) */}
+        {showMobileSearch && (
+          <div className="sm:hidden px-4 pb-2 max-w-6xl mx-auto">
+            <GlobalSearch
+              lang={lang}
+              user={user}
+              onJoinChallenge={(goal) => {
+                fetchSchedule();
+                setSuccess(lang === "he" ? "🎯 הצטרפת לאתגר! האירוע נוסף ליומן." : "🎯 Joined the challenge! Event added to your schedule.");
+              }}
+              onViewProfile={(profileUser) => setShowPublicGoals(true)}
+              onOpenPublicGoals={() => {
+                setShowPublicGoals(true);
+                setShowMobileSearch(false);
+              }}
+            />
+          </div>
+        )}
 
         <main className="px-4 max-w-6xl mx-auto space-y-5">
           {/* ── AI Prompt Floating Card ── */}
