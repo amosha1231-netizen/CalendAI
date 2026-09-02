@@ -56,7 +56,7 @@ export default function PublicGoals({ lang, user, onClose, onJoinChallenge }) {
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [createTitle, setCreateTitle] = useState("");
-  const [createDay, setCreateDay] = useState("Monday");
+  const [createDay, setCreateDay] = useState("");
   const [createTime, setCreateTime] = useState("05:00");
   const [createAmPm, setCreateAmPm] = useState("AM");
   const [createCategory, setCreateCategory] = useState("general");
@@ -146,7 +146,7 @@ export default function PublicGoals({ lang, user, onClose, onJoinChallenge }) {
         body: JSON.stringify({
           title: createTitle.trim(),
           scheduleTime: formattedTime,
-          day: createDay,
+          day: createDay || "", // empty string = flexible, no day restriction
           category: createCategory
         })
       });
@@ -332,6 +332,9 @@ export default function PublicGoals({ lang, user, onClose, onJoinChallenge }) {
         {/* Create Form */}
         {showCreateForm && (
           <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-750">
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+              {lang === "he" ? "💡 אפשר להשאיר את היום ריק לאתגר גמיש ללא הגבלת יום" : "💡 You can leave the day empty for a flexible challenge without day restrictions"}
+            </p>
             <div className="space-y-3">
               <input
                 type="text"
@@ -346,6 +349,7 @@ export default function PublicGoals({ lang, user, onClose, onJoinChallenge }) {
                   onChange={(e) => setCreateDay(e.target.value)}
                   className="flex-1 min-w-[120px] border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                 >
+                  <option value="">{lang === "he" ? "📅 כל יום (גמיש)" : "📅 Any day (flexible)"}</option>
                   {Object.entries(dayNames).map(([key, label]) => (
                     <option key={key} value={key}>{label}</option>
                   ))}
@@ -494,7 +498,7 @@ export default function PublicGoals({ lang, user, onClose, onJoinChallenge }) {
                             </div>
                             <div className="flex items-center gap-3 mt-1 text-xs text-gray-500 dark:text-gray-400 flex-wrap">
                               <span>👤 {goal.creatorId?.displayName || "Unknown"}</span>
-                              {goal.scheduleTime && <span>📅 {formatSchedule(goal)}</span>}
+                              {goal.scheduleTime && goal.day && <span>📅 {formatSchedule(goal)}</span>}
                               <span>👥 {goal.participantCount || 0} {lang === "he" ? "משתתפים" : "participants"}</span>
                               {goal.completedCount > 0 && (
                                 <span className="text-green-600 dark:text-green-400">✅ {goal.completedCount} {lang === "he" ? "השלימו" : "completed"}</span>
