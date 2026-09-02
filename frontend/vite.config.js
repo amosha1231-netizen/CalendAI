@@ -21,7 +21,7 @@ export default defineConfig({
     minify: false,
     outDir: "dist",
     rollupOptions: {
-      external: ['@capacitor/preferences']
+      external: ['@capacitor/preferences', '@hebcal/core']
     }
   }
 });
