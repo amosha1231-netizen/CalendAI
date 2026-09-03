@@ -4083,6 +4083,22 @@ app.get('/api/shabbat/status', (_req, res) => {
 });
 
 // ──────────────────────────────────────────────
+// Global Error Handler Middleware — ensures ALL API errors return JSON
+// Must be defined BEFORE the catch-all '*' route.
+// ──────────────────────────────────────────────
+app.use((err, req, res, next) => {
+  // Only handle errors on /api/ routes
+  if (req.path && req.path.startsWith('/api/')) {
+    console.error('[GlobalErrorHandler]', err.message || err);
+    return res.status(err.status || 500).json({
+      error: err.message || 'שגיאה פנימית. אנא נסה שוב מאוחר יותר.'
+    });
+  }
+  // For non-API routes, pass to the default Express error handler
+  next(err);
+});
+
+// ──────────────────────────────────────────────
 // 12. Serve frontend for any non-API route
 // ──────────────────────────────────────────────
 app.get('*', (req, res) => {

@@ -47,13 +47,23 @@ export default function DayView({
 
   const timeToMinutes = (timeStr) => {
     if (!timeStr) return -1;
-    const match = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
-    if (!match) return -1;
-    let h = parseInt(match[1], 10);
-    const m = parseInt(match[2], 10);
-    if (match[3].toUpperCase() === 'PM' && h !== 12) h += 12;
-    if (match[3].toUpperCase() === 'AM' && h === 12) h = 0;
-    return h * 60 + m;
+    // Try 12-hour AM/PM format first (e.g., "03:00 PM", "05:00 AM")
+    const ampmMatch = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+    if (ampmMatch) {
+      let h = parseInt(ampmMatch[1], 10);
+      const m = parseInt(ampmMatch[2], 10);
+      if (ampmMatch[3].toUpperCase() === 'PM' && h !== 12) h += 12;
+      if (ampmMatch[3].toUpperCase() === 'AM' && h === 12) h = 0;
+      return h * 60 + m;
+    }
+    // Fallback to 24-hour format (e.g., "15:00", "09:30")
+    const h24Match = timeStr.match(/(\d{1,2}):(\d{2})/);
+    if (h24Match) {
+      const h = parseInt(h24Match[1], 10);
+      const m = parseInt(h24Match[2], 10);
+      return h * 60 + m;
+    }
+    return -1;
   };
 
   const getEventsForHour = (hour) => {
