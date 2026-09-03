@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef, Suspense, lazy } from "react";
+import { motion } from "framer-motion";
 import { BrowserRouter } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Menu, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff, Home, Plus, Zap, ChevronDown, ChevronUp, FileText, Layout, Trophy, Image, Upload, Search } from "lucide-react";
+import { staggerContainerVariants, staggerItemVariants } from "./hooks/useStaggeredAnimation";
 import GlobalSearch from "./components/GlobalSearch";
 import MonthlyCalendar from "./components/MonthlyCalendar";
 import DayView from "./components/DayView";
@@ -1795,7 +1797,12 @@ function AppRoutes() {
 
             {/* Weekly View (compact grid, original style) */}
             {calendarView === 'weekly' && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <motion.div
+                variants={staggerContainerVariants}
+                initial="hidden"
+                animate="visible"
+                className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"
+              >
                 {orderedDayKeys.map(dayKey => {
                   if (dayKey === "Today" && (!schedule[dayKey] || schedule[dayKey].length === 0)) return null;
                   const dayEvents = getFilteredEvents(dayKey);
@@ -1870,7 +1877,7 @@ function AppRoutes() {
                     </div>
                   );
                 })}
-              </div>
+              </motion.div>
             )}
 
             {/* Monthly & Yearly */}
