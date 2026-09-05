@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, Suspense, lazy } from 
 import { motion } from "framer-motion";
 import { BrowserRouter } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
-import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Menu, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff, Home, Plus, Zap, ChevronDown, ChevronUp, FileText, Layout, Trophy, Image, Upload, Search } from "lucide-react";
+import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Menu, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff, Home, Plus, Zap, ChevronDown, ChevronUp, FileText, Layout, Trophy, Image, Upload, Search, CalendarPlus } from "lucide-react";
 import { staggerContainerVariants, staggerItemVariants } from "./hooks/useStaggeredAnimation";
 import GlobalSearch from "./components/GlobalSearch";
 import MonthlyCalendar from "./components/MonthlyCalendar";
@@ -29,6 +29,25 @@ import translations from "./i18n";
 import safeStorage from "./utils/safeStorage";
 import { isIosWhatsApp, isIosSafari, isIosNonSafari, isStandalone } from "./utils/browserDetection";
 import { normalizeCredits, normalizeUserCredits } from "./utils/credits";
+
+// ── JWT Decode helper (client-side expiry check) ──
+function decodeJwtPayload(token) {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const payload = JSON.parse(atob(parts[1]));
+    return payload;
+  } catch (e) {
+    return null;
+  }
+}
+
+function isJwtExpired(token) {
+  const payload = decodeJwtPayload(token);
+  if (!payload || !payload.exp) return true;
+  const now = Math.floor(Date.now() / 1000);
+  return payload.exp < now;
+}
 
 // ── Module-level declarations (using var/function to avoid TDZ) ──
 var API_BASE = import.meta.env.VITE_API_URL || "";
@@ -210,8 +229,13 @@ function AppRoutes() {
   const [currentView, setCurrentView] = useState(() => {
     if (intentRef.current.wantsBooking) return 'booking';
     try {
-      const isLoggedIn = localStorage.getItem('calendai-isLoggedIn') === 'true' || !!localStorage.getItem('calendai-jwt') || !!localStorage.getItem('token');
-      return isLoggedIn ? 'dashboard' : 'landing';
+      // Check if we have a valid (non-expired) JWT token stored
+      const token = localStorage.getItem('calendai-jwt') || localStorage.getItem('token');
+      if (token && !isJwtExpired(token)) return 'dashboard';
+      // Fallback to isLoggedIn flag for backward compatibility
+      const isLoggedIn = localStorage.getItem('calendai-isLoggedIn') === 'true';
+      if (isLoggedIn) return 'dashboard';
+      return 'landing';
     } catch { return 'landing'; }
   });
   const [guestBookingId, setGuestBookingId] = useState(() => {
@@ -231,6 +255,27 @@ function AppRoutes() {
     if (isAuthenticated) {
       setCurrentView('dashboard');
     }
+  }, [isAuthenticated]);
+
+  // ── Re-check view when user returns to the app (iOS visibility fix) ──
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (!document.hidden && !isAuthenticated) {
+        // Check if we have a valid token that wasn't picked up yet
+        try {
+          const token = localStorage.getItem('calendai-jwt') || localStorage.getItem('token');
+          if (token && !isJwtExpired(token)) {
+            setCurrentView('dashboard');
+          }
+        } catch (e) {}
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('focus', handleVisibility);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('focus', handleVisibility);
+    };
   }, [isAuthenticated]);
 
   const [schedule, setSchedule] = useState({
@@ -1643,6 +1688,15 @@ function AppRoutes() {
                 className="flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-5 py-2.5 rounded-full font-semibold transition-all duration-200 shadow-md shadow-blue-200 hover:shadow-lg disabled:from-blue-400 disabled:to-indigo-400 disabled:cursor-not-allowed disabled:shadow-none flex-1 sm:flex-none sm:w-44">
                 {loading ? <><Loader2 className="w-4 h-4 animate-spin" /> {t.parsing}</> : <><Sparkles className="w-5 h-5" /> {t.parseButton}</>}
               </button>
+              {/* Prominent Schedule Event Button */}
+              <button
+                onClick={() => setShowManualEvent(true)}
+                className="flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white px-5 py-2.5 rounded-full font-semibold transition-all duration-200 shadow-md shadow-emerald-200 hover:shadow-lg flex-1 sm:flex-none sm:w-48"
+                title={t.manualEventTitle || 'הוספת אירוע ידנית'}
+              >
+                <CalendarPlus className="w-5 h-5" />
+                <span className="whitespace-nowrap">{t.manualEvent || 'אירוע ידני'}</span>
+              </button>
               {/* Image Upload Button */}
               <div className="relative">
                 <input
@@ -1895,6 +1949,15 @@ function AppRoutes() {
             <button onClick={() => { window.location.href = '/terms'; }} className="inline-flex items-center gap-1 text-slate-400 hover:text-slate-600 transition"><FileText className="w-3 h-3" /> {t.footerTerms}</button>
           </div>
         </footer>
+
+        {/* ── Floating Action Button (FAB) ── */}
+        <button
+          onClick={() => setShowManualEvent(true)}
+          className="fixed bottom-20 right-5 z-40 w-14 h-14 bg-gradient-to-br from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white rounded-full shadow-xl shadow-emerald-200/60 hover:shadow-2xl hover:shadow-emerald-300/60 hover:scale-110 active:scale-95 transition-all duration-200 flex items-center justify-center"
+          title={t.manualEventTitle || 'הוספת אירוע'}
+        >
+          <CalendarPlus className="w-6 h-6" />
+        </button>
 
         {/* ── Bottom Navigation Bar ── */}
         <nav className="fixed bottom-0 left-0 right-0 z-50 bg-white/80 backdrop-blur-lg border-t border-slate-200/60 safe-area-bottom">
@@ -2475,6 +2538,7 @@ function AppRoutes() {
           t={t}
           lang={lang}
           user={user}
+          authLoading={authLoading}
           onClose={() => setShowManualEvent(false)}
           onSuccess={() => {
             setShowManualEvent(false);

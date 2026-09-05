@@ -13,6 +13,25 @@ export function useAuth() {
   return ctx;
 }
 
+// ── JWT Decode helper (client-side expiry check) ──
+function decodeJwtPayload(token) {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const payload = JSON.parse(atob(parts[1]));
+    return payload;
+  } catch (e) {
+    return null;
+  }
+}
+
+function isJwtExpired(token) {
+  const payload = decodeJwtPayload(token);
+  if (!payload || !payload.exp) return true;
+  const now = Math.floor(Date.now() / 1000);
+  return payload.exp < now;
+}
+
 // ── JWT Token Management ──
 // CRITICAL: Always persist to BOTH safeStorage AND localStorage directly.
 // safeStorage wraps localStorage with try/catch but has an in-memory fallback
@@ -93,17 +112,16 @@ export function AuthProvider({ children }) {
   }, []);
   const [isPro, setIsPro] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
-    // Check BOTH safeStorage and localStorage directly for the token.
-    // This ensures the token survives page reloads even if safeStorage
-    // fell back to its in-memory store on the previous session.
-    return Boolean(getJwtToken());
+    const token = getJwtToken();
+    // Only mark as authenticated if the token is not expired
+    if (token && !isJwtExpired(token)) return true;
+    return false;
   });
   const [authLoading, setAuthLoading] = useState(true); // true until first auth check completes
   const [authStatus, setAuthStatus] = useState('checking'); // 'checking' | 'authenticated' | 'guest'
 
-  // Guard: ensures the auth check effect runs exactly once ever
+  // Guard: ensures the initial mount auth check effect runs exactly once
   const hasCheckedAuth = useRef(false);
-  const cancelledRef = useRef(false);
 
   // ── Sync guest temp data to backend after login ──
   const syncGuestData = useCallback(async () => {
@@ -135,34 +153,62 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
-  // ── checkAuth: single-shot auth verification (no retries, no loops) ──
-  const checkAuth = useCallback(async () => {
-    if (cancelledRef.current) return;
+  // ── verifyAuthWithServer: single-shot auth verification ──
+  // Does NOT clear state on transient errors. Only clears on confirmed expired token.
+  const verifyAuthWithServer = useCallback(async () => {
+    const token = getJwtToken();
 
+    // No token → guest, no need to call the server
+    if (!token) {
+      setAuthStatus('guest');
+      setAuthLoading(false);
+      return;
+    }
+
+    // Token exists but is expired locally → clear immediately
+    if (isJwtExpired(token)) {
+      clearJwtToken();
+      safeStorage.removeItem('calendai-isLoggedIn');
+      safeStorage.removeItem('calendai-user');
+      localStorage.removeItem('calendai-isLoggedIn');
+      localStorage.removeItem('calendai-user');
+      setUserRaw(null);
+      setIsAuthenticated(false);
+      setAuthStatus('guest');
+      setAuthLoading(false);
+      return;
+    }
+
+    // Token exists and is not expired → call /api/auth/me exactly once
     try {
-      const token = getJwtToken();
-
-      // No token → guest, no need to call the server
-      if (!token) {
-        setAuthStatus('guest');
-        setAuthLoading(false);
-        return;
-      }
-
-      // Token exists → call /api/auth/me exactly once
       const res = await api.get(`/api/auth/me?t=${Date.now()}`, {
         cache: 'no-store',
         validateStatus: false
       });
 
-      // ── 401 Unauthorized → clear everything, mark as guest ──
+      // ── 401 Unauthorized → check if token is actually expired before clearing ──
       if (res.status === 401) {
+        // The axios interceptor already checked this and kept the token if valid.
+        // Do a double-check here: if token is still valid, keep the user logged in
+        // with cached data. The server may be cold-starting or the session cookie
+        // was cleared by iOS.
+        const currentToken = getJwtToken();
+        if (currentToken && !isJwtExpired(currentToken)) {
+          // Token is valid → keep the optimistic auth state
+          // The user stays logged in with cached data until the server recovers.
+          console.warn('[AuthContext] 401 from server but JWT is still valid. Keeping auth state.');
+          setAuthStatus('authenticated');
+          setAuthLoading(false);
+          return;
+        }
+
+        // Token is actually expired → clear everything
         clearJwtToken();
         safeStorage.removeItem('calendai-isLoggedIn');
         safeStorage.removeItem('calendai-user');
         localStorage.removeItem('calendai-isLoggedIn');
         localStorage.removeItem('calendai-user');
-        setUser(null);
+        setUserRaw(null);
         setIsAuthenticated(false);
         setAuthStatus('guest');
         setAuthLoading(false);
@@ -182,7 +228,7 @@ export function AuthProvider({ children }) {
       const data = res.data;
       if (data.user) {
         const normalizedUser = normalizeUserCredits(data.user);
-        setUser(normalizedUser);
+        setUserRaw(normalizedUser);
         setIsPro(data.user?.isPro === true || data.user?.isPro === 'true');
         setIsAuthenticated(true);
         setAuthStatus('authenticated');
@@ -215,9 +261,14 @@ export function AuthProvider({ children }) {
       }
     } catch (e) {
       // Network error → do NOT clear token, do NOT retry
+      // Keep the user logged in with cached data
       console.warn('Auth check failed (network error):', e);
       const token = getJwtToken();
-      setAuthStatus(token ? 'authenticated' : 'guest');
+      if (token && !isJwtExpired(token)) {
+        setAuthStatus('authenticated');
+      } else {
+        setAuthStatus('guest');
+      }
       setAuthLoading(false);
     }
   }, [syncGuestData]);
@@ -229,8 +280,6 @@ export function AuthProvider({ children }) {
   }, []);
 
   // ── Set Authorization header from localStorage token on app init ──
-  // This ensures API calls include the bearer token even on page refresh
-  // before AuthContext's useEffect processes the stored token.
   useEffect(() => {
     const token = getJwtToken();
     if (token) {
@@ -241,25 +290,23 @@ export function AuthProvider({ children }) {
   const handleLogout = useCallback(async () => {
     try {
       await fetch(`${API_BASE}/api/auth/logout`, { method: "POST", credentials: "include" });
-      setUser(null);
-      setIsPro(false);
-      setIsAuthenticated(false);
-      setAuthStatus('guest');
-      clearJwtToken();
-      safeStorage.removeItem('calendai-isLoggedIn');
-      safeStorage.removeItem('calendai-user');
-      localStorage.removeItem('calendai-isLoggedIn');
-      localStorage.removeItem('calendai-user');
     } catch (err) { console.error(err); }
+    setUserRaw(null);
+    setIsPro(false);
+    setIsAuthenticated(false);
+    setAuthStatus('guest');
+    clearJwtToken();
+    safeStorage.removeItem('calendai-isLoggedIn');
+    safeStorage.removeItem('calendai-user');
+    localStorage.removeItem('calendai-isLoggedIn');
+    localStorage.removeItem('calendai-user');
   }, []);
 
   // ── Safety Fallback Timer ──
   // Forces loading to false after 3 seconds to prevent infinite loading state.
   useEffect(() => {
     const safetyTimer = setTimeout(() => {
-      if (authLoading) {
-        setAuthLoading(false);
-      }
+      setAuthLoading(false);
     }, 3000);
     return () => clearTimeout(safetyTimer);
   }, []);
@@ -269,9 +316,6 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     if (hasCheckedAuth.current) return;
     hasCheckedAuth.current = true;
-
-    let cancelled = false;
-    cancelledRef.current = false;
 
     // Parse initial URL intent
     const params = new URLSearchParams(window.location.search);
@@ -310,7 +354,7 @@ export function AuthProvider({ children }) {
     }
 
     // ── Step 2: Check auth with the token from localStorage ──
-    const verifyAuth = async () => {
+    const doInitialAuth = async () => {
       const token = getJwtToken();
       if (!token) {
         setAuthStatus('guest');
@@ -330,7 +374,7 @@ export function AuthProvider({ children }) {
         const cachedUser = safeStorage.getItem('calendai-user');
         if (cachedUser) {
           const parsed = normalizeUserCredits(JSON.parse(cachedUser));
-          setUser(parsed);
+          setUserRaw(parsed);
           setIsPro(parsed?.isPro === true || parsed?.isPro === 'true');
         }
       } catch (e) {}
@@ -346,7 +390,7 @@ export function AuthProvider({ children }) {
         if (res.status === 200 && res.data) {
           const userData = res.data.user || res.data;
           const normalizedUserData = normalizeUserCredits(userData);
-          setUser(normalizedUserData);
+          setUserRaw(normalizedUserData);
           setIsAuthenticated(true);
           setAuthStatus('authenticated');
           // Save user data to localStorage for persistence
@@ -355,13 +399,20 @@ export function AuthProvider({ children }) {
             localStorage.setItem('calendai-user', JSON.stringify(normalizedUserData));
           } catch (e) {}
         } else if (res.status === 401) {
-          // 401 Unauthorized → token expired/invalid, clear and treat as guest
+          // 401 Unauthorized → check if token is actually expired
+          const currentToken = getJwtToken();
+          if (currentToken && !isJwtExpired(currentToken)) {
+            // Token is still valid → keep the optimistic auth state
+            console.warn('[AuthContext:init] 401 from server but JWT is still valid. Keeping auth state.');
+            return;
+          }
+          // Token is actually expired → clear
           clearJwtToken();
           safeStorage.removeItem('calendai-isLoggedIn');
           safeStorage.removeItem('calendai-user');
           localStorage.removeItem('calendai-isLoggedIn');
           localStorage.removeItem('calendai-user');
-          setUser(null);
+          setUserRaw(null);
           setIsAuthenticated(false);
           setAuthStatus('guest');
         }
@@ -374,13 +425,112 @@ export function AuthProvider({ children }) {
       }
     };
 
-    verifyAuth();
+    doInitialAuth();
+  }, []); // מערך תלויות ריק לחלוטין!
+
+  // ── VISIBILITY CHANGE HANDLER ──
+  // CRITICAL: When the user switches away from the app (e.g., to another tab or app on iOS)
+  // and comes back, the iOS Safari WebView may have cleared the session cookie.
+  // This handler re-validates the auth state by calling /api/auth/me.
+  // If the server returns a 200 with valid user data, the session is refreshed.
+  // If the server returns 401 but the JWT is still valid, we keep the auth state.
+  useEffect(() => {
+    let isChecking = false;
+
+    const handleVisibilityChange = async () => {
+      // Only check when the page becomes visible again (user returns to the app)
+      if (document.hidden) return;
+      if (isChecking) return;
+      isChecking = true;
+
+      // Add a small delay to let the network settle (iOS Safari needs this)
+      await new Promise(resolve => setTimeout(resolve, 200));
+
+      const token = getJwtToken();
+      if (!token) {
+        isChecking = false;
+        return;
+      }
+
+      // Check if token is expired locally first
+      if (isJwtExpired(token)) {
+        console.warn('[AuthContext:visibility] Token expired. Clearing state.');
+        clearJwtToken();
+        setUserRaw(null);
+        setIsAuthenticated(false);
+        setAuthStatus('guest');
+        isChecking = false;
+        return;
+      }
+
+      // Token is valid → verify with the server
+      try {
+        const res = await api.get(`/api/auth/me?t=${Date.now()}`, {
+          cache: 'no-store',
+          validateStatus: false
+        });
+
+        if (res.status === 200 && res.data?.user) {
+          // Server confirmed the user is authenticated
+          const normalizedUser = normalizeUserCredits(res.data.user);
+          setUserRaw(normalizedUser);
+          setIsAuthenticated(true);
+          setIsPro(res.data.user?.isPro === true || res.data.user?.isPro === 'true');
+          setAuthStatus('authenticated');
+          // Save user data to localStorage
+          try {
+            safeStorage.setItem('calendai-user', JSON.stringify(normalizedUser));
+            localStorage.setItem('calendai-user', JSON.stringify(normalizedUser));
+          } catch (e) {}
+        } else if (res.status === 401) {
+          // Server returned 401 but JWT is still valid (checked above)
+          // This means the server's session was lost (e.g., Render cold start, iOS cookie clear)
+          // Keep the user logged in — the JWT will be re-validated on next request
+          console.warn('[AuthContext:visibility] Server returned 401 but JWT is valid. Keeping auth state.');
+        } else {
+          // Any other status (5xx, etc.) → keep the auth state
+          console.warn(`[AuthContext:visibility] Server returned ${res.status}. Keeping auth state.`);
+        }
+      } catch (err) {
+        // Network error → keep the auth state
+        console.warn('[AuthContext:visibility] Network error during re-validation. Keeping auth state.', err);
+      }
+
+      isChecking = false;
+    };
+
+    // Listen for visibility changes (page becomes visible after being hidden)
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    // Also listen for the 'pageshow' event which fires when the page is loaded from the
+    // bfcache (back/forward cache) on iOS Safari. This is CRITICAL because iOS Safari
+    // may keep the page in bfcache and restore it without a full reload.
+    window.addEventListener('pageshow', handleVisibilityChange);
+
+    // Listen for 'focus' event on the window as a fallback for iOS Safari's
+    // WebView behavior where 'visibilitychange' may not fire reliably.
+    window.addEventListener('focus', handleVisibilityChange);
 
     return () => {
-      cancelled = true;
-      cancelledRef.current = true;
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('pageshow', handleVisibilityChange);
+      window.removeEventListener('focus', handleVisibilityChange);
     };
-  }, []); // מערך תלויות ריק לחלוטין!
+  }, []);
+
+  // ── EXPOSE checkAuth to allow manual re-validation (e.g., after a 401 on a non-auth endpoint) ──
+  // This is a lightweight check that looks at the stored token without calling the server.
+  const checkAuth = useCallback(() => {
+    const token = getJwtToken();
+    if (token && !isJwtExpired(token)) {
+      setIsAuthenticated(true);
+      setAuthStatus('authenticated');
+      return true;
+    }
+    setIsAuthenticated(false);
+    setAuthStatus('guest');
+    return false;
+  }, []);
 
   const value = {
     user,

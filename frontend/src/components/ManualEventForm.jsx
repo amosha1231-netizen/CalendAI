@@ -3,7 +3,7 @@ import { X, Calendar, Clock, Save, Loader2, CheckCircle, AlertCircle } from "luc
 
 var API_BASE = import.meta.env.VITE_API_URL || "";
 
-export default function ManualEventForm({ t, lang, onClose, onSuccess, user }) {
+export default function ManualEventForm({ t, lang, onClose, onSuccess, user, authLoading }) {
   const isRTL = lang === 'he';
   const [summary, setSummary] = useState("");
   const [eventDate, setEventDate] = useState(() => {
@@ -16,9 +16,16 @@ export default function ManualEventForm({ t, lang, onClose, onSuccess, user }) {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
+  // If auth is still loading, keep the modal open but show a subtle "syncing" note.
+  const isSyncing = authLoading && !user;
+
   const handleSave = async () => {
     if (!summary.trim() || !eventDate || !startTime || !endTime) {
       setError(t.manualEventRequired);
+      return;
+    }
+    if (isSyncing) {
+      setError(t.syncingAuth || 'מסנכרן משתמש... נסה שוב בעוד רגע');
       return;
     }
     setSaving(true);
@@ -109,6 +116,14 @@ export default function ManualEventForm({ t, lang, onClose, onSuccess, user }) {
           </div>
         )}
 
+        {/* Auth Syncing Note (Fallback UI when auth is loading) */}
+        {isSyncing && (
+          <div className="flex items-center gap-2 text-xs text-slate-500 mb-4 bg-slate-50 p-2.5 rounded-lg border border-slate-200">
+            <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-500 shrink-0" />
+            <span>{t.syncingAuth || 'מסנכרן משתמש...'}</span>
+          </div>
+        )}
+
         {/* Form Fields */}
         <div className="space-y-4">
           {/* Summary */}
@@ -178,7 +193,7 @@ export default function ManualEventForm({ t, lang, onClose, onSuccess, user }) {
           </button>
           <button
             onClick={handleSave}
-            disabled={saving || !summary.trim() || !eventDate || !startTime || !endTime}
+            disabled={saving || !summary.trim() || !eventDate || !startTime || !endTime || isSyncing}
             className="flex items-center gap-2 px-5 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:bg-blue-400 transition"
           >
             {saving ? (
