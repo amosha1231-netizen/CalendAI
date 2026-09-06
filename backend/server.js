@@ -4004,6 +4004,10 @@ app.use('/api/action-history', actionHistoryRoutes);
 // ── Public Goals & Challenges Routes ──
 app.use('/api/goals', goalRoutes);
 
+// ── Daily Log / Personal Journal Routes ──
+const dailyLogRoutes = require('./routes/dailyLogRoutes');
+app.use('/api/daily-log', dailyLogRoutes);
+
 // ──────────────────────────────────────────────
 // User Search Endpoint — for GlobalSearch component
 // ──────────────────────────────────────────────

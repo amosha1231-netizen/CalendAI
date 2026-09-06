@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, Suspense, lazy } from 
 import { motion } from "framer-motion";
 import { BrowserRouter } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
-import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Menu, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff, Home, Plus, Zap, ChevronDown, ChevronUp, FileText, Layout, Trophy, Image, Upload, Search, CalendarPlus } from "lucide-react";
+import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Menu, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff, Home, Plus, Zap, ChevronDown, ChevronUp, FileText, Layout, Trophy, Image, Upload, Search, CalendarPlus, BookOpen } from "lucide-react";
 import { staggerContainerVariants, staggerItemVariants } from "./hooks/useStaggeredAnimation";
 import GlobalSearch from "./components/GlobalSearch";
 import MonthlyCalendar from "./components/MonthlyCalendar";
@@ -17,6 +17,7 @@ import LuxuryLoader from "./components/LuxuryLoader";
 import ManualEventForm from "./components/ManualEventForm";
 import HistoryModal from "./components/HistoryModal";
 import PublicGoals from "./components/PublicGoals";
+import DailyJournal from "./components/DailyJournal";
 
 // ── Lazy-loaded page chunks ──
 const LandingPage = lazy(() => import("./components/LandingPage"));
@@ -358,6 +359,7 @@ function AppRoutes() {
   const [showManualEvent, setShowManualEvent] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [showPublicGoals, setShowPublicGoals] = useState(false);
+  const [showJournal, setShowJournal] = useState(false);
   const [showMobileSearch, setShowMobileSearch] = useState(false);
 
   const [installPrompt, setInstallPrompt] = useState(null);
@@ -1578,6 +1580,15 @@ function AppRoutes() {
                 </button>
               );
             })()}
+            {/* Daily Journal Button */}
+            <button
+              onClick={() => setShowJournal(true)}
+              className="flex items-center gap-1 text-xs font-medium px-2 sm:px-2.5 py-1.5 rounded-full border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition"
+              title={lang === "he" ? "📖 יומן אישי" : "📖 Daily Journal"}
+            >
+              <BookOpen className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">{lang === "he" ? "יומן" : "Journal"}</span>
+            </button>
             {/* Public Goals & Challenges Button */}
             <button
               onClick={() => setShowPublicGoals(true)}
@@ -2603,6 +2614,15 @@ function AppRoutes() {
           }}
         />
       )}
+
+      {/* Daily Journal Modal */}
+      <DailyJournal
+        isOpen={showJournal}
+        onClose={() => setShowJournal(false)}
+        lang={lang}
+        t={t}
+        user={user}
+      />
     </>
   );
 }

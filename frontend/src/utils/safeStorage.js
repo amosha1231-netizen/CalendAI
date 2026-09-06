@@ -121,45 +121,17 @@ const safeStorage = {
     }
   },
 
-  // ── Capacitor Persistent Sync (optional enhancement) ──
-  // On Capacitor (iOS/Android), localStorage persists naturally in WebView.
-  // @capacitor/preferences can be used as an additional backup layer.
-  // Call this to migrate any existing data to Capacitor Preferences.
+  // ── Capacitor Persistent Sync (web-only stub) ──
+  // On Render (web), Capacitor is not available. These methods are no-ops.
+  // On native mobile (iOS/Android), uncomment the real implementation and
+  // install @capacitor/preferences.
   async syncToCapacitor() {
-    try {
-      const { Preferences } = await import('@capacitor/preferences');
-      const keys = Object.keys(localStorage);
-      for (const key of keys) {
-        const value = localStorage.getItem(key);
-        if (value !== null) {
-          await Preferences.set({ key, value });
-        }
-      }
-    } catch (e) {
-      // Not running in Capacitor or @capacitor/preferences not installed
-    }
+    // web-only deployment — no-op
   },
 
   // Restore data from Capacitor Preferences to localStorage (if localStorage is empty)
   async restoreFromCapacitor() {
-    try {
-      const { Preferences } = await import('@capacitor/preferences');
-      const { keys } = await Preferences.keys();
-      for (const key of keys) {
-        if (!localStorage.getItem(key)) {
-          const { value } = await Preferences.get({ key });
-          if (value !== null) {
-            try {
-              localStorage.setItem(key, value);
-            } catch (e) {
-              memoryStore.set(key, value);
-            }
-          }
-        }
-      }
-    } catch (e) {
-      // Not running in Capacitor or @capacitor/preferences not installed
-    }
+    // web-only deployment — no-op
   },
 
   // Detect if running inside Capacitor native wrapper
