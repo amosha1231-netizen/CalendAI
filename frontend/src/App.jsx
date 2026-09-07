@@ -1560,7 +1560,7 @@ function AppRoutes() {
           </div>
 
           {/* Right: Credits, Trophy, Search Icon, Lang, Auth */}
-          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 ml-auto">
+          <div className="flex items-center gap-1 sm:gap-1.5 shrink-0 ml-auto">
             {/* AI Credits Badge */}
             {(() => {
               const credits = user ? normalizeCredits(user.aiCredits) : undefined;
@@ -1569,30 +1569,30 @@ function AppRoutes() {
                 <button
                   onClick={handleBuyCredits}
                   disabled={checkoutLoading}
-                  className={`flex items-center gap-1 text-xs font-medium px-2 sm:px-3 py-1.5 rounded-full border shadow-sm transition ${
+                  className={`flex items-center gap-1 text-xs font-medium px-1.5 sm:px-3 py-1.5 rounded-full border shadow-sm transition ${
                     credits > 0
                       ? 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'
                       : 'bg-red-50 text-red-600 border-red-200 hover:bg-red-100 animate-pulse'
                   }`}
                 >
-                  <Zap className="w-3.5 h-3.5" />
-                  <span className="text-[11px] sm:text-xs">{credits}</span>
+                  <Zap className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+                  <span className="text-[10px] sm:text-xs">{credits}</span>
                 </button>
               );
             })()}
-            {/* Daily Journal Button */}
+            {/* Daily Journal Button - hide on very small screens, show icon only */}
             <button
               onClick={() => setShowJournal(true)}
-              className="flex items-center gap-1 text-xs font-medium px-2 sm:px-2.5 py-1.5 rounded-full border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition"
+              className="hidden xs:flex items-center gap-1 text-xs font-medium px-1.5 sm:px-2.5 py-1.5 rounded-full border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition"
               title={lang === "he" ? "📖 יומן אישי" : "📖 Daily Journal"}
             >
               <BookOpen className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">{lang === "he" ? "יומן" : "Journal"}</span>
             </button>
-            {/* Public Goals & Challenges Button */}
+            {/* Public Goals & Challenges Button - hide on very small screens */}
             <button
               onClick={() => setShowPublicGoals(true)}
-              className="flex items-center gap-1 text-xs font-medium px-2 sm:px-2.5 py-1.5 rounded-full border border-amber-200 text-amber-700 bg-amber-50 hover:bg-amber-100 transition"
+              className="hidden xs:flex items-center gap-1 text-xs font-medium px-1.5 sm:px-2.5 py-1.5 rounded-full border border-amber-200 text-amber-700 bg-amber-50 hover:bg-amber-100 transition"
               title={lang === "he" ? "🎯 אתגרים ומטרות משותפות" : "🎯 Public Goals & Challenges"}
             >
               <Trophy className="w-3.5 h-3.5" />
@@ -1604,20 +1604,20 @@ function AppRoutes() {
               className="sm:hidden flex items-center justify-center w-8 h-8 rounded-lg hover:bg-slate-100 transition text-slate-500"
               title={lang === "he" ? "חיפוש" : "Search"}
             >
-              <Search className="w-4.5 h-4.5" />
+              <Search className="w-4 h-4" />
             </button>
             {/* Language Toggle */}
-            <button onClick={toggleLanguage} className="text-[11px] sm:text-xs font-medium px-1.5 sm:px-2.5 py-1.5 rounded-full border border-slate-200 text-slate-600 hover:bg-slate-50 transition">
+            <button onClick={toggleLanguage} className="text-[10px] sm:text-xs font-medium px-1 sm:px-2.5 py-1.5 rounded-full border border-slate-200 text-slate-600 hover:bg-slate-50 transition whitespace-nowrap">
               {LANGUAGE_NEXT_LABELS[lang] || '🌐 EN'}
             </button>
             {/* Auth */}
             {user ? (
-              <button onClick={handleLogout} className="flex items-center gap-1 text-xs font-medium px-2 sm:px-2.5 py-1.5 rounded-full border border-slate-200 text-slate-600 hover:bg-slate-50 transition">
+              <button onClick={handleLogout} className="flex items-center gap-1 text-xs font-medium px-1.5 sm:px-2.5 py-1.5 rounded-full border border-slate-200 text-slate-600 hover:bg-slate-50 transition">
                 {user?.photo ? <img src={user.photo} alt="" className="w-5 h-5 rounded-full" /> : <User className="w-4 h-4" />}
                 <span className="hidden sm:inline">{t.logout}</span>
               </button>
             ) : (
-              <button onClick={() => handleLogin(lang)} className="flex items-center gap-1 text-xs font-medium px-2 sm:px-3 py-1.5 rounded-full bg-blue-600 text-white hover:bg-blue-700 transition shadow-sm">
+              <button onClick={() => handleLogin(lang)} className="flex items-center gap-1 text-xs font-medium px-1.5 sm:px-3 py-1.5 rounded-full bg-blue-600 text-white hover:bg-blue-700 transition shadow-sm">
                 <LogIn className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline">{t.loginWithGoogle}</span>
               </button>
@@ -1646,9 +1646,9 @@ function AppRoutes() {
 
         <main className="px-4 max-w-6xl mx-auto space-y-5">
           {/* ── AI Prompt Floating Card ── */}
-          <div className="bg-slate-50 p-5 rounded-3xl shadow-sm border border-slate-100">
+          <div className="bg-slate-50 p-3 sm:p-5 rounded-2xl sm:rounded-3xl shadow-sm border border-slate-100">
             {/* Suggestion Chips */}
-            <div className="flex items-center gap-2 overflow-x-auto whitespace-nowrap py-1 mb-3" style={{ scrollbarWidth: 'none' }}>
+            <div className="flex items-center gap-1.5 overflow-x-auto whitespace-nowrap py-1 mb-3" style={{ scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch' }}>
               <span className="text-xs text-slate-400 shrink-0">{t.tryForExample}</span>
               {SUGGESTION_CHIPS.map((s, i) => (
                 <button key={i} onClick={() => setInputText(s)}
@@ -1694,19 +1694,19 @@ function AppRoutes() {
             </div>
 
             {/* Send Button */}
-            <div className="mt-3 flex items-center gap-2">
+            <div className="mt-3 flex flex-wrap items-center gap-2">
               <button onClick={handleParse} disabled={loading}
-                className="flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-5 py-2.5 rounded-full font-semibold transition-all duration-200 shadow-md shadow-blue-200 hover:shadow-lg disabled:from-blue-400 disabled:to-indigo-400 disabled:cursor-not-allowed disabled:shadow-none flex-1 sm:flex-none sm:w-44">
-                {loading ? <><Loader2 className="w-4 h-4 animate-spin" /> {t.parsing}</> : <><Sparkles className="w-5 h-5" /> {t.parseButton}</>}
+                className="flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-5 py-2.5 rounded-full font-semibold transition-all duration-200 shadow-md shadow-blue-200 hover:shadow-lg disabled:from-blue-400 disabled:to-indigo-400 disabled:cursor-not-allowed disabled:shadow-none flex-1 sm:flex-none sm:w-44 min-w-0">
+                {loading ? <><Loader2 className="w-4 h-4 animate-spin" /> <span className="truncate">{t.parsing}</span></> : <><Sparkles className="w-5 h-5 shrink-0" /> <span className="truncate">{t.parseButton}</span></>}
               </button>
               {/* Prominent Schedule Event Button */}
               <button
                 onClick={() => setShowManualEvent(true)}
-                className="flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white px-5 py-2.5 rounded-full font-semibold transition-all duration-200 shadow-md shadow-emerald-200 hover:shadow-lg flex-1 sm:flex-none sm:w-48"
+                className="flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white px-5 py-2.5 rounded-full font-semibold transition-all duration-200 shadow-md shadow-emerald-200 hover:shadow-lg flex-1 sm:flex-none sm:w-48 min-w-0"
                 title={t.manualEventTitle || 'הוספת אירוע ידנית'}
               >
-                <CalendarPlus className="w-5 h-5" />
-                <span className="whitespace-nowrap">{t.manualEvent || 'אירוע ידני'}</span>
+                <CalendarPlus className="w-5 h-5 shrink-0" />
+                <span className="truncate">{t.manualEvent || 'אירוע ידני'}</span>
               </button>
               {/* Image Upload Button */}
               <div className="relative">
@@ -1740,25 +1740,25 @@ function AppRoutes() {
                 ) : (
                   <label
                     htmlFor="image-upload-input"
-                    className="flex items-center gap-1 px-3 py-2.5 rounded-full text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition cursor-pointer text-xs"
+                    className="flex items-center justify-center gap-1 w-9 h-9 sm:w-auto sm:px-3 sm:py-2.5 rounded-full text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition cursor-pointer text-xs"
                     title={t.uploadImage || 'העלה תמונה'}
                   >
-                    <Image className="w-4 h-4" />
+                    <Image className="w-4 h-4 shrink-0" />
                     <span className="hidden sm:inline">{t.uploadImage || 'תמונה'}</span>
                   </label>
                 )}
               </div>
-              <button onClick={handleUndo} disabled={scheduleHistoryRef.current.length === 0} className="flex items-center gap-2 text-slate-500 hover:text-slate-700 px-3 py-2.5 rounded-full hover:bg-slate-100 transition text-sm disabled:opacity-30 disabled:cursor-not-allowed">
-                <RotateCcw className="w-4 h-4" />
+              <button onClick={handleUndo} disabled={scheduleHistoryRef.current.length === 0} className="flex items-center justify-center gap-1 text-slate-500 hover:text-slate-700 w-9 h-9 sm:px-3 sm:py-2.5 rounded-full hover:bg-slate-100 transition text-sm disabled:opacity-30 disabled:cursor-not-allowed">
+                <RotateCcw className="w-4 h-4 shrink-0" />
                 <span className="hidden sm:inline">{t.undo}</span>
               </button>
               {/* Advanced Toggle */}
               <button
                 onClick={() => setShowAdvanced(!showAdvanced)}
-                className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 px-3 py-2 rounded-full hover:bg-slate-100 transition"
+                className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 px-2.5 py-2 rounded-full hover:bg-slate-100 transition"
               >
                 {showAdvanced ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                {t.advanced}
+                <span className="hidden sm:inline">{t.advanced}</span>
               </button>
             </div>
             {/* Image Preview */}
@@ -1805,7 +1805,7 @@ function AppRoutes() {
           </div>
 
           {/* ── Schedule View with Navigation ── */}
-          <div className="bg-white p-5 rounded-3xl shadow-sm border border-slate-100">
+          <div className="bg-white p-3 sm:p-5 rounded-2xl sm:rounded-3xl shadow-sm border border-slate-100">
             <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
               <h2 className="text-lg font-bold text-slate-800">{t.weeklyScheduleTitle}</h2>
               <div className="flex items-center gap-2">
