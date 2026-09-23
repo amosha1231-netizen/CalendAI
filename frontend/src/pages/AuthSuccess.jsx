@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import safeStorage from '../utils/safeStorage';
 import LuxuryLoader from '../components/LuxuryLoader';
+import api from '../api/axios';
 
 export default function AuthSuccess() {
   const [searchParams] = useSearchParams();
@@ -14,20 +15,16 @@ export default function AuthSuccess() {
 
     async function handleAuth() {
       try {
-        // ── Step 1: Extract token from URL ──
-        const token = searchParams.get('token');
-
-        console.log('=== AuthSuccess loaded ===');
-        console.log('Captured Token from URL:', token);
-
-        if (!token) {
-          // No token in URL — navigate to home
-          console.warn('AuthSuccess: No token found in URL, redirecting to home.');
+        const code = searchParams.get('oauth_code');
+        if (!code) {
           navigate('/', { replace: true });
           return;
         }
+        window.history.replaceState({}, document.title, window.location.pathname);
 
-        // ── Step 2: Save token to all storage locations ──
+        const exchange = await api.post('/api/auth/oauth-exchange', { code });
+        const token = exchange.data?.token;
+        if (!token) throw new Error('OAuth code exchange failed.');
         try {
           safeStorage.setItem('token', token);
           safeStorage.setItem('calendai-jwt', token);
@@ -39,8 +36,6 @@ export default function AuthSuccess() {
           // localStorage may be unavailable (private mode)
         }
 
-        // ── Step 3: Trigger auth check in AuthContext ──
-        // This will call /api/auth/me and update the auth state
         if (typeof checkAuth === 'function') {
           await checkAuth();
         }

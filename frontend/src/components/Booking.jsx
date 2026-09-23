@@ -288,9 +288,13 @@ export default function Booking({ schedule, lang, t, onClose, onConfirm, user })
     
     try {
       // Call backend to create a locked booking link with exact time
+      const authToken = localStorage.getItem('token') || localStorage.getItem('calendai-jwt');
       const res = await fetch(`${API_BASE}/api/booking/create-link`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {})
+        },
         credentials: "include",
         body: JSON.stringify({
           subject: meetingTypeName === 'quick' ? 'שיחה מהירה' : 
@@ -313,14 +317,6 @@ export default function Booking({ schedule, lang, t, onClose, onConfirm, user })
       setStep('share-link');
     } catch (err) {
       setBookingError(err.message);
-      // Fallback to local link generation
-      const id = 'book_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-      setBookingId(id);
-      const link = typeof window !== 'undefined' 
-        ? `${window.location.origin}${window.location.pathname}?book=${id}&day=${selectedDay}&slots=${selectedSlots.map(s => `${s.hour}-${s.minute}`).join(',')}&dur=${duration}`
-        : '';
-      setShareLink(link);
-      setStep('share-link');
     }
   };
 

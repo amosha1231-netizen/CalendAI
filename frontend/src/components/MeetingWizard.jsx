@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Calendar, Clock, X, Loader2, Check, Share2, Sun, Filter, MessageSquare, Mail, Copy, ChevronRight, ChevronLeft } from "lucide-react";
+import safeStorage from "../utils/safeStorage";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
 
@@ -13,7 +14,7 @@ const DAY_NAMES_HE = {
 
 const DURATION_OPTIONS = [15, 30, 45, 60, 90, 120];
 
-export default function MeetingWizard({ schedule, lang, t, onClose }) {
+export default function MeetingWizard({ schedule, lang, t, hostName = 'Host', locationId = 'jerusalem', onClose }) {
   const [step, setStep] = useState(1); // 1 = duration+subject, 2 = select slots, 3 = share link
   const [duration, setDuration] = useState(30);
   const [subject, setSubject] = useState("");
@@ -22,6 +23,9 @@ export default function MeetingWizard({ schedule, lang, t, onClose }) {
     return ALL_DAY_KEYS[today];
   });
   const [selectedSlots, setSelectedSlots] = useState([]); // { hour, minute }
+  const [selectedDate, setSelectedDate] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; });
+  const [availableRanges, setAvailableRanges] = useState(null);
+  const [availabilityLoading, setAvailabilityLoading] = useState(false);
   const [showOnlyFree, setShowOnlyFree] = useState(true);
   const [linkCreating, setLinkCreating] = useState(false);
   const [bookingLink, setBookingLink] = useState("");
@@ -33,7 +37,26 @@ export default function MeetingWizard({ schedule, lang, t, onClose }) {
 
   const dayEvents = schedule[selectedDay] || [];
 
+  useEffect(() => {
+    if (step !== 2) return;
+    let cancelled = false;
+    setAvailabilityLoading(true);
+    const token = safeStorage.getItem('token') || safeStorage.getItem('calendai-jwt');
+    fetch(`${API_BASE}/api/schedule/free-slots?date=${selectedDate}&duration=${duration}&location=${encodeURIComponent(locationId)}`, { credentials: 'include', headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      .then(async res => { const data = await res.json(); if (!res.ok) throw new Error(data.error || 'Availability check failed'); return data; })
+      .then(data => { if (!cancelled) { setAvailableRanges(data.freeSlots || []); setSelectedDay(data.day); } })
+      .catch(err => { if (!cancelled) { setAvailableRanges([]); setError(err.message); } })
+      .finally(() => { if (!cancelled) setAvailabilityLoading(false); });
+    return () => { cancelled = true; };
+  }, [step, selectedDate, duration, locationId]);
+
   function isSlotBusy(hour, minute) {
+    if (step === 2 && (availabilityLoading || availableRanges === null)) return true;
+    if (availableRanges !== null) {
+      const start = hour * 60 + minute;
+      const parse = value => { const m = value.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i); if (!m) return 0; let h = Number(m[1]) % 12; if (m[3].toUpperCase() === 'PM') h += 12; return h * 60 + Number(m[2]); };
+      return !availableRanges.some(range => start >= parse(range.startTime) && start + duration <= parse(range.endTime));
+    }
     const slotStart = `${String(hour % 12 || 12).padStart(2, '0')}:${String(minute).padStart(2, '0')} ${hour >= 12 ? 'PM' : 'AM'}`;
     const endHour = hour + Math.ceil(duration / 60);
     const endMin = (minute + duration) % 60;
@@ -88,6 +111,8 @@ export default function MeetingWizard({ schedule, lang, t, onClose }) {
     return date.getDate();
   }
 
+  const dateOptions = Array.from({ length: 14 }, (_, index) => { const d = new Date(); d.setDate(d.getDate() + index); return { iso: `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`, day: ALL_DAY_KEYS[d.getDay()], dayNum: d.getDate(), month: d.getMonth()+1 }; });
+
   const handleCreateLink = async () => {
     if (selectedSlots.length === 0) {
       setError(t.wizardNoSlots);
@@ -98,13 +123,15 @@ export default function MeetingWizard({ schedule, lang, t, onClose }) {
     try {
       const res = await fetch(`${API_BASE}/api/booking/create-link`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(safeStorage.getItem('token') || safeStorage.getItem('calendai-jwt') ? { Authorization: `Bearer ${safeStorage.getItem('token') || safeStorage.getItem('calendai-jwt')}` } : {}) },
         body: JSON.stringify({
           subject: subject || "Meeting",
           duration,
           slots: selectedSlots,
           day: selectedDay,
-          hostName: "Host"
+          date: selectedDate,
+          hostName,
+          locationId
         })
       });
       const data = await res.json();
@@ -244,15 +271,14 @@ export default function MeetingWizard({ schedule, lang, t, onClose }) {
             <div>
               <label className="block text-sm font-semibold text-slate-700 mb-2">{t.wizardSelectDay}</label>
               <div className="flex gap-1.5 overflow-x-auto pb-2" style={{ scrollbarWidth: 'none' }}>
-                {ALL_DAY_KEYS.map(dayKey => {
-                  const isToday = dayKey === ALL_DAY_KEYS[new Date().getDay()];
-                  const dateNum = getDayDate(dayKey);
+                {dateOptions.map(({ iso, day: dayKey, dayNum, month }) => {
+                  const isToday = iso === dateOptions[0].iso;
                   return (
                     <button
-                      key={dayKey}
-                      onClick={() => { setSelectedDay(dayKey); setSelectedSlots([]); }}
+                      key={iso}
+                      onClick={() => { setSelectedDate(iso); setSelectedDay(dayKey); setSelectedSlots([]); setAvailableRanges(null); }}
                       className={`flex flex-col items-center gap-0.5 px-3 py-2 rounded-lg border text-xs shrink-0 transition ${
-                        selectedDay === dayKey 
+                        selectedDate === iso
                           ? 'bg-blue-600 text-white border-blue-600' 
                           : isToday 
                             ? 'bg-amber-50 border-amber-300 text-amber-800' 
@@ -260,7 +286,7 @@ export default function MeetingWizard({ schedule, lang, t, onClose }) {
                       }`}
                     >
                       <span className="font-semibold">{lang === 'he' ? DAY_NAMES_HE[dayKey] : dayKey.slice(0, 3)}</span>
-                      <span className="text-[10px] opacity-75">{dateNum}</span>
+                      <span className="text-[10px] opacity-75">{dayNum}/{month}</span>
                     </button>
                   );
                 })}
@@ -283,6 +309,7 @@ export default function MeetingWizard({ schedule, lang, t, onClose }) {
               </button>
             </div>
 
+            {availabilityLoading && <p className="text-xs text-slate-500">Checking calendar availability…</p>}
             {/* Time Slots Grid */}
             <div className="border rounded-lg overflow-hidden max-h-64 overflow-y-auto">
               <div className="grid grid-cols-4 sm:grid-cols-6 gap-1 p-2">
@@ -304,7 +331,7 @@ export default function MeetingWizard({ schedule, lang, t, onClose }) {
                               ? 'bg-blue-600 text-white border-blue-600 shadow-sm' 
                               : 'bg-white border-slate-200 text-slate-700 hover:border-blue-400 hover:bg-blue-50'
                         }`}
-                        disabled={busy}
+                        disabled={busy || availabilityLoading || availableRanges === null}
                       >
                         <span className="flex items-center gap-1">
                           {busy ? (
@@ -375,7 +402,7 @@ export default function MeetingWizard({ schedule, lang, t, onClose }) {
               <div className="flex items-center gap-2 text-sm">
                 <Calendar className="w-4 h-4 text-blue-500" />
                 <span className="font-medium text-slate-700">
-                  {lang === 'he' ? DAY_NAMES_HE[selectedDay] : selectedDay} · {duration} {t.wizardDurationMinutes}
+                  {selectedDate} · {duration} {t.wizardDurationMinutes}
                 </span>
               </div>
               <div className="flex items-center gap-2 text-sm">

@@ -73,9 +73,16 @@ function calculateCost(usage, modelName) {
     };
   }
 
-  const promptTokens = usage.prompt_tokens || 0;
-  const completionTokens = usage.completion_tokens || 0;
-  const totalTokens = usage.total_tokens || (promptTokens + completionTokens);
+  const promptTokens = Number(usage.prompt_tokens ?? usage.input_tokens ?? 0);
+  const completionTokens = Number(usage.completion_tokens ?? usage.output_tokens ?? 0);
+  if (![promptTokens, completionTokens].every(value => Number.isSafeInteger(value) && value >= 0)) {
+    throw new TypeError('Invalid token usage data');
+  }
+  const reportedTotal = Number(usage.total_tokens ?? 0);
+  if (!Number.isSafeInteger(reportedTotal) || reportedTotal < 0) {
+    throw new TypeError('Invalid total token usage');
+  }
+  const totalTokens = Math.max(reportedTotal, promptTokens + completionTokens);
 
   // Get pricing for the specific model, or fallback to default
   const pricing = MODEL_PRICING[modelName] || MODEL_PRICING['default'];

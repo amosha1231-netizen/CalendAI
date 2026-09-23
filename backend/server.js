@@ -25,6 +25,9 @@ const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const mongoose = require('mongoose');
+const ProcessedPaymentEvent = require('./models/ProcessedPaymentEvent');
+const Booking = require('./models/Booking');
+const OAuthHandoff = require('./models/OAuthHandoff');
 const { google } = require('googleapis');
 const fs = require('fs');
 const path = require('path');
@@ -34,6 +37,17 @@ const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }); // 10MB max
 
 dotenv.config({ path: path.join(__dirname, '.env') });
+
+const isProduction = process.env.NODE_ENV === 'production' || !!process.env.RENDER;
+const JWT_SECRET = process.env.JWT_SECRET?.trim() || (!isProduction ? 'calendai-jwt-secret-change-in-production' : null);
+const SESSION_SECRET = process.env.SESSION_SECRET?.trim() || (!isProduction ? 'calendai-secret-key-change-me' : null);
+const MONGO_URI = process.env.MONGODB_URI?.trim() || process.env.MONGO_URI?.trim() || (!isProduction ? 'mongodb://localhost:27017/calendai' : null);
+if (isProduction && (!JWT_SECRET || !SESSION_SECRET || !MONGO_URI)) {
+  throw new Error('Production requires JWT_SECRET, SESSION_SECRET, and MONGODB_URI (or MONGO_URI).');
+}
+if (!JWT_SECRET || !SESSION_SECRET || !MONGO_URI) {
+  throw new Error('JWT_SECRET, SESSION_SECRET, and MONGODB_URI are required.');
+}
 
 // ──────────────────────────────────────────────
 // Safe module initialization (never crash on missing deps)
@@ -98,16 +112,18 @@ console.log('========================================');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+async function createOAuthHandoff(userId) {
+  const code = crypto.randomBytes(32).toString('base64url');
+  const codeHash = crypto.createHash('sha256').update(code).digest('hex');
+  await OAuthHandoff.create({ codeHash, userId, expiresAt: new Date(Date.now() + 60_000) });
+  return code;
+}
 
 // ──────────────────────────────────────────────
 // MongoDB Connection
 // ──────────────────────────────────────────────
 // Support both MONGODB_URI and MONGO_URI env variable names
-const MONGO_URI = process.env.MONGODB_URI || process.env.MONGO_URI || 'mongodb://localhost:27017/calendai';
-
-mongoose.connect(MONGO_URI)
-  .then(() => console.log('MongoDB connected'))
-  .catch(err => console.error('MongoDB connection error:', err.message));
+const mongoReady = mongoose.connect(MONGO_URI);
 
 // ──────────────────────────────────────────────
 // User Schema (MongoDB)
@@ -140,6 +156,7 @@ const userSchema = new mongoose.Schema({
       Today: []
     }
   },
+  scheduleRevision: { type: Number, default: 0 },
   createdAt: { type: Date, default: Date.now }
 });
 
@@ -187,23 +204,22 @@ function saveSchedules(map) {
 // ──────────────────────────────────────────────
 // 1. Middleware
 // ──────────────────────────────────────────────
-const isProduction = process.env.NODE_ENV === 'production' || !!process.env.RENDER;
-
-// Dynamic base URLs for production vs local development
-const CLIENT_URL = process.env.CLIENT_URL || (isProduction ? 'https://calendai-q59p.onrender.com' : 'http://localhost:5173');
-const BACKEND_URL = process.env.BACKEND_URL || (isProduction ? 'https://calendai-backend-dfmi.onrender.com' : 'http://localhost:5000');
+// This Render service serves both the API and built frontend from this origin.
+const PRODUCTION_APP_URL = 'https://calendai.onrender.com';
+const FRONTEND_URL = (process.env.FRONTEND_URL?.trim() || process.env.CLIENT_URL?.trim() || (isProduction ? PRODUCTION_APP_URL : 'http://localhost:5173')).replace(/\/+$/, '');
+const CLIENT_URL = (process.env.CLIENT_URL?.trim() || FRONTEND_URL).replace(/\/+$/, '');
+const BACKEND_URL = (process.env.BACKEND_URL?.trim() || (isProduction ? PRODUCTION_APP_URL : 'http://localhost:5000')).replace(/\/+$/, '');
+const GOOGLE_CALLBACK_URL = (process.env.GOOGLE_CALLBACK_URL?.trim() || `${BACKEND_URL}/api/auth/google/callback`).replace(/\/+$/, '');
 
 app.set('trust proxy', 1);
 
-const corsOrigin = process.env.FRONTEND_URL || process.env.CORS_ORIGIN;
+const corsOrigin = process.env.FRONTEND_URL?.trim() || process.env.CORS_ORIGIN?.trim();
 // CRITICAL: CORS origin must be explicit URLs, NOT wildcard '*', when using credentials: true
 const allowedOrigins = corsOrigin && corsOrigin !== '*'
-  ? corsOrigin.split(',')
+  ? corsOrigin.split(',').map(origin => origin.trim().replace(/\/+$/, '')).filter(Boolean)
   : [
       'http://localhost:5173',
-      'https://calendai.onrender.com',
-      'https://calendai-backend-dfmi.onrender.com',
-      'https://calendai-q59p.onrender.com'
+      PRODUCTION_APP_URL
     ];
 app.use(cors({
   origin: allowedOrigins,
@@ -226,7 +242,7 @@ const frontendDist = path.join(__dirname, '..', 'frontend', 'dist');
 app.use(express.static(frontendDist));
 
 app.use(session({
-  secret: process.env.SESSION_SECRET || 'calendai-secret-key-change-me',
+  secret: SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
   cookie: {
@@ -287,7 +303,7 @@ if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET &&
   passport.use(new GoogleStrategy({
     clientID: GOOGLE_CLIENT_ID,
     clientSecret: GOOGLE_CLIENT_SECRET,
-    callbackURL: process.env.GOOGLE_CALLBACK_URL?.trim() || `${BACKEND_URL}/api/auth/google/callback`,
+    callbackURL: GOOGLE_CALLBACK_URL,
     accessType: 'offline',
     prompt: 'consent'
   }, async (accessToken, refreshToken, profile, done) => {
@@ -483,19 +499,20 @@ async function checkAICredits(userId) {
   }
   try {
     const user = await User.findById(userId);
-    if (!user) return { allowed: true, credits: null };
+    if (!user) return { allowed: false, credits: null, status: 401, error: 'User account not found.' };
     const credits = user.aiCredits;
     if (credits === undefined || credits === null || credits > 0) {
       return { allowed: true, credits };
     }
     return {
       allowed: false,
+      status: 402,
       credits: 0,
       error: 'נגמרו לך הקרדיטים! אנא רכוש חבילת פעולות נוספת כדי להמשיך להשתמש ב-AI.'
     };
   } catch (err) {
     console.error('Failed to check AI credits:', err.message);
-    return { allowed: true, credits: null }; // Fail-open on DB errors
+    return { allowed: false, credits: null, status: 503, error: 'לא ניתן לאמת את יתרת הקרדיטים כרגע. אנא נסה שוב.' };
   }
 }
 
@@ -515,6 +532,12 @@ async function deductAICredit(userId, usage = null, modelName = 'deepseek/deepse
     return { remainingCredits: null, costInfo: null };
   }
 
+  if (!usage || typeof usage !== 'object') {
+    const error = new Error('AI usage data is unavailable; refusing to complete an unbilled request.');
+    error.status = 502;
+    throw error;
+  }
+
   // Calculate cost from token usage
   const costInfo = calculateCost(usage, modelName);
 
@@ -523,8 +546,8 @@ async function deductAICredit(userId, usage = null, modelName = 'deepseek/deepse
   console.log(formatCostBreakdown(costInfo));
 
   try {
-    const updated = await User.findByIdAndUpdate(
-      userId,
+    const updated = await User.findOneAndUpdate(
+      { _id: userId, aiCredits: { $gte: costInfo.costCredits } },
       {
         $inc: { aiCredits: -costInfo.costCredits },
         $push: {
@@ -547,12 +570,18 @@ async function deductAICredit(userId, usage = null, modelName = 'deepseek/deepse
       },
       { new: true }
     );
-    const remaining = updated?.aiCredits ?? null;
+    if (!updated) {
+      const existing = await User.exists({ _id: userId });
+      const error = new Error(existing ? 'Insufficient AI credits.' : 'User account not found.');
+      error.status = existing ? 402 : 401;
+      throw error;
+    }
+    const remaining = updated.aiCredits;
     console.log(`[PAYG] Credits deducted: ${costInfo.costCredits} | Remaining: ${remaining}`);
     return { remainingCredits: remaining, costInfo };
   } catch (err) {
     console.error('Failed to deduct AI credit:', err.message);
-    return { remainingCredits: null, costInfo };
+    throw err;
   }
 }
 
@@ -568,13 +597,9 @@ function getUserSchedule(userId) {
 // Helper: Save schedule to MongoDB for logged-in users
 // ──────────────────────────────────────────────
 async function saveScheduleToMongo(userId, schedule) {
-  try {
-    if (mongoose.Types.ObjectId.isValid(userId)) {
-      await User.findByIdAndUpdate(userId, { schedule });
-    }
-  } catch (err) {
-    console.error('Failed to save schedule to MongoDB:', err.message);
-  }
+  if (!mongoose.Types.ObjectId.isValid(userId)) return;
+  const result = await User.updateOne({ _id: userId }, { $set: { schedule }, $inc: { scheduleRevision: 1 } });
+  if (!result.matchedCount) throw new Error('Could not save schedule: user not found.');
 }
 
 // ──────────────────────────────────────────────
@@ -815,6 +840,7 @@ function timeToMinutes(timeStr) {
   if (ampmMatch) {
     let hours = parseInt(ampmMatch[1], 10);
     const minutes = parseInt(ampmMatch[2], 10);
+    if (hours < 1 || hours > 12 || minutes > 59) return null;
     const meridiem = ampmMatch[3].toUpperCase();
     if (meridiem === 'PM' && hours !== 12) hours += 12;
     if (meridiem === 'AM' && hours === 12) hours = 0;
@@ -825,6 +851,7 @@ function timeToMinutes(timeStr) {
   if (h24Match) {
     let hours = parseInt(h24Match[1], 10);
     const minutes = parseInt(h24Match[2], 10);
+    if (hours > 23 || minutes > 59) return null;
     // If hours are 0-7 with no AM/PM marker, treat as PM (per CalendAI rules)
     // But if the string is purely numeric (24h format), trust it as-is
     return hours * 60 + minutes;
@@ -1004,9 +1031,10 @@ function mergeGaps(schedule) {
 // 6. Auth routes
 // ──────────────────────────────────────────────
 
-const OAUTH_SCOPES = process.env.OAUTH_SCOPES
-  ? process.env.OAUTH_SCOPES.split(',').map(s => s.trim())
-  : ['profile', 'email', 'https://www.googleapis.com/auth/calendar'];
+const configuredOAuthScopes = process.env.OAUTH_SCOPES?.split(',').map(scope => scope.trim()).filter(Boolean);
+const OAUTH_SCOPES = configuredOAuthScopes?.length
+  ? configuredOAuthScopes
+  : ['profile', 'email', 'https://www.googleapis.com/auth/calendar.events'];
 
 app.get('/api/auth/google',
   (req, res, next) => {
@@ -1032,55 +1060,31 @@ app.get('/api/auth/google',
 
 app.get('/api/auth/google/callback',
   (req, res, next) => {
-    const rawUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || 'https://calendai-q59p.onrender.com';
+    const rawUrl = FRONTEND_URL;
     passport.authenticate('google', {
       session: false,
       failureRedirect: `${rawUrl}/?error=auth_failed`,
       failWithError: true
-    }, (err, user, info) => {
+    }, async (err, user, info) => {
       if (err) {
         console.error('=== GOOGLE CALLBACK AUTH ERROR ===');
         console.error('Error name:', err.name);
         console.error('Error message:', err.message);
         console.error('Stack trace:', err.stack);
         console.error('Info:', JSON.stringify(info || {}));
-        console.error('Query params:', JSON.stringify(req.query));
         console.error('==================================');
         return res.redirect(`${rawUrl}/?error=auth_failed`);
       }
       if (!user) {
         console.error('=== GOOGLE CALLBACK: NO USER ===');
         console.error('Info:', JSON.stringify(info || {}));
-        console.error('Query params:', JSON.stringify(req.query));
         console.error('==================================');
         return res.redirect(`${rawUrl}/?error=auth_failed`);
       }
 
-      // ── Stateless JWT: no req.logIn, no session ──
-      console.log("OAuth User authenticated:", req.user);
-      console.log('=== GOOGLE CALLBACK: USER RECEIVED ===');
-      console.log('req.user exists:', !!user);
-      console.log('User ID:', user._id || user.id);
-      console.log('Display Name:', user.displayName);
-      console.log('Email:', user.email);
-      console.log('JWT_SECRET is set:', !!process.env.JWT_SECRET);
-      console.log('=====================================');
-
-      const FRONTEND_URL = process.env.FRONTEND_URL || process.env.CLIENT_URL || 'https://calendai-q59p.onrender.com';
-
       try {
-        // Create a JWT token with 7-day expiry containing the user's _id
-        const jwtSecret = process.env.JWT_SECRET?.trim() || 'calendai_secret';
-        const token = jwt.sign({ id: user._id || user.id }, jwtSecret, { expiresIn: '30d' });
-
-        console.log("Generated JWT Token:", token ? "SUCCESS" : "FAILED");
-        console.log('=== GOOGLE CALLBACK: JWT CREATED ===');
-        console.log('Token (first 30 chars):', token.substring(0, 30) + '...');
-        const redirectUrl = `${FRONTEND_URL}?token=${token}`;
-        console.log("Redirecting to:", redirectUrl);
-        console.log('=====================================');
-
-        res.redirect(redirectUrl);
+        const code = await createOAuthHandoff(user._id || user.id);
+        res.redirect(`${FRONTEND_URL}/?oauth_code=${encodeURIComponent(code)}&login=success`);
       } catch (jwtErr) {
         console.error('=== GOOGLE CALLBACK: JWT CREATION FAILED ===');
         console.error('Error:', jwtErr.message);
@@ -1141,7 +1145,6 @@ app.get('/api/auth/microsoft', (req, res) => {
  */
 app.get('/api/auth/microsoft/callback', async (req, res) => {
   const { code, error } = req.query;
-  const FRONTEND_URL = process.env.FRONTEND_URL || process.env.CLIENT_URL || 'https://calendai-q59p.onrender.com';
 
   if (error) {
     console.error('Microsoft OAuth error:', error);
@@ -1219,14 +1222,26 @@ app.get('/api/auth/microsoft/callback', async (req, res) => {
     }
     await user.save();
 
-    // Generate JWT token
-    const jwtSecret = process.env.JWT_SECRET || 'calendai_secret';
-    const token = jwt.sign({ id: user._id || user.id }, jwtSecret, { expiresIn: '30d' });
-
-    res.redirect(`${FRONTEND_URL}?token=${token}`);
+    const codeValue = await createOAuthHandoff(user._id || user.id);
+    res.redirect(`${FRONTEND_URL}/?oauth_code=${encodeURIComponent(codeValue)}&login=success`);
   } catch (err) {
     console.error('Microsoft OAuth callback error:', err);
     res.redirect(`${FRONTEND_URL}/?error=microsoft_auth_failed`);
+  }
+});
+
+app.post('/api/auth/oauth-exchange', async (req, res) => {
+  const code = String(req.body?.code || '');
+  try {
+    if (!code || code.length > 128) return res.status(401).json({ error: 'OAuth code is invalid or expired.' });
+    const codeHash = crypto.createHash('sha256').update(code).digest('hex');
+    const handoff = await OAuthHandoff.findOneAndDelete({ codeHash, expiresAt: { $gt: new Date() } });
+    if (!handoff) return res.status(401).json({ error: 'OAuth code is invalid or expired.' });
+    const token = jwt.sign({ id: handoff.userId.toString() }, JWT_SECRET, { expiresIn: '30d' });
+    return res.json({ token });
+  } catch (error) {
+    console.error('OAuth code exchange failed:', error.message);
+    return res.status(503).json({ error: 'Could not complete OAuth sign-in.' });
   }
 });
 
@@ -1414,7 +1429,6 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 // ── JWT Token Endpoints (persistent auth across server restarts) ──
-const JWT_SECRET = process.env.JWT_SECRET || 'calendai-jwt-secret-change-in-production';
 
 /**
  * POST /api/auth/token
@@ -1512,25 +1526,13 @@ app.post('/api/schedule/check-slot', (req, res) => {
     }
 
     const userId = getUserId(req);
-    const schedule = getUserSchedule(userId);
+    const schedule = JSON.parse(JSON.stringify(getUserSchedule(userId)));
     const dayEvents = schedule[day] || [];
 
-    function parseToMinutes(timeStr) {
-      if (!timeStr) return null;
-      const match = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
-      if (!match) return null;
-      let h = parseInt(match[1], 10);
-      const m = parseInt(match[2], 10);
-      const ampm = match[3].toUpperCase();
-      if (ampm === 'PM' && h !== 12) h += 12;
-      if (ampm === 'AM' && h === 12) h = 0;
-      return h * 60 + m;
-    }
-
-    const newStart = parseToMinutes(startTime);
-    const newEnd = parseToMinutes(endTime);
-    if (newStart === null || newEnd === null) {
-      return res.status(400).json({ available: false, error: 'Invalid time format. Use HH:MM AM/PM' });
+    const newStart = timeToMinutes(startTime);
+    const newEnd = timeToMinutes(endTime);
+    if (newStart === null || newEnd === null || newEnd <= newStart) {
+      return res.status(400).json({ available: false, error: 'Invalid time range. Use valid HH:MM or HH:MM AM/PM times.' });
     }
 
     for (const event of dayEvents) {
@@ -1576,8 +1578,8 @@ function parseTimeToMinutes24(timeStr) {
 }
 
 function detectConflicts(newEvent, existingEvents, options = {}) {
-  const newStart = parseTimeToMinutes(newEvent.startTime);
-  const newEnd = parseTimeToMinutes(newEvent.endTime);
+  const newStart = timeToMinutes(newEvent.startTime);
+  const newEnd = timeToMinutes(newEvent.endTime);
   
   const dayStart = options.dayStart ? parseTimeToMinutes24(options.dayStart) : 6 * 60;
   const dayEnd = options.dayEnd ? parseTimeToMinutes24(options.dayEnd) : 23 * 60;
@@ -1591,8 +1593,8 @@ function detectConflicts(newEvent, existingEvents, options = {}) {
 
   const conflicts = [];
   for (const existing of existingEvents) {
-    const exStart = parseTimeToMinutes(existing.startTime);
-    const exEnd = parseTimeToMinutes(existing.endTime);
+    const exStart = timeToMinutes(existing.startTime);
+    const exEnd = timeToMinutes(existing.endTime);
     if (exStart === null || exEnd === null) continue;
 
     if (newStart < exEnd && newEnd > exStart) {
@@ -1608,8 +1610,8 @@ function detectConflicts(newEvent, existingEvents, options = {}) {
   if (conflicts.length > 0) {
     const busySlots = existingEvents
       .map(e => ({
-        start: parseTimeToMinutes(e.startTime),
-        end: parseTimeToMinutes(e.endTime)
+        start: timeToMinutes(e.startTime),
+        end: timeToMinutes(e.endTime)
       }))
       .filter(s => s.start !== null && s.end !== null)
       // For today, ignore busy slots that have completely passed
@@ -1714,8 +1716,8 @@ function syncTodayWithCurrentDay(schedule) {
 // 8b. Find Free Slots
 // ──────────────────────────────────────────────
 
-function findFreeSlotsForDay(schedule, dayName, locationId) {
-  const dayEvents = schedule[dayName] || [];
+function findFreeSlotsForDay(schedule, dayName, locationId, dayEventsOverride = null, dateISO = null) {
+  const dayEvents = dayEventsOverride || schedule[dayName] || [];
   const locData = LOCATIONS.find(loc => loc.id === (locationId || DEFAULT_LOCATION_ID));
   const dayStart = locData ? parseTimeToMinutes24(locData.defaultDayStart) : 6 * 60;
   const dayEnd = locData ? parseTimeToMinutes24(locData.defaultDayEnd) : 23 * 60;
@@ -1725,8 +1727,12 @@ function findFreeSlotsForDay(schedule, dayName, locationId) {
   // FUTURE-ONLY SLOTS (CRITICAL): For today, never offer free windows in the past —
   // only suggest slots from the current time onward.
   const todayName = getTodayDayName();
-  const isToday = dayName === todayName || dayName === 'Today';
-  const currentMin = getCurrentMinutes();
+  const timeZone = locData?.timezone || 'Asia/Jerusalem';
+  const nowParts = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date());
+  const part = type => nowParts.find(item => item.type === type).value;
+  const localTodayISO = `${part('year')}-${part('month')}-${part('day')}`;
+  const isToday = dateISO ? dateISO === localTodayISO : dayName === todayName || dayName === 'Today';
+  const currentMin = dateISO ? Number(part('hour')) * 60 + Number(part('minute')) : getCurrentMinutes();
   
   const busySlots = dayEvents
     .map(e => {
@@ -1777,23 +1783,75 @@ function findFreeSlotsForDay(schedule, dayName, locationId) {
   return freeSlots;
 }
 
-app.get('/api/schedule/free-slots', (req, res) => {
+app.get('/api/schedule/free-slots', async (req, res) => {
   try {
     const userId = getUserId(req);
-    const schedule = getUserSchedule(userId);
+    const schedule = JSON.parse(JSON.stringify(getUserSchedule(userId)));
     
     const day = req.query.day || getTodayDayName();
     const durationMinutes = parseInt(req.query.duration) || 30;
     const locationId = req.query.location || DEFAULT_LOCATION_ID;
     
-    const actualDay = day === 'Today' ? getTodayDayName() : day;
-    
-    const allFreeSlots = findFreeSlotsForDay(schedule, actualDay, locationId);
+    const dateISO = req.query.date;
+    const actualDay = dateISO ? ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][new Date(`${dateISO}T00:00:00Z`).getUTCDay()] : day === 'Today' ? getTodayDayName() : day;
+    const dayEvents = [...(schedule[actualDay] || [])].filter(event => !dateISO || !event.targetDate || event.targetDate === dateISO);
+    let googleCalendarConnected = false;
+    if (dateISO && mongoose.Types.ObjectId.isValid(userId)) {
+      try {
+        const user = await User.findById(userId);
+        if (user?.googleAccessToken) {
+          const location = LOCATIONS.find(loc => loc.id === locationId) || LOCATIONS.find(loc => loc.id === DEFAULT_LOCATION_ID);
+          const timeZone = location?.timezone || 'Asia/Jerusalem';
+          const zonedMidnight = isoDate => {
+            const [year, month, datePart] = isoDate.split('-').map(Number);
+            const target = Date.UTC(year, month - 1, datePart);
+            let guess = target;
+            for (let i = 0; i < 3; i++) {
+              const parts = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(guess));
+              const value = type => Number(parts.find(part => part.type === type).value);
+              const observed = Date.UTC(value('year'), value('month') - 1, value('day'), value('hour'), value('minute'), value('second'));
+              guess += target - observed;
+            }
+            return new Date(guess);
+          };
+          const [year, month, dayOfMonth] = dateISO.split('-').map(Number);
+          const nextDate = new Date(Date.UTC(year, month - 1, dayOfMonth + 1)).toISOString().slice(0, 10);
+          const start = zonedMidnight(dateISO);
+          const end = zonedMidnight(nextDate);
+          const oauth2Client = await createOAuth2ClientWithRefresh(user);
+          const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+          const result = await calendar.events.list({ calendarId: 'primary', timeMin: start.toISOString(), timeMax: end.toISOString(), singleEvents: true, orderBy: 'startTime', maxResults: 2500, timeZone });
+          const toClock = value => {
+            const parts = new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date(value));
+            return `${parts.find(p => p.type === 'hour').value}:${parts.find(p => p.type === 'minute').value}`;
+          };
+          for (const event of result.data.items || []) {
+            if (event.status === 'cancelled' || event.transparency === 'transparent' || !event.start || !event.end) continue;
+            if (event.start.date && event.end.date) {
+              if (event.start.date <= dateISO && event.end.date > dateISO) dayEvents.push({ startTime: '00:00', endTime: '23:59', title: event.summary || 'Google Calendar event' });
+            } else if (event.start.dateTime && event.end.dateTime) {
+              const eventStart = new Date(event.start.dateTime);
+              const eventEnd = new Date(event.end.dateTime);
+              const clippedStart = new Date(Math.max(eventStart.getTime(), start.getTime()));
+              const clippedEnd = new Date(Math.min(eventEnd.getTime(), end.getTime()));
+              if (clippedEnd > clippedStart) dayEvents.push({ startTime: toClock(clippedStart), endTime: toClock(clippedEnd), title: event.summary || 'Google Calendar event' });
+            }
+          }
+          googleCalendarConnected = true;
+        }
+      } catch (calendarError) {
+        console.error('[Google Calendar] Availability fetch failed:', calendarError.message);
+        return res.status(502).json({ error: 'Could not check Google Calendar availability. Please try again.' });
+      }
+    }
+    const allFreeSlots = findFreeSlotsForDay(schedule, actualDay, locationId, dayEvents, dateISO);
     
     const suitableSlots = allFreeSlots.filter(slot => slot.durationMinutes >= durationMinutes);
     
     res.json({
       day: actualDay,
+      date: dateISO || null,
+      googleCalendarConnected,
       requestedDurationMinutes: durationMinutes,
       freeSlots: suitableSlots,
       totalFreeSlots: suitableSlots.length
@@ -1904,10 +1962,10 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
     // ── PAYG CREDIT CHECK: Block if user has no AI credits left ──
     const creditCheck = await checkAICredits(userId);
     if (!creditCheck.allowed) {
-      return res.status(402).json({ error: creditCheck.error });
+      return res.status(creditCheck.status || 402).json({ error: creditCheck.error });
     }
     
-    const schedule = getUserSchedule(userId);
+    const schedule = JSON.parse(JSON.stringify(getUserSchedule(userId)));
     const todayName = getTodayDayName();
 
     // Build busy slots array from existing schedule for conflict-aware AI
@@ -2051,17 +2109,14 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
       }
     }
 
+    const { remainingCredits } = await deductAICredit(userId, parsedResult.usage, parsedResult.modelName || 'deepseek/deepseek-chat', 'parse-schedule');
     syncTodayWithCurrentDay(schedule);
-
-    saveSchedulesNow();
-    
     // Save to MongoDB for logged-in users
     if (mongoose.Types.ObjectId.isValid(userId)) {
       await saveScheduleToMongo(userId, schedule);
     }
-
-    // ── PAYG CREDIT DEDUCTION: Only charge AFTER a successful AI response ──
-    const { remainingCredits } = await deductAICredit(userId);
+    userSchedules.set(userId, schedule);
+    saveSchedulesNow();
 
     // ── GOOGLE CALENDAR SYNC: Automatically sync each added event to Google Calendar ──
     // This is non-blocking — failures are logged but never crash the response.
@@ -2096,7 +2151,7 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
     });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Failed to parse schedule.' });
+    res.status(error.status || 500).json({ error: error.message || 'Failed to parse schedule.' });
   }
 });
 
@@ -2135,7 +2190,7 @@ app.post('/api/parse-image', aiLimiter, upload.single('image'), async (req, res)
     // ── PAYG CREDIT CHECK: Block if user has no AI credits left ──
     const creditCheck = await checkAICredits(userId);
     if (!creditCheck.allowed) {
-      return res.status(402).json({ success: false, error: creditCheck.error });
+      return res.status(creditCheck.status || 402).json({ success: false, error: creditCheck.error });
     }
 
     // Convert the uploaded image buffer to base64
@@ -2165,8 +2220,8 @@ app.post('/api/parse-image', aiLimiter, upload.single('image'), async (req, res)
       });
     }
 
-    // Add parsed events to the user's schedule
-    const schedule = getUserSchedule(userId);
+    // Add parsed events to a detached copy so failed billing cannot mutate memory state.
+    const schedule = JSON.parse(JSON.stringify(getUserSchedule(userId)));
     const todayName = getTodayDayName();
     const addedEvents = [];
     const shabbatFilteredEvents = [];
@@ -2210,16 +2265,14 @@ app.post('/api/parse-image', aiLimiter, upload.single('image'), async (req, res)
       });
     }
 
+    const { remainingCredits } = await deductAICredit(userId, parsedResult.usage, parsedResult.modelName || 'google/gemini-2.0-flash-exp', 'parse-image');
     syncTodayWithCurrentDay(schedule);
-    saveSchedulesNow();
-
     // Save to MongoDB for logged-in users
     if (mongoose.Types.ObjectId.isValid(userId)) {
       await saveScheduleToMongo(userId, schedule);
     }
-
-    // ── PAYG CREDIT DEDUCTION ──
-    const { remainingCredits } = await deductAICredit(userId);
+    userSchedules.set(userId, schedule);
+    saveSchedulesNow();
 
     res.json({
       success: true,
@@ -2231,7 +2284,7 @@ app.post('/api/parse-image', aiLimiter, upload.single('image'), async (req, res)
 
   } catch (error) {
     console.error('Parse image error:', error);
-    res.status(500).json({ success: false, error: 'Failed to process image.' });
+    res.status(error.status || 500).json({ success: false, error: error.message || 'Failed to process image.' });
   }
 });
 
@@ -2273,12 +2326,12 @@ app.post('/api/events/quick-add', aiLimiter, async (req, res) => {
     // ── PAYG CREDIT CHECK: Block if user has no AI credits left ──
     const creditCheck = await checkAICredits(userId);
     if (!creditCheck.allowed) {
-      return res.status(402).json({ success: false, error: creditCheck.error });
+      return res.status(creditCheck.status || 402).json({ success: false, error: creditCheck.error });
     }
 
     // Get the user's schedule for context-aware AI
     const effectiveUserId = userId || 'anonymous';
-    const schedule = getUserSchedule(effectiveUserId);
+    const schedule = JSON.parse(JSON.stringify(getUserSchedule(effectiveUserId)));
     const todayName = getTodayDayName();
 
     // Build busy slots array from existing schedule for conflict-aware AI
@@ -2391,13 +2444,14 @@ app.post('/api/events/quick-add', aiLimiter, async (req, res) => {
       });
     }
 
+    const { remainingCredits } = await deductAICredit(userId, parsedResult.usage, parsedResult.modelName || 'deepseek/deepseek-chat', 'quick-add');
     syncTodayWithCurrentDay(schedule);
-    saveSchedulesNow();
-
     // Save to MongoDB for logged-in users
     if (userId && mongoose.Types.ObjectId.isValid(userId)) {
       await saveScheduleToMongo(userId, schedule);
     }
+    userSchedules.set(userId, schedule);
+    saveSchedulesNow();
 
     // Build a friendly message for the response
     const firstEvent = addedEvents[0];
@@ -2410,9 +2464,6 @@ app.post('/api/events/quick-add', aiLimiter, async (req, res) => {
     } else {
       message = replyMessage || `${eventCount} אירועים נוספו בהצלחה.`;
     }
-
-    // ── PAYG CREDIT DEDUCTION: Only charge AFTER a successful AI response ──
-    const { remainingCredits } = await deductAICredit(userId);
 
     // ── GOOGLE CALENDAR SYNC: Automatically sync each added event to Google Calendar ──
     // This is non-blocking — failures are logged but never crash the response.
@@ -2447,7 +2498,7 @@ app.post('/api/events/quick-add', aiLimiter, async (req, res) => {
 
   } catch (error) {
     console.error('Quick-add endpoint error:', error);
-    res.status(500).json({ success: false, error: 'Failed to process quick-add request.' });
+    res.status(error.status || 500).json({ success: false, error: error.message || 'Failed to process quick-add request.' });
   }
 });
 
@@ -2503,7 +2554,7 @@ async function createOAuth2ClientWithRefresh(user) {
   const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID?.trim(),
     process.env.GOOGLE_CLIENT_SECRET?.trim(),
-    process.env.GOOGLE_CALLBACK_URL?.trim()
+    GOOGLE_CALLBACK_URL
   );
 
   oauth2Client.setCredentials({
@@ -2847,22 +2898,19 @@ app.post('/api/reschedule', aiLimiter, async (req, res) => {
     // ── PAYG CREDIT CHECK: Block if user has no AI credits left ──
     const creditCheck = await checkAICredits(userId);
     if (!creditCheck.allowed) {
-      return res.status(402).json({ error: creditCheck.error });
+      return res.status(creditCheck.status || 402).json({ error: creditCheck.error });
     }
     
     const currentSchedule = getUserSchedule(userId);
     const result = await rescheduleWithGemini(currentSchedule, effectiveReason);
 
-    userSchedules.set(userId, result.newSchedule);
-    saveSchedulesNow();
-    
+    const { remainingCredits } = await deductAICredit(userId, result.usage, result.modelName || 'deepseek/deepseek-chat', 'reschedule');
     // Save to MongoDB for logged-in users
     if (mongoose.Types.ObjectId.isValid(userId)) {
       await saveScheduleToMongo(userId, result.newSchedule);
     }
-
-    // ── PAYG CREDIT DEDUCTION: Only charge AFTER a successful AI response ──
-    const { remainingCredits } = await deductAICredit(userId);
+    userSchedules.set(userId, result.newSchedule);
+    saveSchedulesNow();
 
     res.json({
       summary: result.summary,
@@ -2871,6 +2919,7 @@ app.post('/api/reschedule', aiLimiter, async (req, res) => {
     });
   } catch (error) {
     console.error('Gemini reschedule failed, using fallback:', error.message);
+    if (error.status) return res.status(error.status).json({ error: error.message });
     // Fallback: extract delay minutes from text and use mathematical shift
     try {
       const userId = getUserId(req);
@@ -2882,13 +2931,12 @@ app.post('/api/reschedule', aiLimiter, async (req, res) => {
 
       const result = shiftScheduleForward(currentSchedule, delayMinutes);
 
-      userSchedules.set(userId, result.newSchedule);
-      saveSchedulesNow();
-      
       // Save to MongoDB for logged-in users
       if (mongoose.Types.ObjectId.isValid(userId)) {
         await saveScheduleToMongo(userId, result.newSchedule);
       }
+      userSchedules.set(userId, result.newSchedule);
+      saveSchedulesNow();
 
       res.json({
         summary: result.summary,
@@ -3190,13 +3238,15 @@ app.put('/api/schedule', async (req, res) => {
     return res.status(400).json({ error: 'schedule is required.' });
   }
   const userId = getUserId(req);
+  if (mongoose.Types.ObjectId.isValid(userId)) {
+    try {
+      await saveScheduleToMongo(userId, schedule);
+    } catch (error) {
+      return res.status(503).json({ error: 'Could not persist the schedule.' });
+    }
+  }
   userSchedules.set(userId, schedule);
   saveSchedulesNow();
-  
-  // Save to MongoDB for logged-in users
-  if (mongoose.Types.ObjectId.isValid(userId)) {
-    await saveScheduleToMongo(userId, schedule);
-  }
   
   res.json({ ok: true, message: 'Schedule restored.' });
 });
@@ -3367,9 +3417,9 @@ app.post('/api/booking/ai-find-slot', aiLimiter, async (req, res) => {
  *   1. Multi-slot (legacy): { slots: [{hour,minute}], day, duration }
  *   2. Locked time (new):   { startTime, endTime, meetingType, day, duration }
  */
-app.post('/api/booking/create-link', (req, res) => {
+app.post('/api/booking/create-link', async (req, res) => {
   try {
-    const { subject, duration, slots, day, hostName, startTime, endTime, meetingType, guestTimezone } = req.body;
+    const { subject, duration, slots, day, date, hostName, startTime, endTime, meetingType, guestTimezone, locationId } = req.body;
     
     // Determine if this is a locked (single exact time) or multi-slot booking
     const isLocked = !!(startTime && endTime);
@@ -3377,43 +3427,54 @@ app.post('/api/booking/create-link', (req, res) => {
     if (!isLocked && (!slots || !Array.isArray(slots) || slots.length === 0)) {
       return res.status(400).json({ error: 'Either slots array or startTime/endTime are required.' });
     }
-    if (!duration || !day) {
-      return res.status(400).json({ error: 'duration and day are required.' });
+    if (!Number.isInteger(Number(duration)) || Number(duration) < 1 || Number(duration) > 1440 || (!date && !day)) {
+      return res.status(400).json({ error: 'duration and an ISO date are required.' });
+    }
+    const hostId = getAuthenticatedUserId(req);
+    if (!hostId || !mongoose.Types.ObjectId.isValid(hostId)) {
+      return res.status(401).json({ error: 'Sign in to create a booking link.' });
+    }
+    if (date && (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`)) || new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date)) {
+      return res.status(400).json({ error: 'date must be a valid ISO date (YYYY-MM-DD).' });
     }
 
-    const userId = getUserId(req);
-    const bookingId = 'dyn_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+    const host = await User.findById(hostId).select('displayName email').lean();
+    if (!host) return res.status(401).json({ error: 'Host account not found.' });
+    const bookingId = `dyn_${crypto.randomBytes(18).toString('hex')}`;
+    const validDays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const bookingDay = date ? ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][new Date(`${date}T00:00:00Z`).getUTCDay()] : day;
+    if (!validDays.includes(bookingDay) || bookingDay === 'Saturday') return res.status(400).json({ error: 'A valid non-Shabbat day is required.' });
+    if (isLocked && (timeToMinutes(startTime) === null || timeToMinutes(endTime) === null || timeToMinutes(endTime) <= timeToMinutes(startTime))) {
+      return res.status(400).json({ error: 'Invalid locked booking time range.' });
+    }
+    if (!isLocked && (!slots.every(s => Number.isInteger(Number(s.hour)) && Number(s.hour) >= 0 && Number(s.hour) <= 23 && Number.isInteger(Number(s.minute)) && Number(s.minute) >= 0 && Number(s.minute) <= 59))) {
+      return res.status(400).json({ error: 'Invalid booking slot.' });
+    }
 
     const bookingData = {
-      id: bookingId,
-      hostId: userId,
-      hostName: hostName || 'Host',
+      bookingId,
+      hostId,
+      hostName: hostName || host.displayName || host.email || 'Host',
       subject: subject || 'Meeting',
       meetingType: meetingType || null,
       duration,
-      day,
+      day: bookingDay,
+      date: date || null,
       isLocked,
       startTime: isLocked ? startTime : null,
       endTime: isLocked ? endTime : null,
       guestTimezone: guestTimezone || null,
+      locationId: locationId || DEFAULT_LOCATION_ID,
       slots: isLocked 
         ? [] 
         : slots.map(s => ({ hour: s.hour, minute: s.minute, booked: false })),
-      createdAt: new Date().toISOString(),
       status: 'active'
     };
-
-    const bookingDir = path.join(DATA_DIR, 'bookings');
-    if (!fs.existsSync(bookingDir)) {
-      fs.mkdirSync(bookingDir, { recursive: true });
-    }
-
-    const bookingFile = path.join(bookingDir, `${bookingId}.json`);
-    fs.writeFileSync(bookingFile, JSON.stringify(bookingData, null, 2));
+    const booking = await Booking.create(bookingData);
 
     const link = `${CLIENT_URL}/book/${bookingId}`;
 
-    res.json({ ok: true, bookingId, link, booking: bookingData });
+    res.json({ ok: true, bookingId, link, booking: booking.toObject() });
   } catch (err) {
     console.error('Create booking link error:', err);
     res.status(500).json({ error: 'Failed to create booking link.' });
@@ -3427,19 +3488,15 @@ app.post('/api/booking/create-link', (req, res) => {
  *   1. Locked time: returns isLocked=true + startTime/endTime/meetingType
  *   2. Multi-slot: returns slots array for guest to choose
  */
-app.get('/api/booking/:id', (req, res) => {
+app.get('/api/booking/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const bookingFile = path.join(DATA_DIR, 'bookings', `${id}.json`);
-
-    if (!fs.existsSync(bookingFile)) {
+    const booking = await Booking.findOne({ bookingId: id }).lean();
+    if (!booking) {
       return res.status(404).json({ error: 'Booking not found.' });
     }
-
-    const booking = JSON.parse(fs.readFileSync(bookingFile, 'utf-8'));
-
     if (booking.status !== 'active') {
-      return res.status(410).json({ error: 'This booking link has expired.', booking });
+      return res.status(410).json({ error: booking.status === 'processing' ? 'This booking is being confirmed.' : 'This booking link has expired.' });
     }
 
     // Return available slots only (not booked) for multi-slot mode
@@ -3448,16 +3505,18 @@ app.get('/api/booking/:id', (req, res) => {
     res.json({
       ok: true,
       booking: {
-        id: booking.id,
+        id: booking.bookingId,
         hostName: booking.hostName,
         subject: booking.subject,
         meetingType: booking.meetingType || null,
         duration: booking.duration,
         day: booking.day,
+        date: booking.date || null,
         isLocked: booking.isLocked || false,
         startTime: booking.isLocked ? booking.startTime : null,
         endTime: booking.isLocked ? booking.endTime : null,
         guestTimezone: booking.guestTimezone || null,
+        locationId: booking.locationId || DEFAULT_LOCATION_ID,
         createdAt: booking.createdAt
       },
       slots: availableSlots
@@ -3475,26 +3534,32 @@ app.get('/api/booking/:id', (req, res) => {
  *   2. Multi-slot (isLocked=false): uses slotIndex to pick which slot
  */
 app.post('/api/booking/:id/confirm', async (req, res) => {
+  let claimed = false;
+  let persisted = false;
+  let syncedEventId = null;
+  let hostId = null;
+  let eventToPersist = null;
   try {
     const { id } = req.params;
     const { slotIndex, guestName, guestEmail, guestPhone, guestNotes } = req.body;
-
-    if (!guestName) {
+    if (typeof guestName !== 'string' || !guestName.trim() || guestName.length > 200) {
       return res.status(400).json({ error: 'guestName is required.' });
     }
-
-    const bookingFile = path.join(DATA_DIR, 'bookings', `${id}.json`);
-
-    if (!fs.existsSync(bookingFile)) {
-      return res.status(404).json({ error: 'Booking not found.' });
+    const booking = await Booking.findOne({ bookingId: id }).lean();
+    if (!booking) return res.status(404).json({ error: 'Booking not found.' });
+    if (booking.status !== 'active') return res.status(409).json({ error: booking.status === 'processing' ? 'This booking is being confirmed.' : 'This booking link has already been used.' });
+    if (!booking.isLocked && (!Number.isInteger(Number(slotIndex)) || Number(slotIndex) < 0 || Number(slotIndex) >= booking.slots.length)) {
+      return res.status(400).json({ error: 'A valid slotIndex is required.' });
     }
-
-    const booking = JSON.parse(fs.readFileSync(bookingFile, 'utf-8'));
-
-    if (booking.status !== 'active') {
-      return res.status(410).json({ error: 'This booking link has expired.' });
-    }
-
+    const claimedBooking = await Booking.findOneAndUpdate(
+      { bookingId: id, status: 'active' },
+      { $set: { status: 'processing' } },
+      { new: true }
+    ).lean();
+    if (!claimedBooking) return res.status(409).json({ error: 'This booking has already been claimed.' });
+    claimed = true;
+    hostId = claimedBooking.hostId.toString();
+    const bookingData = claimedBooking;
     let startTimeStr, endTimeStr;
     const formatTime12 = (h, m) => {
       const ampm = h >= 12 ? 'PM' : 'AM';
@@ -3502,35 +3567,16 @@ app.post('/api/booking/:id/confirm', async (req, res) => {
       return `${String(h12).padStart(2, '0')}:${String(m).padStart(2, '0')} ${ampm}`;
     };
 
-    if (booking.isLocked) {
-      // Locked time mode: use the exact startTime/endTime from the booking
-      startTimeStr = booking.startTime;
-      endTimeStr = booking.endTime;
+    if (bookingData.isLocked) {
+      startTimeStr = bookingData.startTime;
+      endTimeStr = bookingData.endTime;
     } else {
-      // Multi-slot mode: use slotIndex to pick the slot
-      if (slotIndex === undefined) {
-        return res.status(400).json({ error: 'slotIndex is required for multi-slot booking.' });
-      }
-      if (slotIndex < 0 || slotIndex >= booking.slots.length) {
-        return res.status(400).json({ error: 'Invalid slot index.' });
-      }
-
-      const slot = booking.slots[slotIndex];
-      if (slot.booked) {
-        return res.status(409).json({ error: 'This slot is already booked.' });
-      }
-
-      // Mark slot as booked
-      slot.booked = true;
-      slot.bookedBy = guestName;
-      slot.bookedByEmail = guestEmail || '';
-      slot.bookedByPhone = guestPhone || '';
-      slot.bookedByNotes = guestNotes || '';
-      slot.bookedAt = new Date().toISOString();
-
+      const slot = bookingData.slots[Number(slotIndex)];
+      if (slot.booked) throw Object.assign(new Error('This slot is already booked.'), { status: 409 });
       const startHour = slot.hour;
       const startMin = slot.minute;
-      const endMinTotal = startHour * 60 + startMin + booking.duration;
+      const endMinTotal = startHour * 60 + startMin + bookingData.duration;
+      if (endMinTotal > 1440) throw Object.assign(new Error('Booking must end on the same day.'), { status: 400 });
       const endHour = Math.floor(endMinTotal / 60);
       const endMin = endMinTotal % 60;
 
@@ -3538,56 +3584,95 @@ app.post('/api/booking/:id/confirm', async (req, res) => {
       endTimeStr = formatTime12(endHour, endMin);
     }
 
-    // Mark booking as completed
-    booking.status = 'completed';
-    booking.confirmedBy = guestName;
-    booking.confirmedAt = new Date().toISOString();
+    const host = await User.findById(hostId);
+    if (!host) throw Object.assign(new Error('Host account not found.'), { status: 404 });
+    const dayName = bookingData.day;
+    const startMinValue = timeToMinutes(startTimeStr);
+    const endMinValue = timeToMinutes(endTimeStr);
+    if (startMinValue === null || endMinValue === null || endMinValue <= startMinValue) throw Object.assign(new Error('Invalid booking time.'), { status: 400 });
+    const schedule = host.schedule && typeof host.schedule === 'object' ? host.schedule : getDefaultSchedule();
+    const observedRevision = Number(host.scheduleRevision || 0);
+    const conflicts = (schedule[dayName] || []).filter(event => {
+      if (bookingData.date && event.targetDate && String(event.targetDate).slice(0, 10) !== bookingData.date) return false;
+      const existingStart = timeToMinutes(event.startTime);
+      const existingEnd = timeToMinutes(event.endTime);
+      return existingStart !== null && existingEnd !== null && startMinValue < existingEnd && endMinValue > existingStart;
+    });
+    if (conflicts.length) throw Object.assign(new Error('This time is no longer available.'), { status: 409 });
 
-    // Save booking update
-    fs.writeFileSync(bookingFile, JSON.stringify(booking, null, 2));
-
-    // Add the event to the host's schedule
-    const hostSchedule = getUserSchedule(booking.hostId);
-    const dayName = booking.day;
-
-    const newEvent = {
-      title: `${booking.subject} - ${guestName}`,
+    eventToPersist = {
+      title: `${bookingData.subject} - ${guestName.trim()}`,
       day: dayName,
       startTime: startTimeStr,
       endTime: endTimeStr,
       recurrence: 'once',
-      location: DEFAULT_LOCATION_ID,
-      guestName: guestName,
+      location: bookingData.locationId || DEFAULT_LOCATION_ID,
+      guestName: guestName.trim(),
       guestEmail: guestEmail || '',
       guestPhone: guestPhone || '',
       guestNotes: guestNotes || '',
-      meetingType: booking.meetingType || null,
-      bookingId: id
+      meetingType: bookingData.meetingType || null,
+      bookingId: id,
+      ...(bookingData.date ? { targetDate: bookingData.date } : {})
     };
-
-    if (hostSchedule[dayName]) {
-      hostSchedule[dayName].push(newEvent);
-    } else {
-      hostSchedule['Today'].push(newEvent);
+    let googleCalendar = { success: false, reason: 'Host has no connected Google Calendar' };
+    if (host.googleAccessToken) {
+      const syncResult = await syncEventToGoogleCalendar(hostId, eventToPersist, bookingData.locationId || DEFAULT_LOCATION_ID);
+      if (!syncResult.success) throw Object.assign(new Error(`Google Calendar insertion failed: ${syncResult.error || 'unknown error'}`), { status: 502 });
+      syncedEventId = syncResult.eventId;
+      googleCalendar = { success: true, eventId: syncedEventId };
     }
 
-    syncTodayWithCurrentDay(hostSchedule);
+    const schedulePath = `schedule.${dayName}`;
+    const update = { $push: { [schedulePath]: eventToPersist } };
+    if (dayName === getTodayDayName()) update.$push['schedule.Today'] = eventToPersist;
+    const saveResult = await User.updateOne({
+      _id: hostId,
+      $or: [
+        { scheduleRevision: observedRevision },
+        ...(observedRevision === 0 ? [{ scheduleRevision: { $exists: false } }] : [])
+      ]
+    }, { ...update, $inc: { scheduleRevision: 1 } });
+    if (!saveResult.matchedCount) throw Object.assign(new Error('The host schedule changed during confirmation. Please try again.'), { status: 409 });
+    persisted = true;
+    const completed = await Booking.findOneAndUpdate(
+      { bookingId: id, status: 'processing' },
+      { $set: { status: 'completed', confirmedBy: guestName.trim(), confirmedAt: new Date() } },
+      { new: true }
+    ).lean();
+    if (!completed) throw Object.assign(new Error('Could not finalize this booking.'), { status: 503 });
+
+    const cachedSchedule = JSON.parse(JSON.stringify(schedule));
+    cachedSchedule[dayName] = [...(cachedSchedule[dayName] || []), eventToPersist];
+    if (dayName === getTodayDayName()) cachedSchedule.Today = [...(cachedSchedule.Today || []), eventToPersist];
+    userSchedules.set(hostId, cachedSchedule);
     saveSchedulesNow();
-    
-    // Save to MongoDB for logged-in users
-    if (mongoose.Types.ObjectId.isValid(booking.hostId)) {
-      await saveScheduleToMongo(booking.hostId, hostSchedule);
-    }
 
     res.json({
       ok: true,
       message: 'Booking confirmed successfully!',
-      event: newEvent,
-      booking
+      event: eventToPersist,
+      googleCalendar,
+      booking: completed
     });
   } catch (err) {
     console.error('Confirm booking error:', err);
-    res.status(500).json({ error: 'Failed to confirm booking.' });
+    if (persisted && hostId && eventToPersist) {
+      const pull = { [`schedule.${eventToPersist.day}`]: { bookingId: req.params.id } };
+      if (eventToPersist.day === getTodayDayName()) pull['schedule.Today'] = { bookingId: req.params.id };
+      await User.updateOne({ _id: hostId }, { $pull: pull }).catch(() => {});
+    }
+    if (syncedEventId && hostId) {
+      try {
+        const host = await User.findById(hostId);
+        if (host) {
+          const oauth = await createOAuth2ClientWithRefresh(host);
+          await google.calendar({ version: 'v3', auth: oauth }).events.delete({ calendarId: 'primary', eventId: syncedEventId });
+        }
+      } catch (cleanupError) { console.error('Failed to roll back Google Calendar event:', cleanupError.message); }
+    }
+    if (claimed) await Booking.updateOne({ bookingId: req.params.id, status: 'processing' }, { $set: { status: 'active' } }).catch(() => {});
+    res.status(err.status || 500).json({ error: err.message || 'Failed to confirm booking.' });
   }
 });
 
@@ -3823,10 +3908,16 @@ app.post('/api/payments/webhook',
         return res.status(200).json({ received: true });
       }
 
+      const orderId = payload?.data?.id ? String(payload.data.id) : null;
+      if (!orderId) {
+        console.error('Lemon Squeezy webhook: Missing order ID.');
+        return res.status(400).json({ error: 'Missing order ID.' });
+      }
+      const eventKey = `${eventName}:${orderId}`;
       const userId = payload?.meta?.custom_data?.user_id || payload?.meta?.custom_data?.userId;
       if (!userId) {
         console.warn('Lemon Squeezy webhook: No userId found in custom_data.');
-        return res.status(200).json({ received: true });
+        return res.status(400).json({ error: 'Missing user ID.' });
       }
 
       // Find the user in MongoDB and credit them with 100 AI credits
@@ -3840,12 +3931,33 @@ app.post('/api/payments/webhook',
 
       if (!user) {
         console.warn(`Lemon Squeezy webhook: User ${userId} not found in MongoDB.`);
-        return res.status(200).json({ received: true });
+        return res.status(404).json({ error: 'User not found.' });
       }
 
-      user.aiCredits = (user.aiCredits || 0) + 100;
-      await user.save();
-      console.log(`✅ Lemon Squeezy: Credited user ${user._id} with 100 AI credits (total: ${user.aiCredits}).`);
+      const dbSession = await mongoose.startSession();
+      try {
+        await ProcessedPaymentEvent.init();
+        await dbSession.withTransaction(async () => {
+          await ProcessedPaymentEvent.create([{
+            eventKey,
+            orderId,
+            userId: user._id,
+            credits: 100
+          }], { session: dbSession });
+          const updatedUser = await User.findByIdAndUpdate(
+            user._id,
+            { $inc: { aiCredits: 100 } },
+            { new: true, session: dbSession }
+          );
+          if (!updatedUser) throw new Error('Payment user disappeared during crediting.');
+        });
+      } catch (creditError) {
+        if (creditError?.code === 11000) return res.status(200).json({ received: true, duplicate: true });
+        throw creditError;
+      } finally {
+        await dbSession.endSession();
+      }
+      console.log(`✅ Lemon Squeezy: Credited user ${user._id} for order ${orderId}.`);
 
       return res.status(200).json({ received: true });
     } catch (err) {
@@ -4109,6 +4221,14 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(frontendDist, 'index.html'));
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Backend running at http://localhost:${PORT}`);
-});
+mongoReady
+  .then(() => {
+    console.log('MongoDB connected');
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`Backend running at http://localhost:${PORT}`);
+    });
+  })
+  .catch(err => {
+    console.error('MongoDB connection error:', err.message);
+    process.exit(1);
+  });

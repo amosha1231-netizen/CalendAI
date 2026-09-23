@@ -17,6 +17,7 @@ import LuxuryLoader from "./components/LuxuryLoader";
 import ManualEventForm from "./components/ManualEventForm";
 import HistoryModal from "./components/HistoryModal";
 import PublicGoals from "./components/PublicGoals";
+import ChallengeDetail from "./components/ChallengeDetail";
 import DailyJournal from "./components/DailyJournal";
 
 // ── Lazy-loaded page chunks ──
@@ -107,7 +108,7 @@ function getInitialIntent() {
   if (typeof window === 'undefined') return { isAuthCallback: false, authFailed: false, wantsBooking: false };
   const params = new URLSearchParams(window.location.search);
   return {
-    hasToken: !!params.get('token'),
+    hasToken: !!params.get('oauth_code'),
     isAuthCallback: params.get('login') === 'success' || params.get('auth') === 'success',
     authFailed: params.get('auth') === 'failed',
     wantsBooking: params.get('book') === 'true' || params.get('book') === '1',
@@ -359,6 +360,8 @@ function AppRoutes() {
   const [showManualEvent, setShowManualEvent] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [showPublicGoals, setShowPublicGoals] = useState(false);
+  const [showChallengeDetail, setShowChallengeDetail] = useState(false);
+  const [selectedChallengeId, setSelectedChallengeId] = useState(null);
   const [showJournal, setShowJournal] = useState(false);
   const [showMobileSearch, setShowMobileSearch] = useState(false);
 
@@ -381,14 +384,11 @@ function AppRoutes() {
   const [emailAuthLoading, setEmailAuthLoading] = useState(false);
   const [authError, setAuthError] = useState('');
 
-  const [showShareModal, setShowShareModal] = useState(false);
-  const [shareLinkCopied, setShareLinkCopied] = useState(false);
 
   const [profileLocation, setProfileLocation] = useState(() => {
     try { return safeStorage.getItem('calendai-profile-location') || 'none'; } catch { return 'none'; }
   });
 
-  const bookingLink = typeof window !== 'undefined' ? `${window.location.origin}${window.location.pathname}?book=1` : '';
 
   const incrementGuestUsage = useCallback(() => {
     setGuestUsageCount(prev => {
@@ -442,7 +442,7 @@ function AppRoutes() {
   }, []);
 
   const handleShareApp = useCallback(async () => {
-    const shareUrl = 'https://calendai-backend-dfmi.onrender.com/';
+    const shareUrl = 'https://calendai.onrender.com/';
     if (navigator.share) {
       try {
         await navigator.share({
@@ -629,28 +629,6 @@ function AppRoutes() {
     setShowPwaBanner(false);
     setPwaBannerDismissed(true);
     safeStorage.setItem('calendai-pwa-banner-dismissed', 'true');
-  };
-
-  const handleCopyShareLink = () => {
-    if (navigator.clipboard) {
-      navigator.clipboard.writeText(bookingLink).then(() => {
-        setShareLinkCopied(true);
-        setTimeout(() => setShareLinkCopied(false), 2500);
-      }).catch(() => {
-        const textArea = document.createElement('textarea');
-        textArea.value = bookingLink;
-        document.body.appendChild(textArea);
-        textArea.select();
-        document.execCommand('copy');
-        document.body.removeChild(textArea);
-        setShareLinkCopied(true);
-        setTimeout(() => setShareLinkCopied(false), 2500);
-      });
-    }
-  };
-
-  const handlePreviewLink = () => {
-    window.open(bookingLink, '_blank');
   };
 
   const fetchSchedule = useCallback(async () => {
@@ -2307,33 +2285,6 @@ function AppRoutes() {
         </div>
       )}
 
-      {/* Share Booking Link Modal */}
-      {showShareModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" onClick={() => setShowShareModal(false)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2"><Share2 className="w-5 h-5 text-emerald-600" /> {t.shareBookingTitle}</h3>
-              <button onClick={() => setShowShareModal(false)} className="p-1 rounded-full hover:bg-slate-100"><X className="w-5 h-5 text-slate-500" /></button>
-            </div>
-            <p className="text-sm text-slate-600 mb-4">{t.shareBookingDesc}</p>
-            <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 mb-4">
-              <label className="block text-xs font-medium text-slate-500 mb-1">{t.shareBookingLinkLabel}</label>
-              <div className="text-sm text-slate-800 font-mono break-all bg-white p-2 rounded border border-slate-200" dir="ltr">{bookingLink}</div>
-            </div>
-            <div className="flex items-center gap-3">
-              <button onClick={handleCopyShareLink}
-                className="flex-1 flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-lg font-medium transition text-sm">
-                {shareLinkCopied ? <><Check className="w-4 h-4" /> {t.shareBookingCopied}</> : <><Copy className="w-4 h-4" /> {t.shareBookingCopy}</>}
-              </button>
-              <button onClick={handlePreviewLink}
-                className="flex items-center justify-center gap-2 bg-white border border-slate-300 text-slate-700 px-4 py-2.5 rounded-lg hover:bg-slate-50 transition text-sm font-medium">
-                <ExternalLink className="w-4 h-4" /> {t.shareBookingPreview}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* PWA Install Popup */}
       {showPwaPopup && !isStandalone() && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[9999]" onClick={handleDismissPwa}>
@@ -2560,7 +2511,7 @@ function AppRoutes() {
 
       {/* Meeting Wizard Modal */}
       {showWizard && (
-        <MeetingWizard schedule={schedule} lang={lang} t={t} onClose={() => setShowWizard(false)} />
+        <MeetingWizard schedule={schedule} lang={lang} t={t} hostName={user?.name || user?.displayName || user?.email || 'Host'} locationId={profileLocation !== 'none' ? profileLocation : selectedLocation} onClose={() => setShowWizard(false)} />
       )}
 
       {/* History Modal */}
@@ -2590,7 +2541,7 @@ function AppRoutes() {
         user={user}
         isPro={isPro}
         onLogout={handleLogout}
-        onOpenShareModal={() => setShowShareModal(true)}
+        onOpenShareModal={() => setShowWizard(true)}
         onOpenHistory={() => setShowHistoryModal(true)}
         selectedLocation={profileLocation !== 'none' ? profileLocation : selectedLocation}
         onLocationChange={(loc) => {
@@ -2608,6 +2559,27 @@ function AppRoutes() {
           lang={lang}
           user={user}
           onClose={() => setShowPublicGoals(false)}
+          onJoinChallenge={(goal) => {
+            fetchSchedule();
+            setSuccess(lang === "he" ? "🎯 הצטרפת לאתגר! האירוע נוסף ליומן." : "🎯 Joined the challenge! Event added to your schedule.");
+          }}
+          onViewChallenge={(goalId) => {
+            setSelectedChallengeId(goalId);
+            setShowChallengeDetail(true);
+          }}
+        />
+      )}
+
+      {/* Challenge Detail Modal */}
+      {showChallengeDetail && selectedChallengeId && (
+        <ChallengeDetail
+          goalId={selectedChallengeId}
+          lang={lang}
+          user={user}
+          onClose={() => {
+            setShowChallengeDetail(false);
+            setSelectedChallengeId(null);
+          }}
           onJoinChallenge={(goal) => {
             fetchSchedule();
             setSuccess(lang === "he" ? "🎯 הצטרפת לאתגר! האירוע נוסף ליומן." : "🎯 Joined the challenge! Event added to your schedule.");

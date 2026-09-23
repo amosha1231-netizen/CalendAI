@@ -9,6 +9,12 @@ const participantSchema = new mongoose.Schema({
   completedAt: { type: Date }
 }, { _id: false });
 
+const messageSchema = new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  text: { type: String, required: true },
+  createdAt: { type: Date, default: Date.now }
+}, { _id: true });
+
 const goalSchema = new mongoose.Schema({
   title: { type: String, required: true },
   creatorId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
@@ -17,6 +23,7 @@ const goalSchema = new mongoose.Schema({
   isPublic: { type: Boolean, default: true },
   category: { type: String, default: 'general' }, // workout, study, work, sleep, general
   participants: [participantSchema],
+  messages: [messageSchema], // text-only discussion messages
   createdAt: { type: Date, default: Date.now }
 });
 

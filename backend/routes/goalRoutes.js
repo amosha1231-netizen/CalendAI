@@ -7,7 +7,7 @@ const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
 const Goal = require('../models/Goal');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'calendai_secret';
+const JWT_SECRET = process.env.JWT_SECRET?.trim() || 'calendai-jwt-secret-change-in-production';
 
 /**
  * Extract user ID from JWT Bearer token or session.
@@ -415,6 +415,90 @@ router.get('/my', async (req, res) => {
   } catch (err) {
     console.error('My goals error:', err);
     res.status(500).json({ error: 'שגיאה בטעינת האתגרים שלי.' });
+  }
+});
+
+/**
+ * GET /api/goals/:id
+ * Get a single goal by ID with full participant and message details.
+ */
+router.get('/:id', async (req, res) => {
+  try {
+    const goal = await Goal.findById(req.params.id)
+      .populate('creatorId', 'displayName photo email')
+      .populate('participants.userId', 'displayName photo')
+      .populate('messages.userId', 'displayName photo')
+      .lean();
+
+    if (!goal) {
+      return res.status(404).json({ error: 'האתגר לא נמצא.' });
+    }
+
+    const result = {
+      ...goal,
+      participantCount: goal.participants?.length || 0,
+      completedCount: goal.participants?.filter(p => p.status === 'completed').length || 0
+    };
+
+    res.json({ goal: result });
+  } catch (err) {
+    console.error('Get goal error:', err);
+    res.status(500).json({ error: 'שגיאה בטעינת האתגר.' });
+  }
+});
+
+/**
+ * POST /api/goals/:id/messages
+ * Post a text-only message to a goal's discussion.
+ * Body: { text: string }
+ */
+router.post('/:id/messages', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) {
+      return res.status(401).json({ error: 'עליך להתחבר כדי לשלוח הודעה.' });
+    }
+
+    const { text } = req.body;
+    if (!text || !text.trim()) {
+      return res.status(400).json({ error: 'נדרש טקסט להודעה.' });
+    }
+
+    const goal = await Goal.findById(req.params.id);
+    if (!goal) {
+      return res.status(404).json({ error: 'האתגר לא נמצא.' });
+    }
+
+    // Check user is a participant
+    const isParticipant = goal.participants.some(
+      p => p.userId.toString() === userId
+    );
+    if (!isParticipant) {
+      return res.status(403).json({ error: 'רק משתתפים באתגר יכולים לשלוח הודעות.' });
+    }
+
+    goal.messages.push({
+      userId: new mongoose.Types.ObjectId(userId),
+      text: text.trim()
+    });
+    await goal.save();
+
+    const populated = await Goal.findById(goal._id)
+      .populate('creatorId', 'displayName photo email')
+      .populate('participants.userId', 'displayName photo')
+      .populate('messages.userId', 'displayName photo')
+      .lean();
+
+    const result = {
+      ...populated,
+      participantCount: populated.participants?.length || 0,
+      completedCount: populated.participants?.filter(p => p.status === 'completed').length || 0
+    };
+
+    res.status(201).json({ ok: true, goal: result, message: 'ההודעה נוספה בהצלחה.' });
+  } catch (err) {
+    console.error('Post message error:', err);
+    res.status(500).json({ error: 'שגיאה בשליחת ההודעה.' });
   }
 });
 

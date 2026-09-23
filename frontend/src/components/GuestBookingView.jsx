@@ -39,6 +39,7 @@ export default function GuestBookingView({ bookingId, lang, t, onClose }) {
   const [confirming, setConfirming] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   const [confirmError, setConfirmError] = useState("");
+  const [calendarSyncWarning, setCalendarSyncWarning] = useState("");
 
   const isRTL = lang === 'he';
   const dayNames = lang === 'he' ? DAY_NAMES_HE : DAY_NAMES_EN;
@@ -135,6 +136,11 @@ export default function GuestBookingView({ bookingId, lang, t, onClose }) {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Confirmation failed");
+      if (data.googleCalendar && !data.googleCalendar.success) {
+        setCalendarSyncWarning(lang === 'he'
+          ? 'הפגישה נשמרה ב‑CalendAI, אך הסנכרון ליומן Google נכשל. יש לבדוק את החיבור ולסנכרן מחדש.'
+          : 'The meeting was saved in CalendAI, but Google Calendar sync failed. Check the calendar connection and sync again.');
+      }
       setConfirmed(true);
     } catch (err) {
       setConfirmError(err.message);
@@ -185,6 +191,7 @@ export default function GuestBookingView({ bookingId, lang, t, onClose }) {
             </div>
             <h3 className="text-xl font-bold text-slate-800 mb-2">{t.bookingSuccessTitle || t.guestViewSuccess}</h3>
             <p className="text-sm text-slate-500 mb-6">{t.bookingSuccessDesc || t.guestViewSuccessDesc}</p>
+            {calendarSyncWarning && <p role="status" className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4">{calendarSyncWarning}</p>}
 
             {/* Meeting Details */}
             <div className="bg-slate-50 rounded-lg p-4 border border-slate-200 mb-6 text-right">
@@ -192,7 +199,7 @@ export default function GuestBookingView({ bookingId, lang, t, onClose }) {
               <div className="flex items-center gap-2 text-sm mb-1">
                 <Calendar className="w-4 h-4 text-blue-500" />
                 <span className="font-medium text-slate-700">
-                  {getDayDisplayName(booking.day)} · {getDayDate(booking.day)}/{getMonthName(booking.day)}
+                  {booking.date || `${getDayDisplayName(booking.day)} · ${getDayDate(booking.day)}/${getMonthName(booking.day)}`}
                 </span>
               </div>
               <div className="flex items-center gap-2 text-sm text-slate-600 mb-1">
@@ -278,7 +285,7 @@ export default function GuestBookingView({ bookingId, lang, t, onClose }) {
                 <div>
                   <p className="text-sm text-slate-500">{t.bookingDayPicker || 'Day'}</p>
                   <p className="font-semibold text-slate-800">
-                    {getDayDisplayName(booking.day)} · {getDayDate(booking.day)} {getMonthName(booking.day)}
+                    {booking.date || `${getDayDisplayName(booking.day)} · ${getDayDate(booking.day)} ${getMonthName(booking.day)}`}
                   </p>
                 </div>
               </div>
@@ -409,7 +416,7 @@ export default function GuestBookingView({ bookingId, lang, t, onClose }) {
               <div className="flex items-center gap-2 text-sm mb-2">
                 <Calendar className="w-4 h-4 text-blue-500" />
                 <span className="font-medium text-slate-700">
-                  {getDayDisplayName(booking.day)} · {getDayDate(booking.day)}/{getMonthName(booking.day)}
+                  {booking.date || `${getDayDisplayName(booking.day)} · ${getDayDate(booking.day)}/${getMonthName(booking.day)}`}
                 </span>
               </div>
               <div className="flex items-center gap-2 text-sm text-slate-600 mb-2">
@@ -477,7 +484,7 @@ export default function GuestBookingView({ bookingId, lang, t, onClose }) {
               <Clock className="w-3 h-3" />
               <span>{booking.duration} {t.wizardDurationMinutes || 'min'}</span>
               <span className="mx-1">·</span>
-              <span>{getDayDisplayName(booking.day)}, {getDayDate(booking.day)} {getMonthName(booking.day)}</span>
+              <span>{booking.date || `${getDayDisplayName(booking.day)}, ${getDayDate(booking.day)} ${getMonthName(booking.day)}`}</span>
             </div>
           )}
         </div>

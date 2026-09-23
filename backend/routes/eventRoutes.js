@@ -287,7 +287,7 @@ router.post('/', async (req, res) => {
           reminderMinutesBefore: event.reminderMinutesBefore
         });
         syncTodayWithCurrentDay(schedule);
-        await User.findByIdAndUpdate(userId, { schedule });
+        await User.findByIdAndUpdate(userId, { $set: { schedule }, $inc: { scheduleRevision: 1 } });
       }
     } catch (syncErr) {
       console.error('[POST /api/events] Failed to sync to schedule:', syncErr.message);
@@ -387,7 +387,7 @@ router.delete('/:eventId', async (req, res) => {
           }
         }
         syncTodayWithCurrentDay(schedule);
-        await User.findByIdAndUpdate(userId, { schedule });
+        await User.findByIdAndUpdate(userId, { $set: { schedule }, $inc: { scheduleRevision: 1 } });
       }
     } catch (syncErr) {
       console.error('[DELETE /api/events/:eventId] Failed to sync schedule:', syncErr.message);
@@ -600,7 +600,7 @@ router.post('/siri', async (req, res) => {
     if (user && user._id) {
       try {
         const UserModel = mongoose.models.User || mongoose.model('User', userSchema);
-        await UserModel.findByIdAndUpdate(user._id, { schedule }).catch(() => {});
+        await UserModel.findByIdAndUpdate(user._id, { $set: { schedule }, $inc: { scheduleRevision: 1 } }).catch(() => {});
       } catch (err) {
         console.error('[Siri Route] Failed to save to MongoDB:', err.message);
       }

@@ -7,7 +7,7 @@ const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
 const DailyLog = require('../models/DailyLog');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'calendai_secret';
+const JWT_SECRET = process.env.JWT_SECRET?.trim() || 'calendai-jwt-secret-change-in-production';
 
 /**
  * Extract user ID from JWT Bearer token or session.

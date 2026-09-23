@@ -43,7 +43,7 @@ const DAY_NAMES_EN = {
   Saturday: "Saturday"
 };
 
-export default function PublicGoals({ lang, user, onClose, onJoinChallenge }) {
+export default function PublicGoals({ lang, user, onClose, onJoinChallenge, onViewChallenge }) {
   const t = translations[lang] || translations.he;
   const isRtl = lang === "he";
   const dayNames = lang === "he" ? DAY_NAMES : DAY_NAMES_EN;
@@ -424,7 +424,11 @@ export default function PublicGoals({ lang, user, onClose, onJoinChallenge }) {
               ) : (
                 <div className="space-y-3">
                   {myGoals.map(goal => (
-                    <div key={goal._id} className="p-4 bg-purple-50 dark:bg-purple-900/20 rounded-xl border border-purple-200 dark:border-purple-800">
+                    <div
+                      key={goal._id}
+                      className="p-4 bg-purple-50 dark:bg-purple-900/20 rounded-xl border border-purple-200 dark:border-purple-800 cursor-pointer hover:shadow-md transition"
+                      onClick={() => onViewChallenge && onViewChallenge(goal._id)}
+                    >
                       <div className="flex items-start justify-between gap-3">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
@@ -489,7 +493,11 @@ export default function PublicGoals({ lang, user, onClose, onJoinChallenge }) {
                     const joined = hasUserJoined(goal);
                     const isCreator = user && (goal.creatorId?._id === user.id || goal.creatorId === user.id);
                     return (
-                      <div key={goal._id} className="p-4 bg-white dark:bg-gray-700 rounded-xl border border-gray-200 dark:border-gray-600 shadow-sm hover:shadow-md transition">
+                      <div
+                        key={goal._id}
+                        className="p-4 bg-white dark:bg-gray-700 rounded-xl border border-gray-200 dark:border-gray-600 shadow-sm hover:shadow-md transition cursor-pointer"
+                        onClick={() => onViewChallenge && onViewChallenge(goal._id)}
+                      >
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">

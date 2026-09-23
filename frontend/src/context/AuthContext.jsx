@@ -319,26 +319,19 @@ export function AuthProvider({ children }) {
 
     // Parse initial URL intent
     const params = new URLSearchParams(window.location.search);
-    const urlToken = params.get('token');
+    const oauthCode = params.get('oauth_code');
     const authFailed = params.get('auth') === 'failed';
     const isAuthCallback = params.get('login') === 'success' || params.get('auth') === 'success';
 
-    // ── Step 1: Extract token from URL query params (OAuth callback) ──
-    if (urlToken) {
-      // Save token to ALL storage locations (safeStorage, localStorage)
-      setJwtToken(urlToken);
-      safeStorage.setItem('calendai-isLoggedIn', 'true');
-      try {
-        localStorage.setItem('calendai-isLoggedIn', 'true');
-      } catch (e) {}
-      api.defaults.headers.common['Authorization'] = `Bearer ${urlToken}`;
-      // Clean URL
+    // Remove the one-time OAuth code from browser history before exchanging it.
+    if (oauthCode || isAuthCallback) {
       const url = new URL(window.location.href);
-      url.searchParams.delete('token');
+      url.searchParams.delete('oauth_code');
       url.searchParams.delete('auth');
       url.searchParams.delete('login');
       url.searchParams.delete('error');
-      window.history.replaceState({}, document.title, url.pathname + url.search);
+      const remainingQuery = url.searchParams.toString();
+      window.history.replaceState({}, document.title, url.pathname + (remainingQuery ? `?${remainingQuery}` : ''));
     }
 
     // Handle auth failure from OAuth callback
@@ -348,13 +341,22 @@ export function AuthProvider({ children }) {
       return;
     }
 
-    // Clean URL for auth callback without token
-    if (isAuthCallback && !urlToken) {
-      window.history.replaceState({}, document.title, window.location.pathname);
-    }
-
     // ── Step 2: Check auth with the token from localStorage ──
     const doInitialAuth = async () => {
+      if (oauthCode) {
+        try {
+          const exchange = await api.post('/api/auth/oauth-exchange', { code: oauthCode }, { validateStatus: false });
+          if (exchange.status !== 200 || !exchange.data?.token) throw new Error('OAuth code exchange failed.');
+          setJwtToken(exchange.data.token);
+          safeStorage.setItem('calendai-isLoggedIn', 'true');
+          api.defaults.headers.common['Authorization'] = `Bearer ${exchange.data.token}`;
+        } catch (error) {
+          clearJwtToken();
+          setAuthStatus('guest');
+          setAuthLoading(false);
+          return;
+        }
+      }
       const token = getJwtToken();
       if (!token) {
         setAuthStatus('guest');

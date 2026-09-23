@@ -833,12 +833,14 @@ async function parseWithGemini(text, options = {}) {
 
     const raw = completion.choices?.[0]?.message?.content || '{}';
     const parsed = JSON.parse(raw);
-
     // ── Extract token usage from OpenRouter response ──
-    const usage = completion.usage || null;
+    const usage = completion.usage ? { prompt_tokens: completion.usage.prompt_tokens || 0, completion_tokens: completion.usage.completion_tokens || 0, total_tokens: completion.usage.total_tokens || 0 } : null;
     if (usage) {
       console.log(`[Token Usage] parseWithGemini — Prompt: ${usage.prompt_tokens}, Completion: ${usage.completion_tokens}, Total: ${usage.total_tokens}`);
     }
+
+    if (usage) parsed.usage = usage;
+    parsed.modelName = modelName;
 
     // Clean summaries on all events (map "summary" to "title" for internal consistency)
     // NOTE: We trust the AI's output directly. The AI is instructed to return clean summaries.
@@ -890,6 +892,8 @@ async function parseWithGemini(text, options = {}) {
     if (parsed.events && Array.isArray(parsed.events) && parsed.events.length > 0) {
       const count = parsed.events.length;
       return {
+        usage,
+        modelName,
         reasoning: isEnglish ? `Parsed ${count} event(s) from the request.` : `נ przeanalizowano ${count} אירועים מהבקשה.`,
         replyMessage: isEnglish ? `Added ${count} new event(s).` : `נוספו ${count} אירועים חדשים.`,
         events: parsed.events.map(ev => ({
@@ -903,6 +907,8 @@ async function parseWithGemini(text, options = {}) {
     // Graceful fallback: if the model returned events in an unexpected format
     if (parsed.events && parsed.replyMessage) {
       return {
+        usage,
+        modelName,
         reasoning: parsed.reasoning || '',
         replyMessage: parsed.replyMessage,
         events: parsed.events.map(ev => ({
@@ -916,6 +922,8 @@ async function parseWithGemini(text, options = {}) {
     // Last resort fallback: if the model returned a flat array of events
     if (Array.isArray(parsed)) {
       return {
+        usage,
+        modelName,
         reasoning: isEnglish ? 'The model returned an array of events without explanation. Accepted by the system.' : 'המודל החזיר מערך אירועים ללא הסבר. התקבל על ידי המערכת.',
         replyMessage: isEnglish ? `Added ${parsed.length} new events.` : `נוספו ${parsed.length} אירועים חדשים.`,
         events: parsed.map(ev => ({
@@ -929,6 +937,8 @@ async function parseWithGemini(text, options = {}) {
     // If the response is a single event object
     if (parsed.summary && parsed.day) {
       return {
+        usage,
+        modelName,
         reasoning: parsed.reasoning || (isEnglish ? 'The model returned a single event.' : 'המודל החזיר אירוע בודד.'),
         replyMessage: parsed.replyMessage || (isEnglish ? 'Added one new event.' : 'נוסף אירוע אחד חדש.'),
         events: [{
@@ -1042,6 +1052,11 @@ Current date context: ${todayString}, day: ${todayEnglish}`;
 
     const raw = completion.choices?.[0]?.message?.content || '{}';
     const parsed = JSON.parse(raw);
+    const usage = completion.usage ? {
+      prompt_tokens: completion.usage.prompt_tokens || 0,
+      completion_tokens: completion.usage.completion_tokens || 0,
+      total_tokens: completion.usage.total_tokens || 0
+    } : null;
 
     // Handle error response
     if (parsed.error) {
@@ -1057,6 +1072,8 @@ Current date context: ${todayString}, day: ${todayEnglish}`;
       return {
         reasoning: parsed.reasoning || 'Events extracted from image.',
         replyMessage: parsed.replyMessage || `זוהו ${parsed.events.length} אירועים מהתמונה.`,
+        usage,
+        modelName: visionModel,
         events: parsed.events.map(ev => ({
           ...ev,
           title: ev.summary || 'אירוע',
@@ -1542,10 +1559,13 @@ async function parseWithGeminiSmart(text, options = {}) {
     const parsed = JSON.parse(raw);
 
     // ── Extract token usage from OpenRouter response ──
-    const usage = completion.usage || null;
+    const usage = completion.usage ? { prompt_tokens: completion.usage.prompt_tokens || 0, completion_tokens: completion.usage.completion_tokens || 0, total_tokens: completion.usage.total_tokens || 0 } : null;
     if (usage) {
       console.log(`[Token Usage] parseWithGeminiSmart — Prompt: ${usage.prompt_tokens}, Completion: ${usage.completion_tokens}, Total: ${usage.total_tokens}`);
     }
+
+    if (usage) parsed.usage = usage;
+    parsed.modelName = modelName;
 
     // Clean summaries on all events
     // NOTE: We trust the AI's output directly. No regex post-processing is applied.
@@ -1596,6 +1616,8 @@ async function parseWithGeminiSmart(text, options = {}) {
     if (parsed.events && Array.isArray(parsed.events) && parsed.events.length > 0) {
       const count = parsed.events.length;
       return {
+        usage,
+        modelName,
         reasoning: isEnglish ? `Parsed ${count} event(s) from the request.` : `נ przeanalizowano ${count} אירועים מהבקשה.`,
         replyMessage: isEnglish ? `Added ${count} new event(s).` : `נוספו ${count} אירועים חדשים.`,
         events: parsed.events.map(ev => ({
@@ -1609,6 +1631,8 @@ async function parseWithGeminiSmart(text, options = {}) {
     // Graceful fallback
     if (parsed.events && parsed.replyMessage) {
       return {
+        usage,
+        modelName,
         reasoning: parsed.reasoning || '',
         replyMessage: parsed.replyMessage,
         events: parsed.events.map(ev => ({
@@ -1622,6 +1646,8 @@ async function parseWithGeminiSmart(text, options = {}) {
     // Last resort fallback
     if (Array.isArray(parsed)) {
       return {
+        usage,
+        modelName,
         reasoning: isEnglish ? 'The model returned an array of events without explanation. Accepted by the system.' : 'המודל החזיר מערך אירועים ללא הסבר. התקבל על ידי המערכת.',
         replyMessage: isEnglish ? `Added ${parsed.length} new events.` : `נוספו ${parsed.length} אירועים חדשים.`,
         events: parsed.map(ev => ({
@@ -1635,6 +1661,8 @@ async function parseWithGeminiSmart(text, options = {}) {
     // If the response is a single event object
     if (parsed.summary && parsed.day) {
       return {
+        usage,
+        modelName,
         reasoning: parsed.reasoning || (isEnglish ? 'The model returned a single event.' : 'המודל החזיר אירוע בודד.'),
         replyMessage: parsed.replyMessage || (isEnglish ? 'Added one new event.' : 'נוסף אירוע אחד חדש.'),
         events: [{
@@ -1734,7 +1762,7 @@ async function rescheduleWithGemini(currentSchedule, reason) {
       throw new Error("AI response is missing 'newSchedule' or 'summary'.");
     }
 
-    return parsed;
+    return { ...parsed, usage, modelName };
 
   } catch (error) {
     console.error('DeepSeek reschedule failed:', error);
