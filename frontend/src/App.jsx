@@ -1362,7 +1362,7 @@ function AppRoutes() {
   // Checks BOTH safeStorage and localStorage directly for the token.
   // This prevents the landing page from flashing while the OAuth callback
   // token is being saved to storage by AuthContext.
-  if (authLoading && !user && !safeStorage.getItem('token') && !safeStorage.getItem('calendai-jwt') && !localStorage.getItem('token') && !localStorage.getItem('calendai-jwt')) {
+  if (authLoading && !user && !safeStorage.getItem('token') && !safeStorage.getItem('calendai-jwt')) {
     return <LuxuryLoader statusText={t.parsing || 'AUTHENTICATING...'} />;
   }
 

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Calendar, Clock, Loader2, Sparkles, X, Check, Sun, Moon, MapPin, Filter, Eye, EyeOff, Square, Mail, Phone, MessageSquare, AlertCircle, Share2, ExternalLink, Copy, Download, Users, Send } from "lucide-react";
 import { isShabbatNow } from "../utils/shabbatHelper";
 import ShabbatBanner from "./ShabbatBanner";
+import safeStorage from "../utils/safeStorage";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
 
@@ -288,7 +289,7 @@ export default function Booking({ schedule, lang, t, onClose, onConfirm, user })
     
     try {
       // Call backend to create a locked booking link with exact time
-      const authToken = localStorage.getItem('token') || localStorage.getItem('calendai-jwt');
+      const authToken = safeStorage.getItem('token') || safeStorage.getItem('calendai-jwt');
       const res = await fetch(`${API_BASE}/api/booking/create-link`, {
         method: "POST",
         headers: {
