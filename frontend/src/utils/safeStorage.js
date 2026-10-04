@@ -143,3 +143,36 @@ const safeStorage = {
 };
 
 export default safeStorage;
+
+/**
+ * Safely parse a date-like value into a Date, never throwing.
+ *
+ * Safari on iOS does not support `new Date("YYYY-MM-DD HH:mm")` (space
+ * separator) — it returns Invalid Date instead of parsing it. This
+ * normalizes that one common non-ISO shape to ISO 8601 before parsing,
+ * and returns null instead of an Invalid Date on any unparseable input.
+ *
+ * @param {string|number|Date|null|undefined} value
+ * @returns {Date|null}
+ */
+export function safeParseDate(value) {
+  if (value instanceof Date) {
+    return isNaN(value.getTime()) ? null : value;
+  }
+  if (typeof value === 'number') {
+    const d = new Date(value);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  if (typeof value !== 'string' || !value.trim()) {
+    return null;
+  }
+  try {
+    const isoCandidate = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(value)
+      ? value.replace(' ', 'T')
+      : value;
+    const d = new Date(isoCandidate);
+    return isNaN(d.getTime()) ? null : d;
+  } catch {
+    return null;
+  }
+}
