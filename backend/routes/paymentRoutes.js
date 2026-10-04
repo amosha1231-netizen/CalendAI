@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'calendai-jwt-secret-change-in-production';
+const JWT_SECRET = require('../config/jwtSecret');
 
 /**
  * POST /api/payments/create-checkout

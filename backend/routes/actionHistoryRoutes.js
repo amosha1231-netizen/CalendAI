@@ -11,7 +11,7 @@ const { google } = require('googleapis');
 
 // ── JWT verification (same logic as server.js) ──
 const jwt = require('jsonwebtoken');
-const JWT_SECRET = process.env.JWT_SECRET || 'calendai-jwt-secret-change-in-production';
+const JWT_SECRET = require('../config/jwtSecret');
 
 /**
  * Helper: Extract authenticated user ID from request.

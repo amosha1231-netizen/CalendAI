@@ -39,7 +39,7 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 
 dotenv.config({ path: path.join(__dirname, '.env') });
 
 const isProduction = process.env.NODE_ENV === 'production' || !!process.env.RENDER;
-const JWT_SECRET = process.env.JWT_SECRET?.trim() || (!isProduction ? 'calendai-jwt-secret-change-in-production' : null);
+const JWT_SECRET = require('./config/jwtSecret');
 const SESSION_SECRET = process.env.SESSION_SECRET?.trim() || (!isProduction ? 'calendai-secret-key-change-me' : null);
 const MONGO_URI = process.env.MONGODB_URI?.trim() || process.env.MONGO_URI?.trim() || (!isProduction ? 'mongodb://localhost:27017/calendai' : null);
 if (isProduction && (!JWT_SECRET || !SESSION_SECRET || !MONGO_URI)) {

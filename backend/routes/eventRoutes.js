@@ -7,7 +7,7 @@ const router = express.Router();
 const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'calendai-jwt-secret-change-in-production';
+const JWT_SECRET = require('../config/jwtSecret');
 
 // ── AI Service (safe import) ──
 let parseWithGemini, parseWithGeminiSmart;
