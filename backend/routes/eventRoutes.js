@@ -31,22 +31,8 @@ try {
   classifyRequest = (text) => ({ route: 'smart', reason: 'Semantic router unavailable, defaulting to smart track.' });
 }
 
-// ── User Model (shared with server.js) ──
-const userSchema = new mongoose.Schema({
-  googleId: { type: String, sparse: true },
-  email: { type: String, required: true, unique: true, lowercase: true },
-  password: { type: String },
-  displayName: { type: String },
-  photo: { type: String },
-  isPro: { type: Boolean, default: false },
-  stripeCustomerId: { type: String },
-  aiCredits: { type: Number, default: 15 }, // Freemium: 15 free AI credits for new users
-  schedule: { type: mongoose.Schema.Types.Mixed, default: {} },
-  createdAt: { type: Date, default: Date.now }
-});
-
-// Use existing model if already compiled, otherwise create it
-const User = mongoose.models.User || mongoose.model('User', userSchema);
+// ── User Model (shared model, see ../models/User.js) ──
+const User = require('../models/User');
 
 // ── Event Model (shared from ../models/Event.js — Multi-Tenancy Isolated) ──
 const Event = require('../models/Event');
@@ -599,8 +585,7 @@ router.post('/siri', async (req, res) => {
     // Save to MongoDB for logged-in users
     if (user && user._id) {
       try {
-        const UserModel = mongoose.models.User || mongoose.model('User', userSchema);
-        await UserModel.findByIdAndUpdate(user._id, { $set: { schedule }, $inc: { scheduleRevision: 1 } }).catch(() => {});
+        await User.findByIdAndUpdate(user._id, { $set: { schedule }, $inc: { scheduleRevision: 1 } }).catch(() => {});
       } catch (err) {
         console.error('[Siri Route] Failed to save to MongoDB:', err.message);
       }

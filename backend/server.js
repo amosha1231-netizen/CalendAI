@@ -102,8 +102,8 @@ try {
 console.log('=== CalendAI Startup Environment Check ===');
 console.log('GOOGLE_CLIENT_ID:', process.env.GOOGLE_CLIENT_ID ? '✅ SET' : '❌ MISSING');
 console.log('GOOGLE_CLIENT_SECRET:', process.env.GOOGLE_CLIENT_SECRET ? '✅ SET' : '❌ MISSING');
-console.log('MONGO_URI:', process.env.MONGO_URI ? '✅ SET' : '❌ MISSING (will use default)');
-console.log('GEMINI_API_KEY:', process.env.GEMINI_API_KEY ? '✅ SET' : '❌ MISSING');
+console.log('MONGODB_URI:', (process.env.MONGODB_URI || process.env.MONGO_URI) ? '✅ SET' : '❌ MISSING (will use default)');
+console.log('OPENROUTER_API_KEY:', process.env.OPENROUTER_API_KEY ? '✅ SET' : '❌ MISSING');
 console.log('SESSION_SECRET:', process.env.SESSION_SECRET ? '✅ SET' : '❌ MISSING (will use default)');
 console.log('NODE_ENV:', process.env.NODE_ENV || 'not set');
 console.log('RENDER:', process.env.RENDER || 'not set');
@@ -126,41 +126,9 @@ async function createOAuthHandoff(userId) {
 const mongoReady = mongoose.connect(MONGO_URI);
 
 // ──────────────────────────────────────────────
-// User Schema (MongoDB)
+// User Schema (MongoDB) — shared model, see ./models/User.js
 // ──────────────────────────────────────────────
-const userSchema = new mongoose.Schema({
-  googleId: { type: String, sparse: true },
-  microsoftId: { type: String, sparse: true },
-  email: { type: String, required: true, unique: true, lowercase: true },
-  password: { type: String },
-  displayName: { type: String },
-  photo: { type: String },
-  googleAccessToken: { type: String },
-  googleRefreshToken: { type: String },
-  microsoftAccessToken: { type: String },
-  microsoftRefreshToken: { type: String },
-  isPro: { type: Boolean, default: false },
-  stripeCustomerId: { type: String },
-  aiCredits: { type: Number, default: 100 }, // Freemium: 100 free AI credits for new users (token-based PAYG)
-  aiCreditsLedger: { type: Array, default: [] }, // Array of { timestamp, action, promptTokens, completionTokens, totalTokens, costCredits, rawCostUSD, costUSD, modelName }
-  schedule: {
-    type: mongoose.Schema.Types.Mixed,
-    default: {
-      Sunday: [],
-      Monday: [],
-      Tuesday: [],
-      Wednesday: [],
-      Thursday: [],
-      Friday: [],
-      Saturday: [],
-      Today: []
-    }
-  },
-  scheduleRevision: { type: Number, default: 0 },
-  createdAt: { type: Date, default: Date.now }
-});
-
-const User = mongoose.model('User', userSchema);
+const User = require('./models/User');
 
 // ──────────────────────────────────────────────
 // Persistent file-based storage (fallback for anonymous users)
