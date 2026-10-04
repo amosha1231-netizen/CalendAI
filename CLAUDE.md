@@ -1,8 +1,11 @@
 # CalendAI Project Context
 
+Detailed agent rules: `AGENTS.md` and `.cursor/rules/`.
+
 ## Project Structure
 - **Monorepo** with `frontend/` (Vite/React) and `backend/` (Node.js/Express)
-- Backend connects to Gemini API and manages schedules
+- AI: OpenRouter + DeepSeek (`backend/services/aiService.js`). Payments: Lemon Squeezy.
+- Boot requires `backend/models/Booking.js`, `OAuthHandoff.js`, `ProcessedPaymentEvent.js`.
 
 ## Date Handling (Critical for iOS/Safari)
 - Safari on iOS does NOT support `new Date("YYYY-MM-DD HH:mm")` (space separator)
