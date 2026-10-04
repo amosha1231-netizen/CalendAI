@@ -1,0 +1,14 @@
+---
+description: CalendAI product constraints — no rewrite, deploy files, stack truth
+alwaysApply: true
+---
+
+# CalendAI core
+
+- Do not rebuild from scratch. Modularize in place.
+- Stack: `frontend/` React+Vite+Tailwind; `backend/` Express+Mongo. AI is OpenRouter/DeepSeek. Payments are Lemon Squeezy.
+- Keep in git (required at server boot): `backend/models/Booking.js`, `OAuthHandoff.js`, `ProcessedPaymentEvent.js`.
+- Do not grow `backend/server.js` or `frontend/src/App.jsx` — extract to routes/services/components.
+- Mongo transactions need a replica set. Credits: `{ aiCredits: { $gte: cost } }`, fail-closed. Bookings: atomic status claim.
+- Dates: ISO with `T`, `safeParseDate()`, timezone-aware. Frontend: `safeStorage` + try/catch, never storage at module scope.
+- Outlook stays unimplemented-and-honest. No duplicate Mongoose User schemas in route files.

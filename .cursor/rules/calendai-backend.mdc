@@ -1,0 +1,21 @@
+---
+description: Backend billing, bookings, auth, and Mongo safety
+globs: backend/**/*.js
+alwaysApply: false
+---
+
+# Backend
+
+- One User model (defined once, imported). Do not paste `userSchema` into `routes/*.js`.
+- `deductAICredit`: require real `usage` from OpenRouter; atomic `$inc` with `$gte`; throw 402 if broke.
+- Lemon Squeezy webhook: HMAC + unique `eventKey` + `withTransaction`. Duplicate key (11000) → 200, not a second credit.
+- Booking confirm: `findOneAndUpdate` active→processing first; release back to active on failure.
+- Calendar writes: `formatDateTimeWithTimezone` + IANA `timeZone` on Google events. Guest `date` is a calendar date, not UTC midnight-as-local.
+- Production: `JWT_SECRET`, `SESSION_SECRET`, `MONGODB_URI` (or `MONGO_URI`) required. OAuth handoff codes are hashed, one-use, short-lived.
+```javascript
+// ✅ credit deduct
+User.findOneAndUpdate(
+  { _id: userId, aiCredits: { $gte: costCredits } },
+  { $inc: { aiCredits: -costCredits } }
+);
+```

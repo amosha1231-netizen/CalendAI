@@ -1,0 +1,22 @@
+---
+description: Frontend iOS/Safari dates, storage, and build rules
+globs: frontend/src/**/*.{js,jsx}
+alwaysApply: false
+---
+
+# Frontend
+
+- Parse dates with `safeParseDate()` from `safeStorage.js`. Never `new Date("YYYY-MM-DD HH:mm")` (Safari).
+- All storage via `safeStorage`, always in try/catch. Do not read `localStorage` at module top level.
+- `browserDetection.js`: try/catch; no `window`/`navigator`/`Notification.permission` at import time.
+- Guest booking lives in `GuestBookingView.jsx` / `Booking.jsx`; keep host timezone vs guest timezone explicit.
+- Build from `frontend/src` (Vite). Do not hand-edit `frontend/dist`. Keep `ChallengeDetail.jsx` importable from `App.jsx`.
+```javascript
+// ❌ BAD
+new Date(`${date} ${time}`);
+const token = localStorage.getItem("token");
+
+// ✅ GOOD
+safeParseDate(`${date}T${time}:00`);
+try { token = safeStorage.getItem("token"); } catch (e) { token = null; }
+```
