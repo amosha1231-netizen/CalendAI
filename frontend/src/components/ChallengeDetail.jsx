@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { X, Send, Trophy, Users, Loader2, MessageSquare, CheckCircle, Clock, Calendar } from "lucide-react";
+import { X, Send, Trophy, Users, Loader2, MessageSquare, CheckCircle, Clock, Calendar, Flame, Award, Heart } from "lucide-react";
 import safeStorage from "../utils/safeStorage";
 
 var API_BASE = import.meta.env.VITE_API_URL || "";
@@ -51,18 +51,36 @@ export default function ChallengeDetail({ goalId, lang, user, onClose, onJoinCha
     schedule: lang === "he" ? "לוח זמנים" : "Schedule",
     close: lang === "he" ? "סגור" : "Close",
     messageSent: lang === "he" ? "ההודעה נשלחה!" : "Message sent!",
-    sending: lang === "he" ? "שולח..." : "Sending..."
+    sending: lang === "he" ? "שולח..." : "Sending...",
+    checkIn: lang === "he" ? "🔥 צ'ק-אין יומי" : "🔥 Daily Check-in",
+    checkedInToday: lang === "he" ? "✅ ביצעת צ'ק-אין היום" : "✅ Checked in today",
+    streak: lang === "he" ? "רצף" : "streak",
+    days: lang === "he" ? "ימים" : "days"
   };
+
+  const MESSAGE_TYPES = [
+    { value: "note", label: lang === "he" ? "💬 הודעה" : "💬 Note" },
+    { value: "milestone", label: lang === "he" ? "🏅 אבן דרך" : "🏅 Milestone" },
+    { value: "encouragement", label: lang === "he" ? "👏 עידוד" : "👏 Encouragement" }
+  ];
 
   const [goal, setGoal] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [messageText, setMessageText] = useState("");
+  const [messageType, setMessageType] = useState("note");
   const [sending, setSending] = useState(false);
   const [joining, setJoining] = useState(false);
+  const [checkingIn, setCheckingIn] = useState(false);
   const messagesEndRef = useRef(null);
 
-  const getToken = () => safeStorage.getItem("token") || safeStorage.getItem("calendai-jwt") || "";
+  const getToken = () => {
+    try {
+      return safeStorage.getItem("token") || safeStorage.getItem("calendai-jwt") || "";
+    } catch (e) {
+      return "";
+    }
+  };
 
   const fetchGoal = useCallback(async () => {
     setLoading(true);
@@ -102,7 +120,7 @@ export default function ChallengeDetail({ goalId, lang, user, onClose, onJoinCha
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {})
         },
-        body: JSON.stringify({ text: messageText.trim() })
+        body: JSON.stringify({ text: messageText.trim(), type: messageType })
       });
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
@@ -111,10 +129,36 @@ export default function ChallengeDetail({ goalId, lang, user, onClose, onJoinCha
       const data = await res.json();
       setGoal(data.goal);
       setMessageText("");
+      setMessageType("note");
     } catch (err) {
       setError(err.message);
     } finally {
       setSending(false);
+    }
+  };
+
+  const handleCheckIn = async () => {
+    if (checkingIn) return;
+    setCheckingIn(true);
+    try {
+      const token = getToken();
+      const res = await fetch(`${API_BASE}/api/goals/${goalId}/checkin`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        }
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (data.goal) setGoal(data.goal);
+        throw new Error(data.error || "Failed to check in");
+      }
+      setGoal(data.goal);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setCheckingIn(false);
     }
   };
 
@@ -148,6 +192,18 @@ export default function ChallengeDetail({ goalId, lang, user, onClose, onJoinCha
   );
   const isCreator = user && (goal?.creatorId?._id === user.id || goal?.creatorId === user.id);
   const canMessage = hasJoined || isCreator;
+  const myParticipant = user && goal?.participants?.find(
+    p => (p.userId?._id || p.userId) === user.id
+  );
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const hasCheckedInToday = myParticipant?.lastCheckInDate === todayStr;
+
+  const MESSAGE_TYPE_META = {
+    checkin: { icon: "✅", bubble: "bg-orange-50 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300" },
+    milestone: { icon: "🏅", bubble: "bg-yellow-50 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300" },
+    encouragement: { icon: "👏", bubble: "bg-pink-50 dark:bg-pink-900/30 text-pink-700 dark:text-pink-300" },
+    note: { icon: "", bubble: "" }
+  };
 
   const formatTime = (dateStr) => {
     if (!dateStr) return "";
@@ -230,7 +286,7 @@ export default function ChallengeDetail({ goalId, lang, user, onClose, onJoinCha
         </div>
 
         {/* Join/Creator Badge */}
-        <div className="px-4 py-2 border-b border-gray-200 dark:border-gray-700 flex items-center gap-2 shrink-0">
+        <div className="px-4 py-2 border-b border-gray-200 dark:border-gray-700 flex items-center gap-2 flex-wrap shrink-0">
           {isCreator ? (
             <span className="text-xs font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 px-3 py-1.5 rounded-lg">
               {t.creator}
@@ -250,6 +306,27 @@ export default function ChallengeDetail({ goalId, lang, user, onClose, onJoinCha
             </button>
           ) : (
             <span className="text-xs text-gray-400">{t.joinToChat}</span>
+          )}
+
+          {(hasJoined || isCreator) && myParticipant && (
+            <>
+              <span className="text-xs font-medium text-orange-600 dark:text-orange-400 bg-orange-50 dark:bg-orange-900/30 px-3 py-1.5 rounded-lg flex items-center gap-1">
+                <Flame className="w-3 h-3" />
+                {myParticipant.currentStreak || 0} {t.streak}
+              </span>
+              <button
+                onClick={handleCheckIn}
+                disabled={checkingIn || hasCheckedInToday}
+                className={`px-4 py-1.5 rounded-lg text-xs font-medium transition flex items-center gap-1 disabled:opacity-60 ${
+                  hasCheckedInToday
+                    ? "bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400"
+                    : "bg-orange-600 text-white hover:bg-orange-700"
+                }`}
+              >
+                {checkingIn ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                {hasCheckedInToday ? t.checkedInToday : t.checkIn}
+              </button>
+            </>
           )}
         </div>
 
@@ -293,9 +370,11 @@ export default function ChallengeDetail({ goalId, lang, user, onClose, onJoinCha
                         <span className="text-[10px] text-gray-400">{formatTime(msg.createdAt)}</span>
                       </div>
                       <div className={`px-3 py-2 rounded-2xl text-sm ${
-                        isOwn
-                          ? "bg-indigo-600 text-white rounded-tr-sm"
-                          : "bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded-tl-sm"
+                        msg.type && msg.type !== "note"
+                          ? MESSAGE_TYPE_META[msg.type]?.bubble
+                          : isOwn
+                            ? "bg-indigo-600 text-white rounded-tr-sm"
+                            : "bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded-tl-sm"
                       }`}>
                         <p className="whitespace-pre-wrap break-words">{msg.text}</p>
                       </div>
@@ -312,6 +391,16 @@ export default function ChallengeDetail({ goalId, lang, user, onClose, onJoinCha
         <div className="p-4 border-t border-gray-200 dark:border-gray-700 shrink-0">
           {canMessage ? (
             <div className="flex gap-2">
+              <select
+                value={messageType}
+                onChange={(e) => setMessageType(e.target.value)}
+                disabled={sending}
+                className="border border-gray-300 dark:border-gray-600 rounded-xl px-2 py-2.5 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                {MESSAGE_TYPES.map(mt => (
+                  <option key={mt.value} value={mt.value}>{mt.label}</option>
+                ))}
+              </select>
               <input
                 type="text"
                 value={messageText}

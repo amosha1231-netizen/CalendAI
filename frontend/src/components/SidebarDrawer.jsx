@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { X, BarChart3, Zap, Settings, Download, Moon, Sun, Target, Clock, Trophy, Activity, Share2, MapPin, Loader2, ExternalLink, CheckCircle, Mic, Globe } from 'lucide-react';
+import { X, BarChart3, Zap, Settings, Download, Moon, Sun, Target, Clock, Trophy, Activity, Share2, MapPin, Loader2, ExternalLink, CheckCircle, Mic, Globe, Users, Briefcase } from 'lucide-react';
 import safeStorage from '../utils/safeStorage';
 
 const CATEGORY_KEYWORDS = {
@@ -122,7 +122,7 @@ function isStandalone() {
   return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
 }
 
-export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangChange, t, user, isPro, onUpgradeToPro, onLogout, onOpenShareModal, selectedLocation, onLocationChange, selectedTimezone, onTimezoneChange, timezoneOptions, onOpenHistory }) {
+export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangChange, t, user, isPro, onUpgradeToPro, onLogout, onOpenShareModal, selectedLocation, onLocationChange, selectedTimezone, onTimezoneChange, timezoneOptions, onOpenHistory, onOpenMutualScheduler, onOpenProviderDirectory, onOpenProviderProfile }) {
   const [activeTab, setActiveTab] = useState('settings');
   const [settingsData, setSettingsData] = useState({
     lang: lang,
@@ -387,6 +387,50 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangC
             <span>{lang === 'he' ? '📜 היסטוריית פעולות ובקשות' : '📜 Action & Request History'}</span>
           </button>
         </div>
+
+        {/* Mutual Scheduling Button — two CalendAI users, overlapping free time */}
+        <div className="px-4 mb-2">
+          <button
+            onClick={() => {
+              onClose();
+              if (onOpenMutualScheduler) onOpenMutualScheduler();
+            }}
+            className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 transition"
+          >
+            <Users className="w-5 h-5" />
+            <span>{lang === 'he' ? '🤝 תיאום פגישה הדדי' : '🤝 Mutual Scheduling'}</span>
+          </button>
+        </div>
+
+        {/* Find a Provider Button */}
+        <div className="px-4 mb-2">
+          <button
+            onClick={() => {
+              onClose();
+              if (onOpenProviderDirectory) onOpenProviderDirectory();
+            }}
+            className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200 transition"
+          >
+            <Briefcase className="w-5 h-5" />
+            <span>{lang === 'he' ? '💼 מצא נותן שירות' : '💼 Find a Provider'}</span>
+          </button>
+        </div>
+
+        {/* My Provider Profile Button — only when signed in */}
+        {user && (
+          <div className="px-4 mb-2">
+            <button
+              onClick={() => {
+                onClose();
+                if (onOpenProviderProfile) onOpenProviderProfile();
+              }}
+              className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200 transition"
+            >
+              <Briefcase className="w-5 h-5" />
+              <span>{lang === 'he' ? '⚙️ הפרופיל שלי כנותן שירות' : '⚙️ My Provider Profile'}</span>
+            </button>
+          </div>
+        )}
 
         {/* Content Area */}
         <div className="sidebar-content">

@@ -6,12 +6,16 @@ const mongoose = require('mongoose');
 const participantSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   status: { type: String, enum: ['joined', 'completed'], default: 'joined' },
-  completedAt: { type: Date }
+  completedAt: { type: Date },
+  currentStreak: { type: Number, default: 0 },
+  longestStreak: { type: Number, default: 0 },
+  lastCheckInDate: { type: String, default: null } // 'YYYY-MM-DD'
 }, { _id: false });
 
 const messageSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   text: { type: String, required: true },
+  type: { type: String, enum: ['note', 'checkin', 'milestone', 'encouragement'], default: 'note' },
   createdAt: { type: Date, default: Date.now }
 }, { _id: true });
 

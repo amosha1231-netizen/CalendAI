@@ -25,6 +25,10 @@ const LandingPage = lazy(() => import("./components/LandingPage"));
 const AuthSuccess = lazy(() => import("./pages/AuthSuccess"));
 const GuestBookingView = lazy(() => import("./components/GuestBookingView"));
 const Booking = lazy(() => import("./components/Booking"));
+const MutualScheduler = lazy(() => import("./components/MutualScheduler"));
+const ProviderDirectory = lazy(() => import("./components/ProviderDirectory"));
+const ProviderBookingView = lazy(() => import("./components/ProviderBookingView"));
+const ProviderProfileEditor = lazy(() => import("./components/ProviderProfileEditor"));
 import PrivacyPolicyPage from "./pages/PrivacyPolicy";
 import TermsPage from "./pages/Terms";
 import translations from "./i18n";
@@ -362,6 +366,10 @@ function AppRoutes() {
   const [showPublicGoals, setShowPublicGoals] = useState(false);
   const [showChallengeDetail, setShowChallengeDetail] = useState(false);
   const [selectedChallengeId, setSelectedChallengeId] = useState(null);
+  const [showProviderDirectory, setShowProviderDirectory] = useState(false);
+  const [showProviderBooking, setShowProviderBooking] = useState(false);
+  const [selectedProviderId, setSelectedProviderId] = useState(null);
+  const [showProviderProfileEditor, setShowProviderProfileEditor] = useState(false);
   const [showJournal, setShowJournal] = useState(false);
   const [showMobileSearch, setShowMobileSearch] = useState(false);
 
@@ -1407,6 +1415,17 @@ function AppRoutes() {
           setCurrentView('dashboard');
         }}
         onBookingConfirm={handleBookingConfirm}
+      />
+    );
+  }
+
+  if (currentView === 'mutual') {
+    return (
+      <MutualScheduler
+        lang={lang}
+        t={t}
+        onClose={() => setCurrentView('dashboard')}
+        onFallbackToShareLink={() => setCurrentView('booking')}
       />
     );
   }
@@ -2543,6 +2562,9 @@ function AppRoutes() {
         onLogout={handleLogout}
         onOpenShareModal={() => setShowWizard(true)}
         onOpenHistory={() => setShowHistoryModal(true)}
+        onOpenMutualScheduler={() => setCurrentView('mutual')}
+        onOpenProviderDirectory={() => setShowProviderDirectory(true)}
+        onOpenProviderProfile={() => setShowProviderProfileEditor(true)}
         selectedLocation={profileLocation !== 'none' ? profileLocation : selectedLocation}
         onLocationChange={(loc) => {
           setProfileLocation(loc);
@@ -2585,6 +2607,47 @@ function AppRoutes() {
             setSuccess(lang === "he" ? "🎯 הצטרפת לאתגר! האירוע נוסף ליומן." : "🎯 Joined the challenge! Event added to your schedule.");
           }}
         />
+      )}
+
+      {/* Provider Directory Modal */}
+      {showProviderDirectory && (
+        <Suspense fallback={null}>
+          <ProviderDirectory
+            lang={lang}
+            user={user}
+            onClose={() => setShowProviderDirectory(false)}
+            onSelectProvider={(providerId) => {
+              setSelectedProviderId(providerId);
+              setShowProviderBooking(true);
+            }}
+          />
+        </Suspense>
+      )}
+
+      {/* Provider Booking Modal */}
+      {showProviderBooking && selectedProviderId && (
+        <Suspense fallback={null}>
+          <ProviderBookingView
+            providerId={selectedProviderId}
+            lang={lang}
+            user={user}
+            onClose={() => {
+              setShowProviderBooking(false);
+              setSelectedProviderId(null);
+            }}
+          />
+        </Suspense>
+      )}
+
+      {/* Provider Profile Editor Modal */}
+      {showProviderProfileEditor && (
+        <Suspense fallback={null}>
+          <ProviderProfileEditor
+            lang={lang}
+            user={user}
+            onClose={() => setShowProviderProfileEditor(false)}
+          />
+        </Suspense>
       )}
 
       {/* Daily Journal Modal */}

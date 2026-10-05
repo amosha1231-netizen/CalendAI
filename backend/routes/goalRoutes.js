@@ -386,6 +386,107 @@ router.post('/:id/toggle-completion', async (req, res) => {
 });
 
 /**
+ * POST /api/goals/:id/checkin
+ * Daily check-in for a challenge participant. Updates their streak and
+ * auto-posts a 'checkin' type message to the challenge feed.
+ * Limited to once per UTC calendar day per participant.
+ */
+router.post('/:id/checkin', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) {
+      return res.status(401).json({ error: 'עליך להתחבר כדי לבצע צ\'ק-אין.' });
+    }
+
+    const goal = await Goal.findById(req.params.id);
+    if (!goal) {
+      return res.status(404).json({ error: 'האתגר לא נמצא.' });
+    }
+
+    const participant = goal.participants.find(
+      p => p.userId.toString() === userId
+    );
+    if (!participant) {
+      return res.status(403).json({ error: 'רק משתתפים באתגר יכולים לבצע צ\'ק-אין.' });
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    const previousLastCheckIn = participant.lastCheckInDate || null;
+    if (previousLastCheckIn === today) {
+      const alreadyCheckedInGoal = await Goal.findById(goal._id)
+        .populate('creatorId', 'displayName photo email')
+        .populate('participants.userId', 'displayName photo')
+        .populate('messages.userId', 'displayName photo')
+        .lean();
+      return res.status(409).json({ error: 'כבר ביצעת צ\'ק-אין היום.', goal: alreadyCheckedInGoal });
+    }
+
+    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    const newStreak = previousLastCheckIn === yesterday ? (participant.currentStreak || 0) + 1 : 1;
+    const newLongest = Math.max(newStreak, participant.longestStreak || 0);
+
+    // Optimistic concurrency guard: only write if lastCheckInDate hasn't
+    // changed since we read it, preventing a double check-in race.
+    // $elemMatch is required here (not two separate 'participants.x' filters) —
+    // otherwise Mongo can satisfy userId via one participant and lastCheckInDate
+    // via a different one, and the positional $ update would then touch the
+    // wrong participant's streak.
+    const updateResult = await Goal.updateOne(
+      {
+        _id: goal._id,
+        participants: {
+          $elemMatch: {
+            userId: new mongoose.Types.ObjectId(userId),
+            lastCheckInDate: previousLastCheckIn
+          }
+        }
+      },
+      {
+        $set: {
+          'participants.$.currentStreak': newStreak,
+          'participants.$.longestStreak': newLongest,
+          'participants.$.lastCheckInDate': today
+        },
+        $push: {
+          messages: {
+            userId: new mongoose.Types.ObjectId(userId),
+            type: 'checkin',
+            text: `✅ צ'ק-אין בוצע! רצף של ${newStreak} ימים 🔥`
+          }
+        }
+      }
+    );
+
+    if (!updateResult.matchedCount) {
+      return res.status(409).json({ error: 'מישהו עדכן את הצ\'ק-אין שלך במקביל. נסה שוב.' });
+    }
+
+    const populated = await Goal.findById(goal._id)
+      .populate('creatorId', 'displayName photo email')
+      .populate('participants.userId', 'displayName photo')
+      .populate('messages.userId', 'displayName photo')
+      .lean();
+
+    const result = {
+      ...populated,
+      participantCount: populated.participants?.length || 0,
+      completedCount: populated.participants?.filter(p => p.status === 'completed').length || 0
+    };
+
+    res.json({
+      ok: true,
+      goal: result,
+      currentStreak: newStreak,
+      longestStreak: newLongest,
+      message: `כל הכבוד! רצף של ${newStreak} ימים 🔥`
+    });
+  } catch (err) {
+    console.error('Check-in error:', err);
+    res.status(500).json({ error: 'שגיאה בביצוע צ\'ק-אין.' });
+  }
+});
+
+/**
  * GET /api/goals/my
  * Get goals the current user has joined.
  */
@@ -404,12 +505,16 @@ router.get('/my', async (req, res) => {
       .sort({ createdAt: -1 })
       .lean();
 
-    const formatted = goals.map(g => ({
-      ...g,
-      participantCount: g.participants?.length || 0,
-      completedCount: g.participants?.filter(p => p.status === 'completed').length || 0,
-      myStatus: g.participants?.find(p => p.userId._id.toString() === userId)?.status || 'joined'
-    }));
+    const formatted = goals.map(g => {
+      const myParticipant = g.participants?.find(p => p.userId._id.toString() === userId);
+      return {
+        ...g,
+        participantCount: g.participants?.length || 0,
+        completedCount: g.participants?.filter(p => p.status === 'completed').length || 0,
+        myStatus: myParticipant?.status || 'joined',
+        myStreak: myParticipant?.currentStreak || 0
+      };
+    });
 
     res.json({ goals: formatted, count: formatted.length });
   } catch (err) {
@@ -447,10 +552,14 @@ router.get('/:id', async (req, res) => {
   }
 });
 
+// Message types a participant may post directly. 'checkin' is reserved for
+// the dedicated /:id/checkin endpoint so streak integrity can't be forged.
+const ALLOWED_POSTED_MESSAGE_TYPES = ['note', 'milestone', 'encouragement'];
+
 /**
  * POST /api/goals/:id/messages
- * Post a text-only message to a goal's discussion.
- * Body: { text: string }
+ * Post a message to a goal's discussion/feed.
+ * Body: { text: string, type?: 'note' | 'milestone' | 'encouragement' }
  */
 router.post('/:id/messages', async (req, res) => {
   try {
@@ -459,10 +568,11 @@ router.post('/:id/messages', async (req, res) => {
       return res.status(401).json({ error: 'עליך להתחבר כדי לשלוח הודעה.' });
     }
 
-    const { text } = req.body;
+    const { text, type } = req.body;
     if (!text || !text.trim()) {
       return res.status(400).json({ error: 'נדרש טקסט להודעה.' });
     }
+    const messageType = ALLOWED_POSTED_MESSAGE_TYPES.includes(type) ? type : 'note';
 
     const goal = await Goal.findById(req.params.id);
     if (!goal) {
@@ -479,7 +589,8 @@ router.post('/:id/messages', async (req, res) => {
 
     goal.messages.push({
       userId: new mongoose.Types.ObjectId(userId),
-      text: text.trim()
+      text: text.trim(),
+      type: messageType
     });
     await goal.save();
 

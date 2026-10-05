@@ -2,6 +2,16 @@
 
 Do **not** rewrite the product from scratch. Extract modules; keep existing OAuth, Calendar, bookings, credits, and iOS behavior.
 
+## Autonomy (default)
+
+Work without waiting when the next step is obvious, reversible, and already implied by the current task.
+
+**Do without asking:** read/diagnose, fix the bug or gap in front of you, add missing files the server already requires, extract code without behavior change, run syntax/build checks, keep `AGENTS.md` / `.cursor/rules` in sync with reality.
+
+**Stop and ask (one short question):** `git push`, force/destructive git, production env or secrets, schema/data migrations, payment/credit formula changes, product UX that has two reasonable options, anything that spends paid APIs beyond a cheap local verify.
+
+**Anti-mistake loop:** smallest change that satisfies the goal → verify (require/boot files, `node --check`, Vite build for UI) → do not mix unrelated files in a commit. Prefer the reversible interpretation. If blocked, say what is blocked and the single decision needed — then continue everything else.
+
 ## Layout
 - Frontend: `frontend/` (React, Vite, Tailwind). Entry: `frontend/src/App.jsx`.
 - Backend: `backend/` (Express, Mongo/Mongoose). Entry: `backend/server.js` (~4k lines — split by domain, do not grow it).
@@ -13,6 +23,7 @@ These files **must stay in git** — `server.js` requires them at boot:
 - `backend/models/Booking.js`
 - `backend/models/OAuthHandoff.js`
 - `backend/models/ProcessedPaymentEvent.js`
+- `backend/models/MutualBooking.js`
 
 Do not treat `frontend/dist/` as source of truth (gitignored; build from `frontend/src`).
 
