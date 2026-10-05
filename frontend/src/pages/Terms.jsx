@@ -232,8 +232,8 @@ export default function Terms() {
           <div className="space-y-3 text-sm text-slate-600 leading-relaxed">
             <p>
               If you have any questions about these Terms, please contact us at{' '}
-              <a href="mailto:calendai.support@example.com" className="text-blue-600 hover:underline font-medium">
-                calendai.support@example.com
+              <a href="mailto:calendai555@gmail.com" className="text-blue-600 hover:underline font-medium">
+                calendai555@gmail.com
               </a>
             </p>
           </div>

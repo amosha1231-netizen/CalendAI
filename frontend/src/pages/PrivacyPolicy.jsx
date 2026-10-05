@@ -165,6 +165,12 @@ export default function PrivacyPolicy() {
                 </div>
               </div>
             </div>
+            <p className="mt-3">
+              CalendAI's use and transfer of information received from Google APIs adheres to the
+              <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline ml-1">
+                Google API Services User Data Policy
+              </a>, including the Limited Use requirements.
+            </p>
           </div>
         </div>
 
@@ -215,15 +221,21 @@ export default function PrivacyPolicy() {
                 </a>.
               </li>
               <li>
-                <strong>Google Gemini API</strong> — for AI-powered schedule parsing and 
-                suggestions. Text you enter is sent to Gemini for processing. See 
-                <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline ml-1">
-                  Google's Privacy Policy
+                <strong>OpenRouter (DeepSeek model)</strong> — for AI-powered schedule parsing and
+                suggestions. Text you enter is sent to OpenRouter for processing by the DeepSeek
+                model. See
+                <a href="https://openrouter.ai/privacy" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline ml-1">
+                  OpenRouter's Privacy Policy
                 </a>.
+              </li>
+              <li>
+                <strong>OpenRouter (vision model)</strong> — if you upload an image (e.g. a
+                screenshot of a schedule), it is sent to OpenRouter for processing by a
+                vision-capable model to extract schedule information.
               </li>
             </ul>
             <p className="mt-2">
-              We do not control how these third parties handle your data. We encourage you 
+              We do not control how these third parties handle your data. We encourage you
               to review their privacy policies.
             </p>
           </div>
@@ -254,8 +266,8 @@ export default function PrivacyPolicy() {
           <p className="text-sm text-slate-600 leading-relaxed">
             If you have any questions about this Privacy Policy or how your data is handled, 
             please contact us at{' '}
-            <a href="mailto:calendai.support@example.com" className="text-blue-600 hover:underline font-medium">
-              calendai.support@example.com
+            <a href="mailto:calendai555@gmail.com" className="text-blue-600 hover:underline font-medium">
+              calendai555@gmail.com
             </a>
           </p>
         </div>

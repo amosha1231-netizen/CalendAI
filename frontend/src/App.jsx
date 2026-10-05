@@ -442,7 +442,7 @@ function AppRoutes() {
   }, []);
 
   const handleShareApp = useCallback(async () => {
-    const shareUrl = 'https://calendai.onrender.com/';
+    const shareUrl = 'https://calendai-q59p.onrender.com/';
     if (navigator.share) {
       try {
         await navigator.share({

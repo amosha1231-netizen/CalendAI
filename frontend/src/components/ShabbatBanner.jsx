@@ -45,7 +45,7 @@ export default function ShabbatBanner({ t, lang }) {
 
         {/* Contact button */}
         <a
-          href="mailto:support@calendai.onrender.com"
+          href="mailto:calendai555@gmail.com"
           className="inline-block mt-6 px-6 py-2.5 bg-white/10 hover:bg-white/20 text-purple-100 rounded-xl text-sm font-medium transition border border-white/20"
         >
           {t.shabbatContactButton || 'יצירת קשר 📧'}
