@@ -31,6 +31,7 @@ const ProviderBookingView = lazy(() => import("./components/ProviderBookingView"
 const ProviderProfileEditor = lazy(() => import("./components/ProviderProfileEditor"));
 const ExpectedExpenses = lazy(() => import("./components/ExpectedExpenses"));
 import PrivacyPolicyPage from "./pages/PrivacyPolicy";
+import DeleteAccountPage from "./pages/DeleteAccount";
 import TermsPage from "./pages/Terms";
 import translations from "./i18n";
 import safeStorage from "./utils/safeStorage";
@@ -1360,6 +1361,10 @@ function AppRoutes() {
 
   if (typeof window !== 'undefined' && window.location.pathname === '/privacy') {
     return <PrivacyPolicyPage />;
+  }
+
+  if (typeof window !== 'undefined' && window.location.pathname === '/delete-account') {
+    return <DeleteAccountPage />;
   }
 
   if (typeof window !== 'undefined' && window.location.pathname === '/terms') {
