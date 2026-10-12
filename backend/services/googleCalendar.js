@@ -8,8 +8,8 @@ const { google } = require('googleapis');
 const User = require('../models/User');
 
 const isProduction = process.env.NODE_ENV === 'production' || !!process.env.RENDER;
-const PRODUCTION_APP_URL = 'https://calendai-q59p.onrender.com';
-const BACKEND_URL = (process.env.BACKEND_URL?.trim() || (isProduction ? PRODUCTION_APP_URL : 'http://localhost:5000')).replace(/\/+$/, '');
+const PRODUCTION_BACKEND_URL = 'https://calendai-backend-dfmi.onrender.com';
+const BACKEND_URL = (process.env.BACKEND_URL?.trim() || (isProduction ? PRODUCTION_BACKEND_URL : 'http://localhost:5000')).replace(/\/+$/, '');
 const GOOGLE_CALLBACK_URL = (process.env.GOOGLE_CALLBACK_URL?.trim() || `${BACKEND_URL}/api/auth/google/callback`).replace(/\/+$/, '');
 
 /**
