@@ -172,11 +172,12 @@ function saveSchedules(map) {
 // ──────────────────────────────────────────────
 // 1. Middleware
 // ──────────────────────────────────────────────
-// This Render service serves both the API and built frontend from this origin.
+// Frontend and backend are two separate Render services (different origins).
 const PRODUCTION_APP_URL = 'https://calendai-q59p.onrender.com';
+const PRODUCTION_BACKEND_URL = 'https://calendai-backend-dfmi.onrender.com';
 const FRONTEND_URL = (process.env.FRONTEND_URL?.trim() || process.env.CLIENT_URL?.trim() || (isProduction ? PRODUCTION_APP_URL : 'http://localhost:5173')).replace(/\/+$/, '');
 const CLIENT_URL = (process.env.CLIENT_URL?.trim() || FRONTEND_URL).replace(/\/+$/, '');
-const BACKEND_URL = (process.env.BACKEND_URL?.trim() || (isProduction ? PRODUCTION_APP_URL : 'http://localhost:5000')).replace(/\/+$/, '');
+const BACKEND_URL = (process.env.BACKEND_URL?.trim() || (isProduction ? PRODUCTION_BACKEND_URL : 'http://localhost:5000')).replace(/\/+$/, '');
 const GOOGLE_CALLBACK_URL = (process.env.GOOGLE_CALLBACK_URL?.trim() || `${BACKEND_URL}/api/auth/google/callback`).replace(/\/+$/, '');
 
 app.set('trust proxy', 1);
