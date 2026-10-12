@@ -430,11 +430,24 @@ function getAuthenticatedUserId(req) {
   return null;
 }
 
-// Legacy wrapper — returns 'anonymous' for non-authenticated users.
-// Used ONLY for endpoints that support anonymous/guest usage.
+// Legacy wrapper — for non-authenticated users, returns a per-browser guest
+// ID instead of the fixed literal 'anonymous'. Used ONLY for endpoints that
+// support anonymous/guest usage.
+// CRITICAL: every unauthenticated request used to collapse onto the same
+// 'anonymous' key, so any two guests (e.g. two people whose session/JWT
+// didn't attach — a known iOS Safari cookie-drop case) read and wrote the
+// exact same shared schedule. The guest ID below is stored in that browser's
+// own session, so guests never see each other's data.
 function getUserId(req) {
   const authed = getAuthenticatedUserId(req);
-  return authed || 'anonymous';
+  if (authed) return authed;
+  if (req.session) {
+    if (!req.session.guestId) {
+      req.session.guestId = `guest_${crypto.randomBytes(16).toString('hex')}`;
+    }
+    return req.session.guestId;
+  }
+  return 'anonymous';
 }
 
 // ── Semantic Router (fast vs smart track classification)
