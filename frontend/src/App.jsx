@@ -26,6 +26,7 @@ const AuthSuccess = lazy(() => import("./pages/AuthSuccess"));
 const GuestBookingView = lazy(() => import("./components/GuestBookingView"));
 const Booking = lazy(() => import("./components/Booking"));
 import PrivacyPolicyPage from "./pages/PrivacyPolicy";
+import DeleteAccountPage from "./pages/DeleteAccount";
 import TermsPage from "./pages/Terms";
 import translations from "./i18n";
 import safeStorage from "./utils/safeStorage";
@@ -1347,6 +1348,10 @@ function AppRoutes() {
 
   if (typeof window !== 'undefined' && window.location.pathname === '/privacy') {
     return <PrivacyPolicyPage />;
+  }
+
+  if (typeof window !== 'undefined' && window.location.pathname === '/delete-account') {
+    return <DeleteAccountPage />;
   }
 
   if (typeof window !== 'undefined' && window.location.pathname === '/terms') {
