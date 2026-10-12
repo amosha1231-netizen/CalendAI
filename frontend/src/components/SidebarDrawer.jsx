@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { X, BarChart3, Zap, Settings, Download, Moon, Sun, Target, Clock, Trophy, Activity, Share2, MapPin, Loader2, ExternalLink, CheckCircle, Mic, Globe, Users, Briefcase } from 'lucide-react';
+import { X, BarChart3, Zap, Settings, Download, Moon, Sun, Target, Clock, Trophy, Activity, Share2, MapPin, Loader2, ExternalLink, CheckCircle, Mic, Globe, Users, Briefcase, Wallet } from 'lucide-react';
 import safeStorage from '../utils/safeStorage';
 
 const CATEGORY_KEYWORDS = {
@@ -122,7 +122,7 @@ function isStandalone() {
   return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
 }
 
-export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangChange, t, user, isPro, onUpgradeToPro, onLogout, onOpenShareModal, selectedLocation, onLocationChange, selectedTimezone, onTimezoneChange, timezoneOptions, onOpenHistory, onOpenMutualScheduler, onOpenProviderDirectory, onOpenProviderProfile }) {
+export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangChange, t, user, isPro, onUpgradeToPro, onLogout, onOpenShareModal, selectedLocation, onLocationChange, selectedTimezone, onTimezoneChange, timezoneOptions, onOpenHistory, onOpenMutualScheduler, onOpenProviderDirectory, onOpenProviderProfile, onOpenExpenses }) {
   const [activeTab, setActiveTab] = useState('settings');
   const [settingsData, setSettingsData] = useState({
     lang: lang,
@@ -399,6 +399,20 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangC
           >
             <Users className="w-5 h-5" />
             <span>{lang === 'he' ? '🤝 תיאום פגישה הדדי' : '🤝 Mutual Scheduling'}</span>
+          </button>
+        </div>
+
+        {/* Expected Expenses Button */}
+        <div className="px-4 mb-2">
+          <button
+            onClick={() => {
+              onClose();
+              if (onOpenExpenses) onOpenExpenses();
+            }}
+            className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 transition"
+          >
+            <Wallet className="w-5 h-5" />
+            <span>{lang === 'he' ? '💰 הוצאות צפויות' : '💰 Expected Expenses'}</span>
           </button>
         </div>
 

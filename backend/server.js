@@ -453,6 +453,9 @@ function getUserId(req) {
 // ── Semantic Router (fast vs smart track classification)
 const { classifyRequest } = require('./services/semanticRouter');
 
+// ── Expected Expense suggestion detector (wedding, trip, etc.) ──
+const { detectExpenseSuggestion } = require('./services/expenseSuggestion');
+
 // ── Public Goals & Challenges Routes ──
 const goalRoutes = require('./routes/goalRoutes');
 
@@ -1026,7 +1029,9 @@ function mergeGaps(schedule) {
 const configuredOAuthScopes = process.env.OAUTH_SCOPES?.split(',').map(scope => scope.trim()).filter(Boolean);
 const OAUTH_SCOPES = configuredOAuthScopes?.length
   ? configuredOAuthScopes
-  : ['profile', 'email', 'https://www.googleapis.com/auth/calendar.events'];
+  // calendar.freebusy is required for the freebusy.query API used by mutual
+  // scheduling — calendar.events alone (read/write events) does not grant it.
+  : ['profile', 'email', 'https://www.googleapis.com/auth/calendar.events', 'https://www.googleapis.com/auth/calendar.freebusy'];
 
 app.get('/api/auth/google',
   (req, res, next) => {
@@ -2128,11 +2133,29 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
       logActionHistory(authedUserId, text, googleEventIds, addedEvents, 'parse').catch(() => {});
     }
 
-    res.json({ 
+    // ── Suggest tracking an "expected expense" for cost-bearing life events ──
+    // (wedding, trip, bar mitzvah, ...). Suggestion only — nothing is saved
+    // until the user confirms it from the Expected Expenses screen.
+    const suggestedExpenses = [];
+    for (const ev of addedEvents) {
+      const match = detectExpenseSuggestion(ev.title);
+      if (match) {
+        suggestedExpenses.push({
+          title: ev.title,
+          category: match.category,
+          day: ev.day,
+          targetDate: ev.targetDate || null,
+          sourceEventTitle: ev.title
+        });
+      }
+    }
+
+    res.json({
       events: addedEvents,
       replyMessage: replyMessage || `נוספו ${addedEvents.length} אירועים.`,
       totalEvents: Object.values(schedule).reduce((sum, arr) => sum + arr.length, 0),
       conflicts: conflictWarnings.length > 0 ? conflictWarnings : undefined,
+      suggestedExpenses: suggestedExpenses.length > 0 ? suggestedExpenses : undefined,
       aiCredits: remainingCredits,
       googleCalendar: {
         synced: googleSyncSuccessCount,
@@ -4019,6 +4042,10 @@ app.use('/api/daily-log', dailyLogRoutes);
 // ── Mutual (peer-to-peer) Scheduling Routes ──
 const mutualRoutes = require('./routes/mutualRoutes');
 app.use('/api/mutual', mutualRoutes);
+
+// ── Expected Expenses Routes (personal expense tracking) ──
+const expenseRoutes = require('./routes/expenseRoutes');
+app.use('/api/expenses', expenseRoutes);
 
 // ──────────────────────────────────────────────
 // User Search Endpoint — for GlobalSearch component

@@ -29,6 +29,7 @@ const MutualScheduler = lazy(() => import("./components/MutualScheduler"));
 const ProviderDirectory = lazy(() => import("./components/ProviderDirectory"));
 const ProviderBookingView = lazy(() => import("./components/ProviderBookingView"));
 const ProviderProfileEditor = lazy(() => import("./components/ProviderProfileEditor"));
+const ExpectedExpenses = lazy(() => import("./components/ExpectedExpenses"));
 import PrivacyPolicyPage from "./pages/PrivacyPolicy";
 import TermsPage from "./pages/Terms";
 import translations from "./i18n";
@@ -370,6 +371,9 @@ function AppRoutes() {
   const [showProviderBooking, setShowProviderBooking] = useState(false);
   const [selectedProviderId, setSelectedProviderId] = useState(null);
   const [showProviderProfileEditor, setShowProviderProfileEditor] = useState(false);
+  const [showExpenses, setShowExpenses] = useState(false);
+  const [expensePrefill, setExpensePrefill] = useState(null);
+  const [expenseSuggestions, setExpenseSuggestions] = useState([]);
   const [showJournal, setShowJournal] = useState(false);
   const [showMobileSearch, setShowMobileSearch] = useState(false);
 
@@ -1075,6 +1079,7 @@ function AppRoutes() {
       }
       if (data.conflicts?.length > 0) setConflicts(data.conflicts);
       else setConflicts([]);
+      if (data.suggestedExpenses?.length > 0) setExpenseSuggestions(data.suggestedExpenses);
       if (data.aiCredits !== undefined && data.aiCredits !== null) {
         const normalizedCredits = normalizeCredits(data.aiCredits);
         setUser(prev => prev ? { ...prev, aiCredits: normalizedCredits } : prev);
@@ -2565,6 +2570,7 @@ function AppRoutes() {
         onOpenMutualScheduler={() => setCurrentView('mutual')}
         onOpenProviderDirectory={() => setShowProviderDirectory(true)}
         onOpenProviderProfile={() => setShowProviderProfileEditor(true)}
+        onOpenExpenses={() => setShowExpenses(true)}
         selectedLocation={profileLocation !== 'none' ? profileLocation : selectedLocation}
         onLocationChange={(loc) => {
           setProfileLocation(loc);
@@ -2658,6 +2664,53 @@ function AppRoutes() {
         t={t}
         user={user}
       />
+
+      {/* Expected Expenses Modal */}
+      {showExpenses && (
+        <Suspense fallback={null}>
+          <ExpectedExpenses
+            lang={lang}
+            prefill={expensePrefill}
+            onConsumedPrefill={() => setExpensePrefill(null)}
+            onClose={() => setShowExpenses(false)}
+          />
+        </Suspense>
+      )}
+
+      {/* Expected-Expense Suggestion Banners — shown after the AI schedules a
+          cost-bearing life event (e.g. "חתונה ב-15/3"), one at a time. */}
+      {!showExpenses && expenseSuggestions.length > 0 && (
+        <div className="fixed bottom-4 inset-x-4 sm:inset-x-auto sm:right-4 sm:left-auto z-[9998] max-w-sm mx-auto sm:mx-0" dir={isRTL ? 'rtl' : 'ltr'}>
+          <div className="bg-white border border-emerald-200 shadow-xl rounded-2xl p-4 flex items-start gap-3">
+            <span className="text-2xl">💰</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-slate-800">
+                {lang === 'he'
+                  ? `רוצה לעקוב אחרי ההוצאה הצפויה של "${expenseSuggestions[0].title}"?`
+                  : `Want to track the expected expense for "${expenseSuggestions[0].title}"?`}
+              </p>
+              <div className="flex gap-2 mt-2">
+                <button
+                  onClick={() => {
+                    setExpensePrefill(expenseSuggestions[0]);
+                    setShowExpenses(true);
+                    setExpenseSuggestions(prev => prev.slice(1));
+                  }}
+                  className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-medium hover:bg-emerald-700 transition"
+                >
+                  {lang === 'he' ? '➕ הוסף כהוצאה צפויה' : '➕ Add as Expected Expense'}
+                </button>
+                <button
+                  onClick={() => setExpenseSuggestions(prev => prev.slice(1))}
+                  className="px-3 py-1.5 bg-gray-100 text-gray-600 rounded-lg text-xs font-medium hover:bg-gray-200 transition"
+                >
+                  {lang === 'he' ? 'לא כעת' : 'Not now'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
