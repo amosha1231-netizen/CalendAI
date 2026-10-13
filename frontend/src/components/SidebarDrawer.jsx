@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { X, BarChart3, Zap, Settings, Download, Moon, Sun, Target, Clock, Trophy, Activity, Share2, MapPin, Loader2, ExternalLink, CheckCircle, Mic, Globe } from 'lucide-react';
 import safeStorage from '../utils/safeStorage';
+import SiriSetupModal from './SiriSetupModal';
 
 const CATEGORY_KEYWORDS = {
   sport: ['אימון', 'ריצה', 'שחייה', 'הליכה', 'ספורט', 'חדר כושר', 'יוגה', 'פילאטיס', 'רכיבה', 'טיפוס', 'workout', 'run', 'swim', 'walk', 'sport', 'gym', 'yoga', 'pilates', 'bike', 'climb'],
@@ -795,55 +796,7 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangC
 
       {/* Siri Setup Modal */}
       {showSiriModal && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-[9999]" onClick={() => setShowSiriModal(false)}>
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md p-6 sm:p-8 relative" onClick={e => e.stopPropagation()}>
-            {/* Close Button */}
-            <button
-              onClick={() => setShowSiriModal(false)}
-              className="absolute top-4 right-4 w-9 h-9 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500 hover:text-slate-700 transition"
-              aria-label="Close"
-            >
-              <X className="w-5 h-5" />
-            </button>
-
-            <div className="text-center">
-              {/* Icon */}
-              <div className="w-20 h-20 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-3xl flex items-center justify-center mx-auto mb-5 shadow-xl shadow-blue-500/30">
-                <Mic className="w-10 h-10 text-white" />
-              </div>
-
-              <h3 className="text-xl font-bold text-slate-800 mb-2">
-                {lang === 'he' ? 'הפעל את CalendAI דרך Siri' : 'Enable CalendAI with Siri'}
-              </h3>
-
-              <p className="text-sm text-slate-500 mb-5 leading-relaxed">
-                {lang === 'he'
-                  ? 'הורד את קיצור הדרך שלנו לאייפון. בעת ההתקנה, תתבקש להזין את כתובת האימייל שלך כדי שהפעולות יסתנכרנו אוטומטית ליומן האישי שלך.'
-                  : 'Download our shortcut to your iPhone. During installation, you will be asked to enter your email address so actions sync automatically to your personal calendar.'}
-              </p>
-
-              {/* User Email Display */}
-              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 mb-6 text-center">
-                <p className="text-xs text-slate-400 mb-1">
-                  {lang === 'he' ? 'האימייל שלך לחיבור' : 'Your email for connection'}
-                </p>
-                <p className="text-base font-bold text-slate-800 break-all" dir="ltr">
-                  {user?.email || (lang === 'he' ? 'לא זמין' : 'Not available')}
-                </p>
-              </div>
-
-              {/* Download CTA */}
-              <a
-                href="#"
-                onClick={(e) => e.preventDefault()}
-                className="w-full max-w-full box-border flex items-center justify-center gap-2 px-6 py-3.5 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-2xl font-bold text-sm shadow-lg shadow-blue-500/30 hover:shadow-xl hover:from-blue-600 hover:to-indigo-700 transition"
-              >
-                <Download className="w-5 h-5" />
-                {lang === 'he' ? 'הורד קיצור דרך' : 'Download Shortcut'}
-              </a>
-            </div>
-          </div>
-        </div>
+        <SiriSetupModal lang={lang} user={user} onClose={() => setShowSiriModal(false)} />
       )}
 
       {/* iOS Non-Safari Message Modal */}
