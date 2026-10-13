@@ -190,7 +190,7 @@ router.post('/sessions', requireAuth, async (req, res) => {
       hostId: host._id,
       inviteeId: invitee._id,
       inviteeEmail: email,
-      subject: subject || 'Meeting',
+      subject: String(subject || 'Meeting').trim().slice(0, 200) || 'Meeting',
       duration: Number(duration),
       locationId: locationId || DEFAULT_LOCATION_ID,
       status: 'active'
