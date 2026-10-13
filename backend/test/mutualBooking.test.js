@@ -13,13 +13,15 @@ const { MongoMemoryReplSet } = require('mongodb-memory-server');
 
 const User = require('../models/User');
 const MutualBooking = require('../models/MutualBooking');
-const { intersectFree } = require('../services/mutualAvailability');
+const ProviderBooking = require('../models/ProviderBooking');
+const { intersectFree, mergeIntervals } = require('../services/mutualAvailability');
 
 let replSet;
 
 before(async () => {
   replSet = await MongoMemoryReplSet.create({ replSet: { count: 1, storageEngine: 'wiredTiger' } });
   await mongoose.connect(replSet.getUri());
+  await ProviderBooking.init(); // ensure the unique partial index is built before the double-booking tests run
 });
 
 after(async () => {
@@ -31,6 +33,7 @@ beforeEach(async () => {
   await Promise.all([
     User.deleteMany({}),
     MutualBooking.deleteMany({}),
+    ProviderBooking.deleteMany({}),
   ]);
 });
 
@@ -72,6 +75,21 @@ test('intersectFree: fully busy day (either side) yields no free slots', () => {
   const busyHost = [{ start: 0, end: 1440 }];
   const free = intersectFree(busyHost, [], 540, 720, 15);
   assert.deepEqual(free, []);
+});
+
+test('intersectFree: a gap exactly equal to the requested duration is kept, one minute short is dropped', () => {
+  const busyHost = [{ start: 540, end: 600 }]; // free 600-630 is exactly 30 min
+  assert.deepEqual(intersectFree(busyHost, [], 540, 630, 30), [{ start: 600, end: 630 }]);
+  assert.deepEqual(intersectFree(busyHost, [], 540, 629, 30), []);
+});
+
+test('mergeIntervals: adjacent intervals that only touch at the boundary merge into one', () => {
+  // [540,600) and [600,660) touch exactly at 600 — must merge, not stay separate.
+  assert.deepEqual(mergeIntervals([{ start: 540, end: 600 }, { start: 600, end: 660 }]), [{ start: 540, end: 660 }]);
+});
+
+test('mergeIntervals: zero-length and inverted intervals are dropped', () => {
+  assert.deepEqual(mergeIntervals([{ start: 600, end: 600 }, { start: 700, end: 650 }, { start: 540, end: 560 }]), [{ start: 540, end: 560 }]);
 });
 
 // ── 2. Mutual session claim: atomic active → processing transition ──
@@ -121,4 +139,46 @@ test('mutual session claim: a cancelled session cannot be claimed', async () => 
   );
 
   assert.equal(claim, null, 'a non-active session must be refused a claim');
+});
+
+// ── 3. Provider booking slot claim: unique partial index guards against double-booking ──
+function providerBookingDoc(overrides = {}) {
+  return {
+    providerId: new mongoose.Types.ObjectId(),
+    serviceId: new mongoose.Types.ObjectId(),
+    serviceName: 'Haircut',
+    duration: 30,
+    date: '2026-12-01',
+    day: 'Tuesday',
+    startTime: '10:00 AM',
+    endTime: '10:30 AM',
+    guestName: 'Guest',
+    status: 'processing',
+    ...overrides,
+  };
+}
+
+test('provider booking: two guests racing for the same provider+date+startTime — only one claims it', async () => {
+  const providerId = new mongoose.Types.ObjectId();
+  const claim = () => ProviderBooking.create(providerBookingDoc({ providerId }));
+
+  const results = await Promise.allSettled([claim(), claim()]);
+  const fulfilled = results.filter(r => r.status === 'fulfilled');
+  const rejected = results.filter(r => r.status === 'rejected');
+
+  assert.equal(fulfilled.length, 1, 'exactly one of the two concurrent slot claims should succeed');
+  assert.equal(rejected.length, 1, 'the losing claim must be refused');
+  assert.equal(rejected[0].reason.code, 11000, 'the loser must fail on the unique providerId+date+startTime index, not some other error');
+
+  const count = await ProviderBooking.countDocuments({ providerId, date: '2026-12-01', startTime: '10:00 AM' });
+  assert.equal(count, 1, 'only one booking document should exist for that provider+date+startTime');
+});
+
+test('provider booking: a cancelled booking does not block re-booking the same slot', async () => {
+  const providerId = new mongoose.Types.ObjectId();
+  await ProviderBooking.create(providerBookingDoc({ providerId, status: 'cancelled' }));
+
+  // The unique index has a partial filter excluding status:'cancelled', so this must succeed.
+  const rebooked = await ProviderBooking.create(providerBookingDoc({ providerId, status: 'processing' }));
+  assert.ok(rebooked._id, 'a new booking for the same provider+date+startTime must be allowed once the prior one is cancelled');
 });

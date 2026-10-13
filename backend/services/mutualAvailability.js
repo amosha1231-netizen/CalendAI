@@ -154,6 +154,14 @@ async function isSlotMutuallyFree(host, invitee, { locationId, date, startTime, 
     return { free: false, timeZone };
   }
 
+  // Reject a slot that has already started "today" in the session's own
+  // location timezone — the availability list the client saw may be stale
+  // (mirrors the same cutoff getMutualFreeSlots applies when listing slots).
+  const todayIso = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  if (date === todayIso && startMin < currentMinuteOfDay(timeZone)) {
+    return { free: false, timeZone };
+  }
+
   const [busyHost, busyInvitee] = await Promise.all([
     getFreeBusyForDay(host, date, dayStartHHMM, dayEndHHMM, timeZone),
     getFreeBusyForDay(invitee, date, dayStartHHMM, dayEndHHMM, timeZone)
