@@ -2257,6 +2257,200 @@ app.post('/api/parse-image', aiLimiter, upload.single('image'), async (req, res)
   }
 });
 
+/**
+ * Shared AI quick-add pipeline used by /api/events/quick-add and the Siri endpoint.
+ * Parses free text, applies Shabbat/conflict guards, charges an AI credit,
+ * persists the schedule (MongoDB + cache) and syncs to Google Calendar.
+ * @returns {Promise<{status: number, body: object}>}
+ */
+async function runQuickAdd(userId, userData, text, source = 'quick-add') {
+  const reply = (status, body) => ({ status, body });
+  // ── PAYG CREDIT CHECK: Block if user has no AI credits left ──
+  const creditCheck = await checkAICredits(userId);
+  if (!creditCheck.allowed) {
+    return reply(creditCheck.status || 402, { success: false, error: creditCheck.error });
+  }
+
+  // Get the user's schedule for context-aware AI.
+  // Load from MongoDB first: after a server restart the in-memory cache is empty,
+  // and saving on top of an empty default would wipe the user's real schedule.
+  // This matters most for Siri, which often wakes a cold server.
+  const effectiveUserId = userId || 'anonymous';
+  if (mongoose.Types.ObjectId.isValid(effectiveUserId)) {
+    try {
+      const dbUser = await User.findById(effectiveUserId).select('schedule').lean();
+      if (dbUser && dbUser.schedule) userSchedules.set(effectiveUserId, dbUser.schedule);
+    } catch (err) {
+      console.error(`[${source}] Failed to load schedule from MongoDB:`, err.message);
+    }
+  }
+  const schedule = JSON.parse(JSON.stringify(getUserSchedule(effectiveUserId)));
+  const todayName = getTodayDayName();
+
+  // Build busy slots array from existing schedule for conflict-aware AI
+  const busySlots = [];
+  for (const [day, events] of Object.entries(schedule)) {
+    if (Array.isArray(events) && events.length > 0) {
+      for (const ev of events) {
+        if (ev.startTime && ev.endTime) {
+          busySlots.push({
+            day,
+            startTime: ev.startTime,
+            endTime: ev.endTime,
+            title: ev.title || ''
+          });
+        }
+      }
+    }
+  }
+
+  // ── SEMANTIC ROUTING: Classify the request as Fast Track or Smart Track ──
+  const classification = classifyRequest(text);
+  console.log(`[Semantic Router][${source}] Route: ${classification.route} | Reason: ${classification.reason} | Text: "${text.slice(0, 60)}..."`);
+
+  let parsedResult;
+  if (classification.route === 'fast') {
+    // FAST TRACK: User specified a specific time → no need to fetch busy slots
+    parsedResult = await parseWithGemini(text, { busySlots: [], schedule: {} });
+  } else {
+    // SMART TRACK: User made a general request → inject busy slots with 15-min buffer
+    parsedResult = await parseWithGeminiSmart(text, { busySlots, schedule });
+  }
+  
+  // Handle Shabbat block response from AI
+  if (parsedResult.isBlocked === true) {
+    return reply(400, { 
+      success: false, 
+      isBlocked: true,
+      blockedMessage: parsedResult.blockedMessage || 'האפליקציה אינה קובעת פגישות במהלך השבת. נשמח לתאם מועד לפני כניסת השבת או במוצאי השבת.',
+      message: parsedResult.blockedMessage || 'האפליקציה אינה קובעת פגישות במהלך השבת. נשמח לתאם מועד לפני כניסת השבת או במוצאי השבת.',
+      events: []
+    });
+  }
+
+  // Handle CONFLICT response: user requested a time that is already taken.
+  // The server MUST NOT save any event and MUST NOT deduct an AI credit.
+  if (parsedResult.hasConflict === true) {
+    return reply(409, {
+      success: false,
+      hasConflict: true,
+      conflictMessage: parsedResult.conflictMessage || 'יש כבר פעילות בזמן הזה. האם להוסיף בכל זאת או לקבוע לזמן אחר?',
+      message: parsedResult.replyMessage || 'יש כבר פעילות בזמן הזה. האם להוסיף בכל זאת או לקבוע לזמן אחר?',
+      events: []
+    });
+  }
+
+  const { events: parsedEvents, replyMessage } = parsedResult;
+
+  if (!parsedEvents || parsedEvents.length === 0) {
+    return reply(400, { success: false, error: 'Could not parse any events from the provided text.' });
+  }
+
+  // (schedule already loaded above)
+
+  const addedEvents = [];
+  const shabbatFilteredEvents = [];
+
+  for (const event of parsedEvents) {
+    let day = event.day || todayName;
+    if (day === 'Today') {
+      day = todayName;
+    }
+
+    // ── HARD SHABBAT GUARD: Filter out any event scheduled on Saturday ──
+    if (isShabbat(day)) {
+      console.warn(`[Shabbat Guard] Quick-add blocked event "${event.title}" with day "${day}".`);
+      shabbatFilteredEvents.push(event);
+      continue;
+    }
+
+    const eventRecurrence = event.recurrence || 'once';
+
+    // Auto-set createdMonth for yearly events
+    const createdMonth = new Date().getMonth();
+
+    const eventWithRecurrence = {
+      ...event,
+      day,
+      recurrence: eventRecurrence,
+      location: DEFAULT_LOCATION_ID,
+      ...(eventRecurrence === 'yearly' && { createdMonth })
+    };
+
+    // Add to schedule
+    if (schedule[day]) {
+      schedule[day].push(eventWithRecurrence);
+    } else {
+      schedule['Today'].push(eventWithRecurrence);
+    }
+
+    addedEvents.push(eventWithRecurrence);
+  }
+
+  // If ALL events were filtered out for Shabbat, return an error
+  if (addedEvents.length === 0 && shabbatFilteredEvents.length > 0) {
+    return reply(400, {
+      success: false,
+      isBlocked: true,
+      blockedMessage: 'שבת שלום 🕯️ המערכת אינה מאפשרת קביעת פעילויות בשבת. נשמח לתאם למוצאי השבת או ליום חול.',
+      events: []
+    });
+  }
+
+  const { remainingCredits } = await deductAICredit(userId, parsedResult.usage, parsedResult.modelName || 'deepseek/deepseek-chat', source);
+  syncTodayWithCurrentDay(schedule);
+  // Save to MongoDB for logged-in users
+  if (userId && mongoose.Types.ObjectId.isValid(userId)) {
+    await saveScheduleToMongo(userId, schedule);
+  }
+  userSchedules.set(userId, schedule);
+  saveSchedulesNow();
+
+  // Build a friendly message for the response
+  const firstEvent = addedEvents[0];
+  const eventCount = addedEvents.length;
+  const displayName = userData?.displayName || userData?.email || '';
+
+  let message;
+  if (eventCount === 1) {
+    message = replyMessage || `האירוע "${firstEvent.title}" נקבע בהצלחה ליום ${firstEvent.day} בשעה ${firstEvent.startTime}.`;
+  } else {
+    message = replyMessage || `${eventCount} אירועים נוספו בהצלחה.`;
+  }
+
+  // ── GOOGLE CALENDAR SYNC: Automatically sync each added event to Google Calendar ──
+  // This is non-blocking — failures are logged but never crash the response.
+  const googleSyncResults = await Promise.allSettled(
+    addedEvents.map(ev => syncEventToGoogleCalendar(userId, ev, DEFAULT_LOCATION_ID))
+  );
+  const googleSyncSuccessCount = googleSyncResults.filter(r => r.status === 'fulfilled' && r.value.success).length;
+  const googleSyncFailedCount = googleSyncResults.filter(r => r.status === 'fulfilled' && !r.value.success).length;
+
+  // ── LOG ACTION HISTORY: Record this quick-add action for undo ──
+  const googleEventIds = googleSyncResults
+    .filter(r => r.status === 'fulfilled' && r.value.success && r.value.eventId)
+    .map(r => r.value.eventId);
+  if (userId && mongoose.Types.ObjectId.isValid(userId)) {
+    // Fire-and-forget: don't block the response
+    logActionHistory(userId, text, googleEventIds, addedEvents, source).catch(() => {});
+  }
+
+  return reply(200, {
+    success: true,
+    message,
+    events: addedEvents,
+    count: eventCount,
+    aiCredits: remainingCredits,
+    googleCalendar: {
+      synced: googleSyncSuccessCount,
+      failed: googleSyncFailedCount,
+      total: addedEvents.length,
+      link: googleSyncSuccessCount > 0 ? 'https://calendar.google.com' : undefined
+    }
+  });
+
+}
+
 app.post('/api/events/quick-add', aiLimiter, async (req, res) => {
   try {
     const { text } = req.body;
@@ -2292,182 +2486,153 @@ app.post('/api/events/quick-add', aiLimiter, async (req, res) => {
       return res.status(401).json({ success: false, error: 'Authentication required. Provide a Bearer token.' });
     }
 
-    // ── PAYG CREDIT CHECK: Block if user has no AI credits left ──
-    const creditCheck = await checkAICredits(userId);
-    if (!creditCheck.allowed) {
-      return res.status(creditCheck.status || 402).json({ success: false, error: creditCheck.error });
-    }
-
-    // Get the user's schedule for context-aware AI
-    const effectiveUserId = userId || 'anonymous';
-    const schedule = JSON.parse(JSON.stringify(getUserSchedule(effectiveUserId)));
-    const todayName = getTodayDayName();
-
-    // Build busy slots array from existing schedule for conflict-aware AI
-    const busySlots = [];
-    for (const [day, events] of Object.entries(schedule)) {
-      if (Array.isArray(events) && events.length > 0) {
-        for (const ev of events) {
-          if (ev.startTime && ev.endTime) {
-            busySlots.push({
-              day,
-              startTime: ev.startTime,
-              endTime: ev.endTime,
-              title: ev.title || ''
-            });
-          }
-        }
-      }
-    }
-
-    // ── SEMANTIC ROUTING: Classify the request as Fast Track or Smart Track ──
-    const classification = classifyRequest(text);
-    console.log(`[Semantic Router][Quick-Add] Route: ${classification.route} | Reason: ${classification.reason} | Text: "${text.slice(0, 60)}..."`);
-
-    let parsedResult;
-    if (classification.route === 'fast') {
-      // FAST TRACK: User specified a specific time → no need to fetch busy slots
-      parsedResult = await parseWithGemini(text, { busySlots: [], schedule: {} });
-    } else {
-      // SMART TRACK: User made a general request → inject busy slots with 15-min buffer
-      parsedResult = await parseWithGeminiSmart(text, { busySlots, schedule });
-    }
-    
-    // Handle Shabbat block response from AI
-    if (parsedResult.isBlocked === true) {
-      return res.status(400).json({ 
-        success: false, 
-        isBlocked: true,
-        blockedMessage: parsedResult.blockedMessage || 'האפליקציה אינה קובעת פגישות במהלך השבת. נשמח לתאם מועד לפני כניסת השבת או במוצאי השבת.',
-        message: parsedResult.blockedMessage || 'האפליקציה אינה קובעת פגישות במהלך השבת. נשמח לתאם מועד לפני כניסת השבת או במוצאי השבת.',
-        events: []
-      });
-    }
-
-    // Handle CONFLICT response: user requested a time that is already taken.
-    // The server MUST NOT save any event and MUST NOT deduct an AI credit.
-    if (parsedResult.hasConflict === true) {
-      return res.status(409).json({
-        success: false,
-        hasConflict: true,
-        conflictMessage: parsedResult.conflictMessage || 'יש כבר פעילות בזמן הזה. האם להוסיף בכל זאת או לקבוע לזמן אחר?',
-        message: parsedResult.replyMessage || 'יש כבר פעילות בזמן הזה. האם להוסיף בכל זאת או לקבוע לזמן אחר?',
-        events: []
-      });
-    }
-
-    const { events: parsedEvents, replyMessage } = parsedResult;
-
-    if (!parsedEvents || parsedEvents.length === 0) {
-      return res.status(400).json({ success: false, error: 'Could not parse any events from the provided text.' });
-    }
-
-    // (schedule already loaded above)
-
-    const addedEvents = [];
-    const shabbatFilteredEvents = [];
-
-    for (const event of parsedEvents) {
-      let day = event.day || todayName;
-      if (day === 'Today') {
-        day = todayName;
-      }
-
-      // ── HARD SHABBAT GUARD: Filter out any event scheduled on Saturday ──
-      if (isShabbat(day)) {
-        console.warn(`[Shabbat Guard] Quick-add blocked event "${event.title}" with day "${day}".`);
-        shabbatFilteredEvents.push(event);
-        continue;
-      }
-
-      const eventRecurrence = event.recurrence || 'once';
-
-      // Auto-set createdMonth for yearly events
-      const createdMonth = new Date().getMonth();
-
-      const eventWithRecurrence = {
-        ...event,
-        day,
-        recurrence: eventRecurrence,
-        location: DEFAULT_LOCATION_ID,
-        ...(eventRecurrence === 'yearly' && { createdMonth })
-      };
-
-      // Add to schedule
-      if (schedule[day]) {
-        schedule[day].push(eventWithRecurrence);
-      } else {
-        schedule['Today'].push(eventWithRecurrence);
-      }
-
-      addedEvents.push(eventWithRecurrence);
-    }
-
-    // If ALL events were filtered out for Shabbat, return an error
-    if (addedEvents.length === 0 && shabbatFilteredEvents.length > 0) {
-      return res.status(400).json({
-        success: false,
-        isBlocked: true,
-        blockedMessage: 'שבת שלום 🕯️ המערכת אינה מאפשרת קביעת פעילויות בשבת. נשמח לתאם למוצאי השבת או ליום חול.',
-        events: []
-      });
-    }
-
-    const { remainingCredits } = await deductAICredit(userId, parsedResult.usage, parsedResult.modelName || 'deepseek/deepseek-chat', 'quick-add');
-    syncTodayWithCurrentDay(schedule);
-    // Save to MongoDB for logged-in users
-    if (userId && mongoose.Types.ObjectId.isValid(userId)) {
-      await saveScheduleToMongo(userId, schedule);
-    }
-    userSchedules.set(userId, schedule);
-    saveSchedulesNow();
-
-    // Build a friendly message for the response
-    const firstEvent = addedEvents[0];
-    const eventCount = addedEvents.length;
-    const displayName = userData?.displayName || userData?.email || '';
-
-    let message;
-    if (eventCount === 1) {
-      message = replyMessage || `האירוע "${firstEvent.title}" נקבע בהצלחה ליום ${firstEvent.day} בשעה ${firstEvent.startTime}.`;
-    } else {
-      message = replyMessage || `${eventCount} אירועים נוספו בהצלחה.`;
-    }
-
-    // ── GOOGLE CALENDAR SYNC: Automatically sync each added event to Google Calendar ──
-    // This is non-blocking — failures are logged but never crash the response.
-    const googleSyncResults = await Promise.allSettled(
-      addedEvents.map(ev => syncEventToGoogleCalendar(userId, ev, DEFAULT_LOCATION_ID))
-    );
-    const googleSyncSuccessCount = googleSyncResults.filter(r => r.status === 'fulfilled' && r.value.success).length;
-    const googleSyncFailedCount = googleSyncResults.filter(r => r.status === 'fulfilled' && !r.value.success).length;
-
-    // ── LOG ACTION HISTORY: Record this quick-add action for undo ──
-    const googleEventIds = googleSyncResults
-      .filter(r => r.status === 'fulfilled' && r.value.success && r.value.eventId)
-      .map(r => r.value.eventId);
-    if (userId && mongoose.Types.ObjectId.isValid(userId)) {
-      // Fire-and-forget: don't block the response
-      logActionHistory(userId, text, googleEventIds, addedEvents, 'quick-add').catch(() => {});
-    }
-
-    res.json({
-      success: true,
-      message,
-      events: addedEvents,
-      count: eventCount,
-      aiCredits: remainingCredits,
-      googleCalendar: {
-        synced: googleSyncSuccessCount,
-        failed: googleSyncFailedCount,
-        total: addedEvents.length,
-        link: googleSyncSuccessCount > 0 ? 'https://calendar.google.com' : undefined
-      }
-    });
+    const result = await runQuickAdd(userId, userData, text, 'quick-add');
+    res.status(result.status).json(result.body);
 
   } catch (error) {
     console.error('Quick-add endpoint error:', error);
     res.status(error.status || 500).json({ success: false, error: error.message || 'Failed to process quick-add request.' });
+  }
+});
+
+// ──────────────────────────────────────────────
+// 8f. Siri / Apple Shortcuts
+// ──────────────────────────────────────────────
+// A Shortcut cannot hold a short-lived login JWT, so each user gets a personal,
+// revocable Siri key. Only its SHA-256 hash is stored; the plain key is shown once.
+
+const SIRI_KEY_PREFIX = 'cai_';
+const SIRI_ENDPOINT_PATH = '/api/events/siri';
+
+function hashSiriKey(key) {
+  return crypto.createHash('sha256').update(key).digest('hex');
+}
+
+function getSiriEndpointUrl() {
+  return `${BACKEND_URL}${SIRI_ENDPOINT_PATH}`;
+}
+
+function extractSiriKey(req) {
+  const headerKey = req.headers['x-calendai-key'];
+  if (typeof headerKey === 'string' && headerKey.trim()) return headerKey.trim();
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith(`Bearer ${SIRI_KEY_PREFIX}`)) return authHeader.slice(7).trim();
+  if (typeof req.body?.key === 'string' && req.body.key.trim()) return req.body.key.trim();
+  return null;
+}
+
+/**
+ * GET /api/siri/key — does the logged-in user have a Siri key? Returns the endpoint URL.
+ * POST /api/siri/key — create (or rotate) the user's Siri key. The plain key is returned once.
+ * DELETE /api/siri/key — revoke the key; existing Shortcuts stop working.
+ */
+app.get('/api/siri/key', async (req, res) => {
+  const userId = getAuthenticatedUserId(req);
+  if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
+    return res.status(401).json({ error: 'Authentication required.' });
+  }
+  try {
+    const user = await User.findById(userId).select('siriKeyHash siriKeyCreatedAt').lean();
+    if (!user) return res.status(404).json({ error: 'User not found.' });
+    res.json({
+      hasKey: Boolean(user.siriKeyHash),
+      createdAt: user.siriKeyCreatedAt || null,
+      endpoint: getSiriEndpointUrl()
+    });
+  } catch (error) {
+    console.error('[Siri] Failed to read key status:', error.message);
+    res.status(500).json({ error: 'Failed to load Siri settings.' });
+  }
+});
+
+app.post('/api/siri/key', async (req, res) => {
+  const userId = getAuthenticatedUserId(req);
+  if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
+    return res.status(401).json({ error: 'Authentication required.' });
+  }
+  try {
+    const key = SIRI_KEY_PREFIX + crypto.randomBytes(24).toString('hex');
+    const createdAt = new Date();
+    const result = await User.updateOne(
+      { _id: userId },
+      { $set: { siriKeyHash: hashSiriKey(key), siriKeyCreatedAt: createdAt } }
+    );
+    if (!result.matchedCount) return res.status(404).json({ error: 'User not found.' });
+    res.json({ key, createdAt, endpoint: getSiriEndpointUrl() });
+  } catch (error) {
+    console.error('[Siri] Failed to create key:', error.message);
+    res.status(500).json({ error: 'Failed to create Siri key.' });
+  }
+});
+
+app.delete('/api/siri/key', async (req, res) => {
+  const userId = getAuthenticatedUserId(req);
+  if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
+    return res.status(401).json({ error: 'Authentication required.' });
+  }
+  try {
+    await User.updateOne({ _id: userId }, { $unset: { siriKeyHash: 1, siriKeyCreatedAt: 1 } });
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('[Siri] Failed to revoke key:', error.message);
+    res.status(500).json({ error: 'Failed to revoke Siri key.' });
+  }
+});
+
+/**
+ * POST /api/events/siri
+ * Called by the user's Apple Shortcut ("Hey Siri, <shortcut name>").
+ * Auth: personal Siri key in the X-CalendAI-Key header (or Bearer / body.key).
+ * Body: { text: "פגישה עם דני מחר בשלוש" }
+ * Response: plain text for Siri to speak. Add ?format=json for { success, response, ... }.
+ * Always HTTP 200 so the Shortcut reaches its "Speak" step and the user hears what happened.
+ */
+app.post(SIRI_ENDPOINT_PATH, aiLimiter, async (req, res) => {
+  const wantsJson = req.query.format === 'json';
+  const speak = (success, response, extra = {}) => {
+    if (wantsJson) return res.json({ success, response, ...extra });
+    res.type('text/plain; charset=utf-8').send(response);
+  };
+
+  try {
+    const key = extractSiriKey(req);
+    if (!key || !key.startsWith(SIRI_KEY_PREFIX)) {
+      return speak(false, 'קיצור הדרך לא מחובר לחשבון. פתחו את CalendAI, תפריט, "חיבור לסירי", וצרו מפתח חדש.');
+    }
+
+    const user = await User.findOne({ siriKeyHash: hashSiriKey(key) }).lean();
+    if (!user) {
+      return speak(false, 'מפתח הסירי אינו תקף או שבוטל. צרו מפתח חדש באפליקציה ועדכנו את קיצור הדרך.');
+    }
+
+    const rawText = typeof req.body?.text === 'string' ? req.body.text : (typeof req.query.text === 'string' ? req.query.text : '');
+    const text = rawText.trim().slice(0, 1000);
+    if (!text) {
+      return speak(false, 'לא שמעתי מה לקבוע. נסו שוב.');
+    }
+
+    const result = await runQuickAdd(user._id.toString(), user, text, 'siri');
+    const body = result.body || {};
+
+    if (result.status === 200 && body.success) {
+      return speak(true, body.message, { events: body.events, count: body.count });
+    }
+    if (body.hasConflict) {
+      return speak(false, body.conflictMessage, { hasConflict: true });
+    }
+    if (body.isBlocked) {
+      return speak(false, body.blockedMessage, { isBlocked: true });
+    }
+    if (result.status === 402) {
+      return speak(false, 'נגמרו קרדיטי ה-AI בחשבון. אפשר לשדרג באפליקציה.');
+    }
+    if (result.status === 400) {
+      return speak(false, 'לא הצלחתי להבין איזה אירוע לקבוע. נסו לומר למשל: פגישה עם דני מחר בשלוש.');
+    }
+    return speak(false, body.error || 'אירעה שגיאה. נסו שוב בעוד רגע.');
+  } catch (error) {
+    console.error('[Siri] Endpoint error:', error);
+    speak(false, 'אירעה שגיאה בשרת. נסו שוב בעוד רגע.');
   }
 });
 
