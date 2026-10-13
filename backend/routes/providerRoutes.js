@@ -346,13 +346,16 @@ router.get('/:id/availability', async (req, res) => {
     if (!serviceId || !mongoose.Types.ObjectId.isValid(serviceId)) {
       return res.status(400).json({ error: 'נדרש מזהה שירות תקין.' });
     }
-    const today = new Date().toISOString().slice(0, 10);
-    if (date < today) {
-      return res.status(400).json({ error: 'לא ניתן לבדוק זמינות בתאריך שעבר.' });
-    }
 
     const provider = await User.findOne({ _id: req.params.id, 'providerProfile.enabled': true });
     if (!provider) return res.status(404).json({ error: 'נותן השירות לא נמצא.' });
+
+    // "Past date" relative to the provider's own location timezone, not the
+    // server's (UTC) clock — see computeAvailableSlots' same-day cutoff below.
+    const today = todayIsoInTimeZone(getLocationTimeZone(provider.providerProfile?.locationId));
+    if (date < today) {
+      return res.status(400).json({ error: 'לא ניתן לבדוק זמינות בתאריך שעבר.' });
+    }
 
     const service = (provider.providerProfile.services || []).find(
       s => s._id.toString() === serviceId && s.active
@@ -397,13 +400,16 @@ router.post('/:id/book', async (req, res) => {
     if (!serviceId || !mongoose.Types.ObjectId.isValid(serviceId)) {
       return res.status(400).json({ error: 'נדרש מזהה שירות תקין.' });
     }
-    const today = new Date().toISOString().slice(0, 10);
-    if (date < today) {
-      return res.status(400).json({ error: 'לא ניתן להזמין תאריך שעבר.' });
-    }
 
     provider = await User.findOne({ _id: req.params.id, 'providerProfile.enabled': true });
     if (!provider) return res.status(404).json({ error: 'נותן השירות לא נמצא.' });
+
+    // "Past date" relative to the provider's own location timezone, not the
+    // server's (UTC) clock — see computeAvailableSlots' same-day cutoff below.
+    const today = todayIsoInTimeZone(getLocationTimeZone(provider.providerProfile?.locationId));
+    if (date < today) {
+      return res.status(400).json({ error: 'לא ניתן להזמין תאריך שעבר.' });
+    }
 
     const service = (provider.providerProfile.services || []).find(
       s => s._id.toString() === serviceId && s.active

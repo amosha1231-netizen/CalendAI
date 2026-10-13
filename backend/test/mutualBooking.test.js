@@ -7,14 +7,16 @@
 // Run with: npm test  (from backend/)
 // ──────────────────────────────────────────────
 const assert = require('node:assert/strict');
-const { test, before, after, beforeEach } = require('node:test');
+const { test, before, after, beforeEach, mock } = require('node:test');
 const mongoose = require('mongoose');
 const { MongoMemoryReplSet } = require('mongodb-memory-server');
 
 const User = require('../models/User');
 const MutualBooking = require('../models/MutualBooking');
 const ProviderBooking = require('../models/ProviderBooking');
-const { intersectFree, mergeIntervals, getLocalScheduleBusy } = require('../services/mutualAvailability');
+const {
+  intersectFree, mergeIntervals, getLocalScheduleBusy, getLocationTimeZone, todayIsoInTimeZone
+} = require('../services/mutualAvailability');
 
 let replSet;
 
@@ -119,6 +121,30 @@ test('getLocalScheduleBusy: malformed or missing schedule yields no busy interva
   assert.deepEqual(getLocalScheduleBusy(null, '2026-11-02', 'Monday'), []);
   const user = { schedule: { Monday: [{ startTime: 'garbage', endTime: 'garbage' }] } };
   assert.deepEqual(getLocalScheduleBusy(user, '2026-11-02', 'Monday'), []);
+});
+
+// ── getLocationTimeZone() / todayIsoInTimeZone(): the location-aware "today"
+// mutualRoutes.js and providerRoutes.js use to gate past-date confirms/bookings.
+// A naive `new Date().toISOString().slice(0,10)` (server/UTC day) gets this
+// wrong right around UTC midnight for any location not on UTC — this is what
+// moving those checks to location time (instead of server time) fixes.
+test('getLocationTimeZone: resolves a known location id, and falls back to the default for an unknown one', () => {
+  assert.equal(getLocationTimeZone('newyork'), 'America/New_York');
+  assert.equal(getLocationTimeZone('does-not-exist'), 'Asia/Jerusalem');
+  assert.equal(getLocationTimeZone(undefined), 'Asia/Jerusalem');
+});
+
+test('todayIsoInTimeZone: resolves the calendar day in the given timezone, not the server/UTC day', () => {
+  // 2026-11-02T02:30:00Z is already Nov 2 in UTC, but still 21:30 on Nov 1
+  // in America/New_York (UTC-5 in November) — a UTC-day check would wrongly
+  // treat a New-York "today" booking for Nov 1 as being in the past.
+  mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-02T02:30:00Z').getTime() });
+  try {
+    assert.equal(todayIsoInTimeZone('UTC'), '2026-11-02');
+    assert.equal(todayIsoInTimeZone('America/New_York'), '2026-11-01');
+  } finally {
+    mock.timers.reset();
+  }
 });
 
 // ── 2. Mutual session claim: atomic active → processing transition ──

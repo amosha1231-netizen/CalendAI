@@ -20,6 +20,16 @@ function getLocation(locationId) {
   return LOCATIONS.find(l => l.id === locationId) || LOCATIONS.find(l => l.id === DEFAULT_LOCATION_ID) || null;
 }
 
+/** Resolve a location's IANA timezone, same lookup convention as providerRoutes.js. */
+function getLocationTimeZone(locationId) {
+  return getLocation(locationId)?.timezone || 'Asia/Jerusalem';
+}
+
+/** Today's date (YYYY-MM-DD) as observed in the given IANA timezone, not server-local/UTC. */
+function todayIsoInTimeZone(timeZone) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+}
+
 function minutesSinceMidnight(hhmm) {
   const [h, m] = (hhmm || '00:00').split(':').map(Number);
   return h * 60 + m;
@@ -256,6 +266,8 @@ module.exports = {
   mergeIntervals,
   getFreeBusyForDay,
   getLocalScheduleBusy,
+  getLocationTimeZone,
+  todayIsoInTimeZone,
   getMutualFreeSlots,
   isSlotMutuallyFree
 };
