@@ -53,6 +53,18 @@ export default function MutualScheduler({ lang, t, onClose, onFallbackToShareLin
 
   const dayLabel = (dayKey) => (lang === 'he' ? (DAY_NAMES_HE[dayKey] || dayKey) : dayKey);
 
+  // Best-effort cleanup for a session that's being abandoned (user went back
+  // to restart with a different invitee/duration, or left without
+  // confirming) — never blocks the UI on it, and swallows any failure.
+  const cancelSession = useCallback((sid) => {
+    if (!sid) return;
+    fetch(`${API_BASE}/api/mutual/sessions/${sid}/cancel`, {
+      method: "POST",
+      headers: authHeaders(),
+      credentials: "include"
+    }).catch(() => {});
+  }, []);
+
   const fetchAvailability = useCallback(async (sid) => {
     setAvailabilityLoading(true);
     setAvailabilityError("");
@@ -74,6 +86,10 @@ export default function MutualScheduler({ lang, t, onClose, onFallbackToShareLin
   const handleFindMutualTime = async () => {
     const email = inviteeEmail.trim().toLowerCase();
     if (!email) return;
+    // Starting over (new invitee/duration) abandons any session from a
+    // previous attempt — cancel it so it doesn't sit active forever.
+    cancelSession(sessionId);
+    setSessionId(null);
     setLookupLoading(true);
     setLookupError("");
     setNotFound(false);
@@ -109,6 +125,15 @@ export default function MutualScheduler({ lang, t, onClose, onFallbackToShareLin
     } finally {
       setLookupLoading(false);
     }
+  };
+
+  const handleBackToEmailStep = () => {
+    cancelSession(sessionId);
+    setSessionId(null);
+    setSelectedSlot(null);
+    setDays([]);
+    setAvailabilityError("");
+    setStep('invitee-email');
   };
 
   const handlePickSlot = (date, day, slot) => {
@@ -259,7 +284,7 @@ export default function MutualScheduler({ lang, t, onClose, onFallbackToShareLin
     return (
       <div className="booking-container" dir={isRTL ? 'rtl' : 'ltr'}>
         <div className="booking-header">
-          <button onClick={() => setStep('invitee-email')} className="booking-close-btn">
+          <button onClick={handleBackToEmailStep} className="booking-close-btn">
             <X className="w-5 h-5" />
           </button>
           <div className="booking-header-content">
