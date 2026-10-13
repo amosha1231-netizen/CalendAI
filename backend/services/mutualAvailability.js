@@ -97,6 +97,25 @@ function intersectFree(busyA, busyB, windowStartMin, windowEndMin, minGapMinutes
 }
 
 /**
+ * Busy intervals (minutes-since-midnight) from a user's own local CalendAI
+ * `schedule` for one day — events there never necessarily made it to Google
+ * (e.g. /api/schedule/add-to-free-slot doesn't sync, and a provider booking
+ * only syncs if the provider has Google connected). The single-user
+ * /api/schedule/free-slots route already merges local schedule + Google
+ * events for this reason; mutual availability must do the same or it can
+ * offer/confirm a slot that's actually already taken locally.
+ */
+function getLocalScheduleBusy(user, isoDate, dayName) {
+  const dayEvents = (user?.schedule?.[dayName] || []).filter(ev => {
+    if (ev.targetDate && String(ev.targetDate).slice(0, 10) !== isoDate) return false;
+    return true;
+  });
+  return dayEvents
+    .map(ev => ({ start: parseClock12(ev.startTime), end: parseClock12(ev.endTime) }))
+    .filter(r => r.start !== null && r.end !== null && r.end > r.start);
+}
+
+/**
  * Fetch one user's busy intervals (minutes-since-midnight, in `timeZone`) for a
  * single day window via Google's freebusy.query — busy/free only, no event
  * titles pulled into our backend.
@@ -162,12 +181,15 @@ async function isSlotMutuallyFree(host, invitee, { locationId, date, startTime, 
     return { free: false, timeZone };
   }
 
+  const dayName = DAY_NAMES[new Date(`${date}T12:00:00Z`).getUTCDay()];
   const [busyHost, busyInvitee] = await Promise.all([
     getFreeBusyForDay(host, date, dayStartHHMM, dayEndHHMM, timeZone),
     getFreeBusyForDay(invitee, date, dayStartHHMM, dayEndHHMM, timeZone)
   ]);
+  const combinedHost = [...busyHost, ...getLocalScheduleBusy(host, date, dayName)];
+  const combinedInvitee = [...busyInvitee, ...getLocalScheduleBusy(invitee, date, dayName)];
 
-  const free = intersectFree(busyHost, busyInvitee, startMin, endMin, endMin - startMin);
+  const free = intersectFree(combinedHost, combinedInvitee, startMin, endMin, endMin - startMin);
   const ok = free.some(f => f.start <= startMin && f.end >= endMin);
   return { free: ok, timeZone };
 }
@@ -203,9 +225,11 @@ async function getMutualFreeSlots(host, invitee, { locationId, duration, rangeDa
       getFreeBusyForDay(host, isoDate, dayStartHHMM, dayEndHHMM, timeZone),
       getFreeBusyForDay(invitee, isoDate, dayStartHHMM, dayEndHHMM, timeZone)
     ]);
+    const combinedHost = [...busyHost, ...getLocalScheduleBusy(host, isoDate, dayOfWeek)];
+    const combinedInvitee = [...busyInvitee, ...getLocalScheduleBusy(invitee, isoDate, dayOfWeek)];
 
     const windowStartMin = offset === 0 ? Math.max(dayStartMin, currentMinuteOfDay(timeZone)) : dayStartMin;
-    const free = intersectFree(busyHost, busyInvitee, windowStartMin, dayEndMin, duration);
+    const free = intersectFree(combinedHost, combinedInvitee, windowStartMin, dayEndMin, duration);
 
     // Slice each free gap into duration-sized slots (not one giant button per
     // gap) — this is also what confirm's duration-match check now requires.
@@ -231,6 +255,7 @@ module.exports = {
   intersectFree,
   mergeIntervals,
   getFreeBusyForDay,
+  getLocalScheduleBusy,
   getMutualFreeSlots,
   isSlotMutuallyFree
 };

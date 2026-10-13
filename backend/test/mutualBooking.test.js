@@ -14,7 +14,7 @@ const { MongoMemoryReplSet } = require('mongodb-memory-server');
 const User = require('../models/User');
 const MutualBooking = require('../models/MutualBooking');
 const ProviderBooking = require('../models/ProviderBooking');
-const { intersectFree, mergeIntervals } = require('../services/mutualAvailability');
+const { intersectFree, mergeIntervals, getLocalScheduleBusy } = require('../services/mutualAvailability');
 
 let replSet;
 
@@ -90,6 +90,35 @@ test('mergeIntervals: adjacent intervals that only touch at the boundary merge i
 
 test('mergeIntervals: zero-length and inverted intervals are dropped', () => {
   assert.deepEqual(mergeIntervals([{ start: 600, end: 600 }, { start: 700, end: 650 }, { start: 540, end: 560 }]), [{ start: 540, end: 560 }]);
+});
+
+// ── getLocalScheduleBusy(): local-only schedule events must count as busy ──
+// Mutual availability used to check Google freebusy only. Events added via
+// /api/schedule/add-to-free-slot (or a provider booking for a provider with
+// no Google Calendar connected) never reach Google, so without this they'd
+// be invisible to mutual scheduling and get double-booked.
+test('getLocalScheduleBusy: a one-off event on a matching targetDate counts as busy', () => {
+  const user = { schedule: { Monday: [{ startTime: '09:00 AM', endTime: '10:00 AM', targetDate: '2026-11-02' }] } };
+  assert.deepEqual(getLocalScheduleBusy(user, '2026-11-02', 'Monday'), [{ start: 540, end: 600 }]);
+});
+
+test('getLocalScheduleBusy: a one-off event is ignored on a different date', () => {
+  const user = { schedule: { Monday: [{ startTime: '09:00 AM', endTime: '10:00 AM', targetDate: '2026-11-02' }] } };
+  assert.deepEqual(getLocalScheduleBusy(user, '2026-11-09', 'Monday'), []);
+});
+
+test('getLocalScheduleBusy: a recurring event with no targetDate counts as busy every week', () => {
+  const user = { schedule: { Monday: [{ startTime: '09:00 AM', endTime: '10:00 AM' }] } };
+  assert.deepEqual(getLocalScheduleBusy(user, '2026-11-02', 'Monday'), [{ start: 540, end: 600 }]);
+  assert.deepEqual(getLocalScheduleBusy(user, '2026-11-09', 'Monday'), [{ start: 540, end: 600 }]);
+});
+
+test('getLocalScheduleBusy: malformed or missing schedule yields no busy intervals', () => {
+  assert.deepEqual(getLocalScheduleBusy({}, '2026-11-02', 'Monday'), []);
+  assert.deepEqual(getLocalScheduleBusy({ schedule: {} }, '2026-11-02', 'Monday'), []);
+  assert.deepEqual(getLocalScheduleBusy(null, '2026-11-02', 'Monday'), []);
+  const user = { schedule: { Monday: [{ startTime: 'garbage', endTime: 'garbage' }] } };
+  assert.deepEqual(getLocalScheduleBusy(user, '2026-11-02', 'Monday'), []);
 });
 
 // ── 2. Mutual session claim: atomic active → processing transition ──
