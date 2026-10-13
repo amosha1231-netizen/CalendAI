@@ -130,7 +130,7 @@ async function createOAuth2ClientWithRefresh(user) {
  * /api/add-to-google-calendar so single-user and mutual (dual-insert)
  * event creation share one implementation.
  */
-function buildGcalEventBody({ title, description, eventDate, startHour, startMinute, endHour, endMinute, timeZone, reminders, recurrenceRule }) {
+function buildGcalEventBody({ title, description, eventDate, startHour, startMinute, endHour, endMinute, timeZone, reminders, recurrenceRule, attendees }) {
   const requestBody = {
     summary: title || 'CalendAI Event',
     start: { dateTime: formatDateTimeWithTimezone(eventDate, startHour, startMinute, timeZone), timeZone },
@@ -139,6 +139,7 @@ function buildGcalEventBody({ title, description, eventDate, startHour, startMin
   if (description) requestBody.description = description;
   if (reminders) requestBody.reminders = reminders;
   if (recurrenceRule) requestBody.recurrence = [recurrenceRule];
+  if (attendees && attendees.length) requestBody.attendees = attendees;
   return requestBody;
 }
 

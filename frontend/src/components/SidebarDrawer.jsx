@@ -122,6 +122,18 @@ function isStandalone() {
   return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
 }
 
+// Detect a non-mobile device (desktop/laptop browser), so we don't show
+// iPhone-specific "tap the share icon" instructions to desktop users.
+function isDesktopDevice() {
+  if (typeof navigator === 'undefined') return false;
+  try {
+    const ua = navigator.userAgent || navigator.vendor || window.opera;
+    return !/iPhone|iPad|iPod|Android/i.test(ua);
+  } catch (e) {
+    return false;
+  }
+}
+
 export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangChange, t, user, isPro, onUpgradeToPro, onLogout, onOpenShareModal, selectedLocation, onLocationChange, selectedTimezone, onTimezoneChange, timezoneOptions, onOpenHistory, onOpenMutualScheduler, onOpenProviderDirectory, onOpenProviderProfile, onOpenExpenses }) {
   const [activeTab, setActiveTab] = useState('settings');
   const [settingsData, setSettingsData] = useState({
@@ -135,6 +147,7 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangC
   const [detectError, setDetectError] = useState("");
   const [detectedCity, setDetectedCity] = useState("");
   const [showIosGuide, setShowIosGuide] = useState(false);
+  const [showDesktopGuide, setShowDesktopGuide] = useState(false);
   const [showIosNonSafariMsg, setShowIosNonSafariMsg] = useState(false);
   const [upgradeLoading, setUpgradeLoading] = useState(false);
   const [upgradeError, setUpgradeError] = useState("");
@@ -250,8 +263,14 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangC
       return;
     }
 
-    // Scenario 5: Desktop or other browser without installPrompt
-    // Show iOS guide as fallback (the user can still manually add)
+    // Scenario 5: Desktop browser without installPrompt (Safari/Firefox desktop)
+    if (isDesktopDevice()) {
+      setShowDesktopGuide(true);
+      return;
+    }
+
+    // Scenario 6: Unrecognized mobile browser — fall back to the iOS guide
+    // (closest approximation; most mobile browsers share the same "share → add" pattern)
     setShowIosGuide(true);
   };
 
@@ -315,7 +334,14 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangC
         icon: ExternalLink
       };
     }
-    // Default desktop/other
+    if (isDesktopDevice()) {
+      return {
+        text: lang === 'he' ? '💻 התקנה מהדפדפן' : '💻 Install from browser',
+        style: 'bg-gradient-to-r from-blue-500 to-purple-600 text-white hover:shadow-xl cursor-pointer',
+        icon: Download
+      };
+    }
+    // Default: unrecognized mobile browser without an install prompt
     return {
       text: lang === 'he' ? '📱 הוסף למסך הבית' : '📱 Add to Home Screen',
       style: 'bg-gradient-to-r from-blue-500 to-purple-600 text-white hover:shadow-xl cursor-pointer',
@@ -388,12 +414,12 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangC
           </button>
         </div>
 
-        {/* Mutual Scheduling Button — two CalendAI users, overlapping free time */}
+        {/* Mutual Scheduling Button — pick slots, share a link, the other person picks what works */}
         <div className="px-4 mb-2">
           <button
             onClick={() => {
               onClose();
-              if (onOpenMutualScheduler) onOpenMutualScheduler();
+              if (onOpenShareModal) onOpenShareModal();
             }}
             className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 transition"
           >
@@ -440,7 +466,7 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangC
               }}
               className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200 transition"
             >
-              <Briefcase className="w-5 h-5" />
+              <Settings className="w-5 h-5" />
               <span>{lang === 'he' ? '⚙️ הפרופיל שלי כנותן שירות' : '⚙️ My Provider Profile'}</span>
             </button>
           </div>
@@ -851,6 +877,30 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangC
         </div>
       )}
 
+      {/* Desktop Browser Install Guide Modal */}
+      {showDesktopGuide && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[9999]" onClick={() => setShowDesktopGuide(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
+            <div className="text-center">
+              <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
+                <Download className="w-8 h-8 text-white" />
+              </div>
+              <h3 className="text-lg font-bold text-slate-800 mb-2">
+                {lang === 'he' ? 'התקנה מהדפדפן' : 'Install from your browser'}
+              </h3>
+              <p className="text-sm text-slate-500 mb-4" style={{ textAlign: isRTL ? 'right' : 'left' }}>
+                {lang === 'he'
+                  ? 'ב-Chrome או Edge: חפש סמל התקנה (⊕ או מחשב קטן) בצד ימין של שורת הכתובת ולחץ עליו. בדפדפנים אחרים (Safari/Firefox) אפשר להוסיף את הדף למועדפים לגישה מהירה.'
+                  : 'In Chrome or Edge: look for an install icon (⊕ or a small monitor) at the right side of the address bar and click it. In other browsers (Safari/Firefox) you can bookmark this page for quick access.'}
+              </p>
+            </div>
+            <button onClick={() => setShowDesktopGuide(false)} className="w-full px-4 py-3 bg-blue-600 text-white rounded-xl font-bold text-sm shadow-lg hover:bg-blue-700 transition">
+              {t.cancel || (lang === 'he' ? 'הבנתי!' : 'Got it!')}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Siri Setup Modal */}
       {showSiriModal && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-[9999]" onClick={() => setShowSiriModal(false)}>
@@ -890,15 +940,15 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangC
                 </p>
               </div>
 
-              {/* Download CTA */}
-              <a
-                href="#"
-                onClick={(e) => e.preventDefault()}
-                className="w-full max-w-full box-border flex items-center justify-center gap-2 px-6 py-3.5 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-2xl font-bold text-sm shadow-lg shadow-blue-500/30 hover:shadow-xl hover:from-blue-600 hover:to-indigo-700 transition"
+              {/* Download CTA — disabled until the shortcut file actually ships */}
+              <button
+                type="button"
+                disabled
+                className="w-full max-w-full box-border flex items-center justify-center gap-2 px-6 py-3.5 bg-slate-200 text-slate-500 rounded-2xl font-bold text-sm cursor-not-allowed"
               >
                 <Download className="w-5 h-5" />
-                {lang === 'he' ? 'הורד קיצור דרך' : 'Download Shortcut'}
-              </a>
+                {lang === 'he' ? 'בקרוב' : 'Coming Soon'}
+              </button>
             </div>
           </div>
         </div>

@@ -40,6 +40,21 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 
 dotenv.config({ path: path.join(__dirname, '.env') });
 
 const isProduction = process.env.NODE_ENV === 'production' || !!process.env.RENDER;
+
+// Node's c-ares DNS resolver can fail to query a link-local IPv6 DNS server
+// (seen on some Windows networks) with ECONNREFUSED specifically on the SRV
+// lookup `mongodb+srv://` needs, even though the OS resolver (nslookup) has
+// no trouble with it. Point Node at public DNS for local dev only, so the
+// Atlas connection doesn't depend on that resolver; production environments
+// (Render) are unaffected.
+if (!isProduction) {
+  try {
+    require('dns').setServers(['8.8.8.8', '1.1.1.1']);
+  } catch (dnsErr) {
+    console.warn('Could not set fallback DNS servers:', dnsErr.message);
+  }
+}
+
 const JWT_SECRET = require('./config/jwtSecret');
 const SESSION_SECRET = process.env.SESSION_SECRET?.trim() || (!isProduction ? 'calendai-secret-key-change-me' : null);
 const MONGO_URI = process.env.MONGODB_URI?.trim() || process.env.MONGO_URI?.trim() || (!isProduction ? 'mongodb://localhost:27017/calendai' : null);
@@ -191,6 +206,15 @@ const allowedOrigins = corsOrigin && corsOrigin !== '*'
       'http://localhost:5173',
       PRODUCTION_APP_URL
     ];
+// .env's FRONTEND_URL is a production value (e.g. https://calendai.onrender.com),
+// which — when set, even while developing locally — replaced the list above
+// entirely and silently dropped localhost:5173. That made every cross-origin
+// fetch from the local Vite dev server fail with a CORS error that surfaces
+// to users as a bare "Failed to fetch". Always keep localhost allowed outside
+// production so local dev keeps working no matter what FRONTEND_URL is set to.
+if (!isProduction && !allowedOrigins.includes('http://localhost:5173')) {
+  allowedOrigins.push('http://localhost:5173');
+}
 app.use(cors({
   origin: allowedOrigins,
   credentials: true
@@ -2613,6 +2637,13 @@ async function syncEventToGoogleCalendar(userId, event, locationId) {
       if (freq) recurrenceRuleStr = `RRULE:FREQ=${freq}`;
     }
 
+    // A guest's email on the event (set when this came from a booking-link
+    // confirmation) is added as an attendee so Google emails BOTH the host
+    // (organizer) and the guest a calendar invite/confirmation automatically —
+    // no separate email service needed.
+    const guestEmail = typeof event.guestEmail === 'string' ? event.guestEmail.trim() : '';
+    const attendees = guestEmail ? [{ email: guestEmail }] : [];
+
     const requestBody = buildGcalEventBody({
       title: event.title,
       description: event.description || `Created by CalendAI for ${event.day}`,
@@ -2621,12 +2652,14 @@ async function syncEventToGoogleCalendar(userId, event, locationId) {
       reminders: isReminderEvent
         ? { useDefault: false, overrides: [{ method: 'popup', minutes: 0 }] } // pops exactly at event start time
         : null,
-      recurrenceRule: recurrenceRuleStr
+      recurrenceRule: recurrenceRuleStr,
+      attendees
     });
 
     const gcalResponse = await calendar.events.insert({
       calendarId: 'primary',
       requestBody,
+      sendUpdates: attendees.length ? 'all' : 'none',
     });
 
     const gcalEventId = gcalResponse?.data?.id || null;
@@ -3460,6 +3493,11 @@ app.post('/api/booking/:id/confirm', async (req, res) => {
     const { slotIndex, guestName, guestEmail, guestPhone, guestNotes } = req.body;
     if (typeof guestName !== 'string' || !guestName.trim() || guestName.length > 200) {
       return res.status(400).json({ error: 'guestName is required.' });
+    }
+    // Required so Google Calendar can add the guest as an attendee and email
+    // both sides a confirmation — without it there is no way to notify the guest.
+    if (typeof guestEmail !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(guestEmail.trim())) {
+      return res.status(400).json({ error: 'A valid guestEmail is required to send the meeting confirmation.' });
     }
     const booking = await Booking.findOne({ bookingId: id }).lean();
     if (!booking) return res.status(404).json({ error: 'Booking not found.' });

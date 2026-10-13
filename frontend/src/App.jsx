@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, Suspense, lazy } from 
 import { motion } from "framer-motion";
 import { BrowserRouter } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
-import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Menu, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff, Home, Plus, Zap, ChevronDown, ChevronUp, FileText, Layout, Trophy, Image, Upload, Search, CalendarPlus, BookOpen } from "lucide-react";
+import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Menu, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff, Home, Plus, Zap, ChevronDown, ChevronUp, FileText, Layout, Trophy, Image, Upload, Search, CalendarPlus, BookOpen, Users } from "lucide-react";
 import { staggerContainerVariants, staggerItemVariants } from "./hooks/useStaggeredAnimation";
 import GlobalSearch from "./components/GlobalSearch";
 import MonthlyCalendar from "./components/MonthlyCalendar";
@@ -1481,7 +1481,7 @@ function AppRoutes() {
         </div>
       )}
 
-      <div className={`min-h-screen bg-[#F8FAFC] font-sans pb-24`} dir={isRTL ? 'rtl' : 'ltr'}>
+      <div className={`min-h-screen bg-[#F8FAFC] font-sans pb-24 sm:pb-8`} dir={isRTL ? 'rtl' : 'ltr'}>
         {/* iOS In-App Browser Banner */}
         {isIosWhatsApp() && (
           <div className="fixed top-0 left-0 right-0 z-[99999] bg-amber-50 border-b border-amber-200 px-3 py-2 text-xs text-amber-800 flex items-center justify-between gap-2 shadow-sm" dir="rtl">
@@ -1604,6 +1604,15 @@ function AppRoutes() {
             >
               <Trophy className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">{lang === "he" ? "אתגרים" : "Goals"}</span>
+            </button>
+            {/* Mutual Scheduling Button — pick slots, share a link, the other person picks what works */}
+            <button
+              onClick={() => setShowWizard(true)}
+              className="hidden xs:flex items-center gap-1 text-xs font-medium px-1.5 sm:px-2.5 py-1.5 rounded-full border border-blue-200 text-blue-700 bg-blue-50 hover:bg-blue-100 transition"
+              title={lang === "he" ? "🤝 תיאום פגישה הדדי" : "🤝 Mutual Scheduling"}
+            >
+              <Users className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">{lang === "he" ? "תיאום" : "Meet"}</span>
             </button>
             {/* Mobile Search Icon Toggle */}
             <button
@@ -1968,17 +1977,8 @@ function AppRoutes() {
           </div>
         </footer>
 
-        {/* ── Floating Action Button (FAB) ── */}
-        <button
-          onClick={() => setShowManualEvent(true)}
-          className="fixed bottom-20 right-5 z-40 w-14 h-14 bg-gradient-to-br from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white rounded-full shadow-xl shadow-emerald-200/60 hover:shadow-2xl hover:shadow-emerald-300/60 hover:scale-110 active:scale-95 transition-all duration-200 flex items-center justify-center"
-          title={t.manualEventTitle || 'הוספת אירוע'}
-        >
-          <CalendarPlus className="w-6 h-6" />
-        </button>
-
         {/* ── Bottom Navigation Bar ── */}
-        <nav className="fixed bottom-0 left-0 right-0 z-50 bg-white/80 backdrop-blur-lg border-t border-slate-200/60 safe-area-bottom">
+        <nav className="sm:hidden fixed bottom-0 left-0 right-0 z-50 bg-white/80 backdrop-blur-lg border-t border-slate-200/60 safe-area-bottom">
           <div className="max-w-lg mx-auto flex items-center justify-around py-2 px-4">
             {/* Home Tab */}
             <button
