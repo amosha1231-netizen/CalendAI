@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from "react";
-import { X, Loader2, Check, Plus, Trash2, Briefcase } from "lucide-react";
+import React, { useState, useEffect, useCallback } from "react";
+import { X, Loader2, Check, Plus, Trash2, Briefcase, CalendarClock, Ban } from "lucide-react";
 import safeStorage from "../utils/safeStorage";
 
 var API_BASE = import.meta.env.VITE_API_URL || "";
@@ -30,6 +30,11 @@ export default function ProviderProfileEditor({ lang, user, onClose }) {
   const [locations, setLocations] = useState([]);
   const [services, setServices] = useState([]);
   const [availability, setAvailability] = useState([]);
+
+  const [bookings, setBookings] = useState([]);
+  const [bookingsLoading, setBookingsLoading] = useState(false);
+  const [bookingsError, setBookingsError] = useState("");
+  const [cancellingId, setCancellingId] = useState(null);
 
   const getToken = () => {
     try {
@@ -70,6 +75,44 @@ export default function ProviderProfileEditor({ lang, user, onClose }) {
       }
     })();
   }, []);
+
+  const loadBookings = useCallback(async () => {
+    setBookingsLoading(true);
+    setBookingsError("");
+    try {
+      const token = getToken();
+      const res = await fetch(`${API_BASE}/api/providers/my-bookings`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to load bookings");
+      setBookings(data.bookings || []);
+    } catch (err) {
+      setBookingsError(err.message);
+    } finally {
+      setBookingsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadBookings(); }, [loadBookings]);
+
+  const handleCancelBooking = async (bookingId) => {
+    setCancellingId(bookingId);
+    try {
+      const token = getToken();
+      const res = await fetch(`${API_BASE}/api/providers/bookings/${bookingId}/cancel`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to cancel booking");
+      setBookings(bookings.filter(b => b._id !== bookingId));
+    } catch (err) {
+      setBookingsError(err.message);
+    } finally {
+      setCancellingId(null);
+    }
+  };
 
   const addService = () => {
     setServices([...services, { name: "", duration: 30, price: 0, active: true }]);
@@ -293,6 +336,42 @@ export default function ProviderProfileEditor({ lang, user, onClose }) {
                   </p>
                 )}
               </div>
+            </div>
+
+            {/* Upcoming bookings */}
+            <div>
+              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2 flex items-center gap-1.5">
+                <CalendarClock className="w-4 h-4" />
+                {lang === "he" ? "הזמנות קרובות" : "Upcoming bookings"}
+              </h3>
+              {bookingsLoading ? (
+                <div className="flex justify-center py-4"><Loader2 className="w-5 h-5 animate-spin text-indigo-600" /></div>
+              ) : bookingsError ? (
+                <div className="text-sm text-red-600 bg-red-50 dark:bg-red-900/30 rounded-lg p-3">{bookingsError}</div>
+              ) : bookings.length === 0 ? (
+                <p className="text-xs text-gray-400 text-center py-3">
+                  {lang === "he" ? "אין הזמנות קרובות." : "No upcoming bookings."}
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {bookings.map(b => (
+                    <div key={b._id} className="flex gap-2 items-center justify-between bg-gray-50 dark:bg-gray-700/50 p-2.5 rounded-lg">
+                      <div className="min-w-0 text-xs text-gray-700 dark:text-gray-300">
+                        <div className="font-medium truncate">{b.serviceName} · {b.guestName}</div>
+                        <div className="text-gray-400">{b.date} · {b.startTime}–{b.endTime}</div>
+                      </div>
+                      <button
+                        onClick={() => handleCancelBooking(b._id)}
+                        disabled={cancellingId === b._id}
+                        className="shrink-0 p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg disabled:opacity-50"
+                        title={lang === "he" ? "בטל הזמנה" : "Cancel booking"}
+                      >
+                        {cancellingId === b._id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Ban className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {error && (

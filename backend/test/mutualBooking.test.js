@@ -132,3 +132,19 @@ test('provider booking: a cancelled booking does not block re-booking the same s
   const rebooked = await ProviderBooking.create(providerBookingDoc({ providerId, status: 'processing' }));
   assert.ok(rebooked._id, 'a new booking for the same provider+date+startTime must be allowed once the prior one is cancelled');
 });
+
+test('provider booking: cancelling a confirmed booking with a synced calendar event frees the slot for re-booking', async () => {
+  const providerId = new mongoose.Types.ObjectId();
+  const confirmed = await ProviderBooking.create(
+    providerBookingDoc({ providerId, status: 'confirmed', googleEventId: 'gcal-evt-123' })
+  );
+  assert.equal(confirmed.googleEventId, 'gcal-evt-123', 'googleEventId must round-trip so a later cancel can delete the right calendar event');
+
+  // Mirrors what POST /api/providers/bookings/:id/cancel does once it has
+  // deleted the calendar event and pulled the schedule entry.
+  confirmed.status = 'cancelled';
+  await confirmed.save();
+
+  const rebooked = await ProviderBooking.create(providerBookingDoc({ providerId, status: 'processing' }));
+  assert.ok(rebooked._id, 'the slot must be bookable again once the confirmed booking is cancelled');
+});

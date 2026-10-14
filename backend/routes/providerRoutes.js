@@ -271,6 +271,62 @@ router.get('/my-bookings', async (req, res) => {
 });
 
 // ──────────────────────────────────────────────
+// POST /api/providers/bookings/:id/cancel
+// Cancellable by the provider who owns the booking, or by the signed-in
+// guest who made it (bookedByUserId) — an anonymous guest booking has
+// neither an account nor a cancel link yet, so it can't self-cancel here.
+// Mirrors rollbackCompletedSession's calendar-delete + schedule-pull pattern
+// from mutualRoutes.js, scoped to a single provider-side event.
+// ──────────────────────────────────────────────
+router.post('/bookings/:id/cancel', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'עליך להתחבר.' });
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'מזהה הזמנה לא תקין.' });
+    }
+
+    const booking = await ProviderBooking.findById(req.params.id);
+    if (!booking) return res.status(404).json({ error: 'ההזמנה לא נמצאה.' });
+
+    const isProvider = booking.providerId.equals(userId);
+    const isGuestOwner = booking.bookedByUserId && booking.bookedByUserId.equals(userId);
+    if (!isProvider && !isGuestOwner) {
+      return res.status(403).json({ error: 'אין לך הרשאה לבטל הזמנה זו.' });
+    }
+
+    if (booking.status === 'cancelled') return res.json({ ok: true, alreadyCancelled: true });
+
+    if (booking.status === 'confirmed') {
+      const provider = await User.findById(booking.providerId);
+      if (booking.googleEventId && provider?.googleAccessToken) {
+        try {
+          const oauth = await createOAuth2ClientWithRefresh(provider);
+          await google.calendar({ version: 'v3', auth: oauth }).events.delete({ calendarId: 'primary', eventId: booking.googleEventId });
+        } catch (err) {
+          console.error('Failed to delete provider Google Calendar event on cancel:', err.message);
+        }
+      }
+      if (provider) {
+        const pull = { [`schedule.${booking.day}`]: { providerBookingId: booking._id.toString() } };
+        const getTodayDayName = req.app.get('getTodayDayName');
+        if (getTodayDayName && booking.day === getTodayDayName()) {
+          pull['schedule.Today'] = { providerBookingId: booking._id.toString() };
+        }
+        await User.updateOne({ _id: provider._id }, { $pull: pull }).catch(() => {});
+      }
+    }
+
+    booking.status = 'cancelled';
+    await booking.save();
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Cancel provider booking error:', err);
+    res.status(500).json({ error: 'שגיאה בביטול ההזמנה.' });
+  }
+});
+
+// ──────────────────────────────────────────────
 // GET /api/providers — browse public providers
 // Query: ?q=keyword&category=barber
 // ──────────────────────────────────────────────
@@ -515,6 +571,7 @@ router.post('/:id/book', async (req, res) => {
 
     createdBooking.status = 'confirmed';
     createdBooking.confirmedAt = new Date();
+    if (syncedEventId) createdBooking.googleEventId = syncedEventId;
     await createdBooking.save();
 
     // Best-effort in-memory schedule cache sync (mirrors legacy booking confirm).
