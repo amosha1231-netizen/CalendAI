@@ -13,6 +13,7 @@ const mongoose = require('mongoose');
 const User = require('../models/User');
 const ProviderBooking = require('../models/ProviderBooking');
 const { createOAuth2ClientWithRefresh } = require('../services/googleCalendar');
+const { mergeIntervals } = require('../services/mutualAvailability');
 const { google } = require('googleapis');
 
 const VALID_DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -87,11 +88,16 @@ async function computeAvailableSlots(req, provider, service, dateStr) {
   const rows = (provider.providerProfile?.availability || []).filter(r => r.day === dayName);
   if (!rows.length) return { dayName, slots: [] };
 
+  // Merge overlapping/adjacent availability rows for this day first (a
+  // provider can save two rows that overlap, e.g. 9-12 and 11-14) — slicing
+  // each raw row independently would offer the same startTime more than once.
+  const rawRanges = rows
+    .map(row => ({ start: timeToMinutes(row.startTime), end: timeToMinutes(row.endTime) }))
+    .filter(r => r.start !== null && r.end !== null && r.end > r.start);
+  const mergedRanges = mergeIntervals(rawRanges);
+
   let candidates = [];
-  for (const row of rows) {
-    const rowStart = timeToMinutes(row.startTime);
-    const rowEnd = timeToMinutes(row.endTime);
-    if (rowStart === null || rowEnd === null || rowEnd <= rowStart) continue;
+  for (const { start: rowStart, end: rowEnd } of mergedRanges) {
     for (let start = rowStart; start + service.duration <= rowEnd; start += service.duration) {
       candidates.push({ startMin: start, endMin: start + service.duration });
     }
@@ -246,7 +252,11 @@ router.get('/my-bookings', async (req, res) => {
     const userId = getUserId(req);
     if (!userId) return res.status(401).json({ error: 'עליך להתחבר.' });
 
-    const today = new Date().toISOString().slice(0, 10);
+    // "Today" in the provider's own location timezone, not the server's
+    // (UTC) clock — same convention as every other date gate in this file
+    // (computeAvailableSlots, the availability/book routes' past-date checks).
+    const providerUser = await User.findById(userId).select('providerProfile.locationId').lean();
+    const today = todayIsoInTimeZone(getLocationTimeZone(providerUser?.providerProfile?.locationId));
     const bookings = await ProviderBooking.find({
       providerId: userId,
       status: { $ne: 'cancelled' },
