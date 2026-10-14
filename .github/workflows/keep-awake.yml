@@ -1,0 +1,30 @@
+# Keeps the Render free instance awake so reminder pings go out on time.
+# Render spins a free web service down after ~15 minutes without traffic, and a
+# sleeping server sends no Web Push. This pings /api/health every 10 minutes.
+#
+# Set the repository variable KEEPALIVE_URL (Settings → Secrets and variables →
+# Actions → Variables) to the backend's health URL if it differs from the default.
+# GitHub may delay scheduled runs at busy times, and pauses schedules on repos
+# with no commits for 60 days; an always-on Render plan removes the need for this.
+name: Keep server awake
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Ping health endpoint
+        env:
+          URL: ${{ vars.KEEPALIVE_URL || 'https://calendai-q59p.onrender.com/api/health' }}
+        run: |
+          # A cold start can take ~a minute; any HTTP answer means the server is up.
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 90 --retry 2 --retry-delay 10 "$URL" || true)
+          echo "GET $URL -> $code"
+          if [ "$code" = "000" ]; then echo "::warning::No response from $URL"; fi
