@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from "react";
-import { Calendar, Sparkles, LogIn, ChevronDown } from "lucide-react";
+import { Calendar, Sparkles, LogIn, Mail, ChevronDown } from "lucide-react";
 import { isShabbatNow } from "../utils/shabbatHelper";
 import ShabbatBanner from "./ShabbatBanner";
 
-export default function LandingPage({ t, lang, onLogin, onMicrosoftLogin, onTryGuest, toggleLanguage }) {
+export default function LandingPage({ t, lang, onLogin, onMicrosoftLogin, onTryGuest, onEmailLogin, toggleLanguage }) {
   // ── Shabbat Guard ──
   const [shabbatActive, setShabbatActive] = useState(() => isShabbatNow());
 
@@ -111,6 +111,17 @@ export default function LandingPage({ t, lang, onLogin, onMicrosoftLogin, onTryG
                 {t.landingTryGuest}
               </button>
             </div>
+
+            {/* Email/password sign-in — alternative to Google/Outlook OAuth */}
+            {onEmailLogin && (
+              <button
+                onClick={onEmailLogin}
+                className="mt-4 inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 transition"
+              >
+                <Mail className="w-3.5 h-3.5" />
+                {lang === 'he' ? 'או התחבר/הירשם עם אימייל וסיסמה' : 'Or sign in / register with email'}
+              </button>
+            )}
 
             {/* Scroll indicator */}
             <button

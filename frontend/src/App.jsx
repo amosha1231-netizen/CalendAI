@@ -1388,16 +1388,102 @@ function AppRoutes() {
 
   if (showPrivacy) return <Privacy onBack={() => setShowPrivacy(false)} />;
 
+  const emailAuthModal = showEmailAuth && (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-[9999]" onClick={() => setShowEmailAuth(false)}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-bold text-slate-800">{authMode === 'login' ? (lang === 'he' ? 'התחברות' : 'Login') : (lang === 'he' ? 'הרשמה' : 'Register')}</h3>
+          <button onClick={() => setShowEmailAuth(false)} className="p-1 rounded-full hover:bg-slate-100"><X className="w-5 h-5 text-slate-500" /></button>
+        </div>
+        {authError && <div className="flex items-center gap-2 text-red-600 text-sm mb-4 bg-red-50 p-3 rounded-lg border border-red-200"><AlertCircle className="w-4 h-4" /><span>{authError}</span></div>}
+        <div className="space-y-4">
+          {authMode === 'register' && (
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">{lang === 'he' ? 'שם' : 'Name'}</label>
+              <input type="text" value={authName} onChange={e => setAuthName(e.target.value)}
+                className="w-full px-3 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder={lang === 'he' ? 'הכנס שם' : 'Enter name'} />
+            </div>
+          )}
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">{lang === 'he' ? 'אימייל' : 'Email'}</label>
+            <input type="email" value={authEmail} onChange={e => setAuthEmail(e.target.value)}
+              className="w-full px-3 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="email@example.com" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">{lang === 'he' ? 'סיסמה' : 'Password'}</label>
+            <input type="password" value={authPassword} onChange={e => setAuthPassword(e.target.value)}
+              className="w-full px-3 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="••••••" />
+          </div>
+          <button onClick={async () => {
+            setEmailAuthLoading(true);
+            setAuthError('');
+            try {
+              const endpoint = authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
+              const body = authMode === 'login'
+                ? { email: authEmail, password: authPassword }
+                : { email: authEmail, password: authPassword, name: authName };
+              const res = await fetch(`${API_BASE}${endpoint}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+              });
+              const data = await res.json();
+              if (!res.ok) throw new Error(data.error || 'Authentication failed');
+              setJwtToken(data.token);
+              if (setUser) setUser(normalizeUserCredits(data.user));
+              if (setIsPro) setIsPro(data.user?.isPro === true || data.user?.isPro === 'true');
+              safeStorage.setItem('calendai-isLoggedIn', 'true');
+              safeStorage.setItem('calendai-user', JSON.stringify(normalizeUserCredits(data.user)));
+              setShowEmailAuth(false);
+              setShowLoginPrompt(false);
+              setShowGuestLimitModal(false);
+              setAuthEmail('');
+              setAuthPassword('');
+              setAuthName('');
+              setSuccess(lang === 'he' ? 'התחברת בהצלחה!' : 'Logged in successfully!');
+            } catch (err) {
+              setAuthError(err.message);
+            } finally {
+              setEmailAuthLoading(false);
+            }
+          }} disabled={emailAuthLoading || !authEmail || !authPassword}
+            className="w-full px-4 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition shadow-lg disabled:bg-blue-400 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+            {emailAuthLoading ? <><Loader2 className="w-4 h-4 animate-spin" /> {lang === 'he' ? 'מתחבר...' : 'Loading...'}</> : (authMode === 'login' ? (lang === 'he' ? 'התחבר' : 'Login') : (lang === 'he' ? 'הירשם' : 'Register'))}
+          </button>
+          <div className="text-center mt-2">
+            <button onClick={() => { setAuthMode(authMode === 'login' ? 'register' : 'login'); setAuthError(''); }}
+              className="text-sm text-blue-600 hover:text-blue-800">
+              {authMode === 'login' ? (lang === 'he' ? 'אין לך חשבון? הירשם' : "Don't have an account? Register") : (lang === 'he' ? 'יש לך חשבון? התחבר' : 'Already have an account? Login')}
+            </button>
+          </div>
+          <div className="relative my-4">
+            <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-200" /></div>
+            <div className="relative flex justify-center text-xs"><span className="bg-white px-2 text-slate-400">{lang === 'he' ? 'או' : 'or'}</span></div>
+          </div>
+          <button onClick={() => { setShowEmailAuth(false); handleLogin(lang); }}
+            className="w-full px-4 py-3 bg-white border border-slate-300 text-slate-700 rounded-xl font-medium hover:bg-slate-50 transition shadow-sm flex items-center justify-center gap-2">
+            <LogIn className="w-4 h-4" /> {t.loginWithGoogle}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
   if (currentView === 'landing' && !isAuthenticated) {
     return (
-      <LandingPage
-        t={t}
-        lang={lang}
-        onLogin={() => handleLogin(lang)}
-        onMicrosoftLogin={handleMicrosoftLogin}
-        onTryGuest={handleTryGuest}
-        toggleLanguage={toggleLanguage}
-      />
+      <>
+        <LandingPage
+          t={t}
+          lang={lang}
+          onLogin={() => handleLogin(lang)}
+          onMicrosoftLogin={handleMicrosoftLogin}
+          onTryGuest={handleTryGuest}
+          onEmailLogin={() => { setShowEmailAuth(true); setAuthMode('login'); }}
+          toggleLanguage={toggleLanguage}
+        />
+        {emailAuthModal}
+      </>
     );
   }
 
@@ -2417,87 +2503,7 @@ function AppRoutes() {
       )}
 
       {/* Email/Password Auth Modal */}
-      {showEmailAuth && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-[9999]" onClick={() => setShowEmailAuth(false)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-slate-800">{authMode === 'login' ? (lang === 'he' ? 'התחברות' : 'Login') : (lang === 'he' ? 'הרשמה' : 'Register')}</h3>
-              <button onClick={() => setShowEmailAuth(false)} className="p-1 rounded-full hover:bg-slate-100"><X className="w-5 h-5 text-slate-500" /></button>
-            </div>
-            {authError && <div className="flex items-center gap-2 text-red-600 text-sm mb-4 bg-red-50 p-3 rounded-lg border border-red-200"><AlertCircle className="w-4 h-4" /><span>{authError}</span></div>}
-            <div className="space-y-4">
-              {authMode === 'register' && (
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">{lang === 'he' ? 'שם' : 'Name'}</label>
-                  <input type="text" value={authName} onChange={e => setAuthName(e.target.value)}
-                    className="w-full px-3 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    placeholder={lang === 'he' ? 'הכנס שם' : 'Enter name'} />
-                </div>
-              )}
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">{lang === 'he' ? 'אימייל' : 'Email'}</label>
-                <input type="email" value={authEmail} onChange={e => setAuthEmail(e.target.value)}
-                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="email@example.com" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">{lang === 'he' ? 'סיסמה' : 'Password'}</label>
-                <input type="password" value={authPassword} onChange={e => setAuthPassword(e.target.value)}
-                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="••••••" />
-              </div>
-              <button onClick={async () => {
-                setEmailAuthLoading(true);
-                setAuthError('');
-                try {
-                  const endpoint = authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
-                  const body = authMode === 'login'
-                    ? { email: authEmail, password: authPassword }
-                    : { email: authEmail, password: authPassword, name: authName };
-                  const res = await fetch(`${API_BASE}${endpoint}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(body)
-                  });
-                  const data = await res.json();
-                  if (!res.ok) throw new Error(data.error || 'Authentication failed');
-                  setJwtToken(data.token);
-                  if (setUser) setUser(normalizeUserCredits(data.user));
-                  if (setIsPro) setIsPro(data.user?.isPro === true || data.user?.isPro === 'true');
-                  safeStorage.setItem('calendai-isLoggedIn', 'true');
-                  safeStorage.setItem('calendai-user', JSON.stringify(normalizeUserCredits(data.user)));
-                  setShowEmailAuth(false);
-                  setShowLoginPrompt(false);
-                  setShowGuestLimitModal(false);
-                  setAuthEmail('');
-                  setAuthPassword('');
-                  setAuthName('');
-                  setSuccess(lang === 'he' ? 'התחברת בהצלחה!' : 'Logged in successfully!');
-                } catch (err) {
-                  setAuthError(err.message);
-                } finally {
-                  setEmailAuthLoading(false);
-                }
-              }} disabled={emailAuthLoading || !authEmail || !authPassword}
-                className="w-full px-4 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition shadow-lg disabled:bg-blue-400 disabled:cursor-not-allowed flex items-center justify-center gap-2">
-                {emailAuthLoading ? <><Loader2 className="w-4 h-4 animate-spin" /> {lang === 'he' ? 'מתחבר...' : 'Loading...'}</> : (authMode === 'login' ? (lang === 'he' ? 'התחבר' : 'Login') : (lang === 'he' ? 'הירשם' : 'Register'))}
-              </button>
-              <div className="text-center mt-2">
-                <button onClick={() => { setAuthMode(authMode === 'login' ? 'register' : 'login'); setAuthError(''); }}
-                  className="text-sm text-blue-600 hover:text-blue-800">
-                  {authMode === 'login' ? (lang === 'he' ? 'אין לך חשבון? הירשם' : "Don't have an account? Register") : (lang === 'he' ? 'יש לך חשבון? התחבר' : 'Already have an account? Login')}
-                </button>
-              </div>
-              <div className="relative my-4">
-                <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-200" /></div>
-                <div className="relative flex justify-center text-xs"><span className="bg-white px-2 text-slate-400">{lang === 'he' ? 'או' : 'or'}</span></div>
-              </div>
-              <button onClick={() => { setShowEmailAuth(false); handleLogin(lang); }}
-                className="w-full px-4 py-3 bg-white border border-slate-300 text-slate-700 rounded-xl font-medium hover:bg-slate-50 transition shadow-sm flex items-center justify-center gap-2">
-                <LogIn className="w-4 h-4" /> {t.loginWithGoogle}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {emailAuthModal}
 
       {/* Manual Event Form Modal */}
       {showManualEvent && (
