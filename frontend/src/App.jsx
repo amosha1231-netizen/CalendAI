@@ -30,9 +30,9 @@ import DeleteAccountPage from "./pages/DeleteAccount";
 import TermsPage from "./pages/Terms";
 import translations from "./i18n";
 import safeStorage from "./utils/safeStorage";
-import { openCheckout, consumePaymentSuccessParam, CREDITS_PURCHASED_EVENT, notifyCreditsPurchased } from './utils/lemonCheckout';
+import { openCheckout, readCheckoutResponse, consumePaymentSuccessParam, CREDITS_PURCHASED_EVENT, notifyCreditsPurchased } from './utils/lemonCheckout';
 import { isIosWhatsApp, isIosSafari, isIosNonSafari, isStandalone } from "./utils/browserDetection";
-import { normalizeCredits, normalizeUserCredits } from "./utils/credits";
+import { normalizeCredits, normalizeUserCredits, formatCredits } from "./utils/credits";
 
 // ── JWT Decode helper (client-side expiry check) ──
 function decodeJwtPayload(token) {
@@ -342,9 +342,9 @@ function AppRoutes() {
         body: JSON.stringify({ lang }),
         credentials: "include"
       });
-      const data = await res.json();
+      const data = await readCheckoutResponse(res, lang);
       if (!res.ok) {
-        throw new Error(data.error || lang === 'he' ? 'שגיאה ביצירת דף התשלום.' : 'Failed to create checkout session.');
+        throw new Error(data.error || (lang === 'he' ? 'שגיאה ביצירת דף התשלום.' : 'Failed to create checkout session.'));
       }
       if (data.url) {
         await openCheckout(data.url, { onSuccess: notifyCreditsPurchased });
@@ -1670,7 +1670,7 @@ function AppRoutes() {
                   }`}
                 >
                   <Zap className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
-                  <span className="text-[10px] sm:text-xs">{credits}</span>
+                  <span className="text-[10px] sm:text-xs">{formatCredits(credits)}</span>
                 </button>
               );
             })()}

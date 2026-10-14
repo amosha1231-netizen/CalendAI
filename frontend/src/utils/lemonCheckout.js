@@ -60,6 +60,26 @@ function loadLemonJs() {
 }
 
 /**
+ * Parse the /create-checkout response without throwing on an empty or HTML body
+ * (e.g. the Vite dev proxy answers 500 with no body when the backend is down).
+ * @returns {Promise<{ url?: string, error?: string }>}
+ */
+export async function readCheckoutResponse(res, lang) {
+  let text = '';
+  try { text = await res.text(); } catch (e) {}
+  try {
+    const data = JSON.parse(text);
+    if (data && typeof data === 'object') return data;
+  } catch (e) {}
+  if (res.ok) return { error: lang === 'he' ? 'תשובה לא תקינה מהשרת.' : 'Invalid response from server.' };
+  return {
+    error: lang === 'he'
+      ? `השרת לא זמין כרגע (${res.status}). ודא שהשרת (backend) רץ ונסה שוב.`
+      : `The server is unavailable (${res.status}). Make sure the backend is running and try again.`
+  };
+}
+
+/**
  * @param {string} url - checkout URL from /api/payments/create-checkout
  * @param {{ onSuccess?: () => void }} [options]
  */

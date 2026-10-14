@@ -552,7 +552,14 @@ async function deductAICredit(userId, usage = null, modelName = 'deepseek/deepse
       error.status = existing ? 402 : 401;
       throw error;
     }
-    const remaining = updated.aiCredits;
+    // Fractional $inc leaves floating-point noise (14.999999999999998); store and return 2 decimals.
+    // Conditioned on the value just read, so a concurrent deduction is never overwritten.
+    let remaining = updated.aiCredits;
+    const rounded = Math.round(remaining * 100) / 100;
+    if (rounded !== remaining) {
+      await User.updateOne({ _id: userId, aiCredits: remaining }, { $set: { aiCredits: rounded } });
+      remaining = rounded;
+    }
     console.log(`[PAYG] Credits deducted: ${costInfo.costCredits} | Remaining: ${remaining}`);
     return { remainingCredits: remaining, costInfo };
   } catch (err) {

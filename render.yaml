@@ -18,6 +18,8 @@ services:
         sync: false
       - key: LEMON_SQUEEZY_STORE_ID
         sync: false
+      - key: LEMON_SQUEEZY_VARIANT_ID  # optional, defaults to the credits pack variant
+        sync: false
       - key: SESSION_SECRET
         generateValue: true  # יווצר אוטומטית
       - key: JWT_SECRET

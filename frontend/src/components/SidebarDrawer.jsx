@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { X, BarChart3, Zap, Settings, Download, Moon, Sun, Target, Clock, Trophy, Activity, Share2, MapPin, Loader2, ExternalLink, CheckCircle, Mic, Globe } from 'lucide-react';
 import safeStorage from '../utils/safeStorage';
 import SiriSetupModal from './SiriSetupModal';
-import { openCheckout, notifyCreditsPurchased } from '../utils/lemonCheckout';
+import { openCheckout, readCheckoutResponse, notifyCreditsPurchased } from '../utils/lemonCheckout';
 
 const CATEGORY_KEYWORDS = {
   sport: ['אימון', 'ריצה', 'שחייה', 'הליכה', 'ספורט', 'חדר כושר', 'יוגה', 'פילאטיס', 'רכיבה', 'טיפוס', 'workout', 'run', 'swim', 'walk', 'sport', 'gym', 'yoga', 'pilates', 'bike', 'climb'],
@@ -500,21 +500,20 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangC
                       setUpgradeLoading(true);
                       setUpgradeError("");
                       try {
-                        const res = await fetch('/api/payments/create-checkout', {
+                        let token = null;
+                        try { token = safeStorage.getItem('token') || safeStorage.getItem('calendai-jwt'); } catch (e) {}
+                        // The checkout route authenticates with the JWT only, so the header is required.
+                        const res = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/payments/create-checkout`, {
                           method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
+                          headers: {
+                            'Content-Type': 'application/json',
+                            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+                          },
+                          body: JSON.stringify({ lang }),
                           credentials: 'include'
                         });
-                        // Handle empty or non-JSON responses safely
-                        let data;
-                        const text = await res.text();
-                        try {
-                          data = JSON.parse(text);
-                        } catch (parseErr) {
-                          console.error('Upgrade response was not valid JSON:', text);
-                          throw new Error(lang === 'he' ? 'תשובה לא תקינה מהשרת. נסה שוב מאוחר יותר.' : 'Invalid response from server. Please try again later.');
-                        }
-                        if (!res.ok) throw new Error(data.error || 'Failed to create checkout session');
+                        const data = await readCheckoutResponse(res, lang);
+                        if (!res.ok) throw new Error(data.error || (lang === 'he' ? 'שגיאה ביצירת דף התשלום.' : 'Failed to create checkout session.'));
                         if (data.url) {
                           await openCheckout(data.url, { onSuccess: notifyCreditsPurchased });
                         } else {

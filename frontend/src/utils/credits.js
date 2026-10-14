@@ -9,9 +9,28 @@ export function normalizeCredits(credits) {
   if (credits === null || credits === undefined) return credits;
   if (typeof credits === 'object') {
     const n = credits?.remainingCredits;
-    return (typeof n === 'number' && !Number.isNaN(n)) ? n : 0;
+    return (typeof n === 'number' && !Number.isNaN(n)) ? roundCredits(n) : 0;
   }
-  return credits;
+  return typeof credits === 'number' ? roundCredits(credits) : credits;
+}
+
+/**
+ * Credits are charged in fractions (e.g. 1.37), so repeated deductions leave
+ * floating-point noise such as 14.999999999999998. Round to 2 decimals.
+ */
+export function roundCredits(n) {
+  if (typeof n !== 'number' || !Number.isFinite(n)) return n;
+  return Math.round(n * 100) / 100;
+}
+
+/**
+ * Display string for a credit balance: at most 2 decimals, no trailing zeros
+ * (15 → "15", 14.5 → "14.5", 14.999999 → "15").
+ */
+export function formatCredits(credits) {
+  const n = normalizeCredits(credits);
+  if (typeof n !== 'number' || !Number.isFinite(n)) return '';
+  return String(roundCredits(n));
 }
 
 /**
