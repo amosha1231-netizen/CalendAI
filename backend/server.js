@@ -459,13 +459,19 @@ const { calculateCost, formatCostBreakdown } = require('./services/tokenTracker'
 
 /**
  * Check if the user has AI credits remaining.
- * Anonymous/guest users are NOT subject to credit enforcement —
- * guest usage limits are handled on the frontend.
- * @returns {Promise<{allowed: boolean, credits: number|null, error?: string}>}
+ * AI actions require a logged-in account: guests ('anonymous') are refused
+ * with 401, since a frontend-only limit is bypassed by calling the API directly.
+ * @returns {Promise<{allowed: boolean, credits: number|null, status?: number, error?: string}>}
  */
 async function checkAICredits(userId) {
   if (!mongoose.Types.ObjectId.isValid(userId)) {
-    return { allowed: true, credits: null };
+    return {
+      allowed: false,
+      credits: null,
+      status: 401,
+      requiresLogin: true,
+      error: 'יש להתחבר לחשבון כדי להשתמש בפעולות AI.'
+    };
   }
   try {
     const user = await User.findById(userId);

@@ -1064,6 +1064,11 @@ function AppRoutes() {
           setError(errorData.conflictMessage || errorData.replyMessage || 'יש כבר פעילות בזמן הזה. האם להוסיף בכל זאת או לקבוע לזמן אחר?');
           return;
         }
+        if (res.status === 401) {
+          // Session/token no longer valid: AI actions require a logged-in account.
+          setShowLoginPrompt(true);
+          return;
+        }
         if (res.status === 402) {
           setCreditsError(errorData.error || 'נגמרו לך הקרדיטים! אנא רכוש חבילת פעולות נוספת כדי להמשיך להשתמש ב-AI.');
           setShowCreditsModal(true);
