@@ -181,6 +181,7 @@ const BACKEND_URL = (process.env.BACKEND_URL?.trim() || (isProduction ? PRODUCTI
 const GOOGLE_CALLBACK_URL = (process.env.GOOGLE_CALLBACK_URL?.trim() || `${BACKEND_URL}/api/auth/google/callback`).replace(/\/+$/, '');
 
 app.set('trust proxy', 1);
+app.set('frontendUrl', FRONTEND_URL);
 
 const corsOrigin = process.env.FRONTEND_URL?.trim() || process.env.CORS_ORIGIN?.trim();
 // CRITICAL: CORS origin must be explicit URLs, NOT wildcard '*', when using credentials: true
