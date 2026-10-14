@@ -12,7 +12,7 @@
 const assert = require('node:assert/strict');
 const { test, mock } = require('node:test');
 const {
-  intersectFree, mergeIntervals, getLocalScheduleBusy, getLocationTimeZone, todayIsoInTimeZone
+  intersectFree, mergeIntervals, sliceIntoSlots, getLocalScheduleBusy, getLocationTimeZone, todayIsoInTimeZone, isValidIsoDate
 } = require('../services/mutualAvailability');
 
 // ── intersectFree(): pure interval math ──
@@ -104,6 +104,60 @@ test('getLocalScheduleBusy: malformed or missing schedule yields no busy interva
   assert.deepEqual(getLocalScheduleBusy(null, '2026-11-02', 'Monday'), []);
   const user = { schedule: { Monday: [{ startTime: 'garbage', endTime: 'garbage' }] } };
   assert.deepEqual(getLocalScheduleBusy(user, '2026-11-02', 'Monday'), []);
+});
+
+// ── sliceIntoSlots(): shared slot-slicing rule used by both mutual free-time
+// gaps (getMutualFreeSlots) and provider weekly-availability rows
+// (providerRoutes.js' computeAvailableSlots) ──
+test('sliceIntoSlots: cuts a single range into back-to-back duration-sized slots, dropping the remainder', () => {
+  // 540-625 (85 min) at 30-min slots: 540-570, 570-600, 600-630 would overrun — only two fit.
+  assert.deepEqual(sliceIntoSlots([{ start: 540, end: 625 }], 30), [
+    { start: 540, end: 570 },
+    { start: 570, end: 600 },
+  ]);
+});
+
+test('sliceIntoSlots: a range exactly equal to the duration yields one slot, one minute short yields none', () => {
+  assert.deepEqual(sliceIntoSlots([{ start: 540, end: 570 }], 30), [{ start: 540, end: 570 }]);
+  assert.deepEqual(sliceIntoSlots([{ start: 540, end: 569 }], 30), []);
+});
+
+test('sliceIntoSlots: slices each input range independently, in order', () => {
+  assert.deepEqual(sliceIntoSlots([{ start: 540, end: 600 }, { start: 660, end: 720 }], 30), [
+    { start: 540, end: 570 },
+    { start: 570, end: 600 },
+    { start: 660, end: 690 },
+    { start: 690, end: 720 },
+  ]);
+});
+
+test('sliceIntoSlots: an empty range list yields no slots', () => {
+  assert.deepEqual(sliceIntoSlots([], 30), []);
+});
+
+// ── isValidIsoDate(): guards the 'YYYY-MM-DD' confirm/book inputs against
+// JS Date's silent day-overflow (e.g. "2026-02-30" -> March 2), which a bare
+// regex + Date.parse check would miss ──
+test('isValidIsoDate: accepts well-formed calendar dates', () => {
+  assert.equal(isValidIsoDate('2026-11-02'), true);
+  assert.equal(isValidIsoDate('2026-02-28'), true);
+  assert.equal(isValidIsoDate('2028-02-29'), true); // leap year
+});
+
+test('isValidIsoDate: rejects a calendar date that overflows (Feb 30 does not exist)', () => {
+  assert.equal(isValidIsoDate('2026-02-30'), false);
+  assert.equal(isValidIsoDate('2026-02-29'), false); // 2026 is not a leap year
+  assert.equal(isValidIsoDate('2026-13-01'), false);
+  assert.equal(isValidIsoDate('2026-04-31'), false);
+});
+
+test('isValidIsoDate: rejects malformed, non-string, or empty input', () => {
+  assert.equal(isValidIsoDate('2026-1-2'), false);
+  assert.equal(isValidIsoDate('11/02/2026'), false);
+  assert.equal(isValidIsoDate(''), false);
+  assert.equal(isValidIsoDate(undefined), false);
+  assert.equal(isValidIsoDate(null), false);
+  assert.equal(isValidIsoDate(20261102), false);
 });
 
 // ── getLocationTimeZone() / todayIsoInTimeZone(): the location-aware "today"

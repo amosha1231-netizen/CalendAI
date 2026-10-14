@@ -17,7 +17,7 @@ const JWT_SECRET = require('../config/jwtSecret');
 const User = require('../models/User');
 const MutualBooking = require('../models/MutualBooking');
 const { createOAuth2ClientWithRefresh, buildGcalEventBody } = require('../services/googleCalendar');
-const { getMutualFreeSlots, isSlotMutuallyFree, getLocationTimeZone, todayIsoInTimeZone } = require('../services/mutualAvailability');
+const { getMutualFreeSlots, isSlotMutuallyFree, getLocationTimeZone, todayIsoInTimeZone, isValidIsoDate } = require('../services/mutualAvailability');
 
 const DEFAULT_LOCATION_ID = 'jerusalem';
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -253,7 +253,7 @@ router.post('/sessions/:id/confirm', requireAuth, async (req, res) => {
   let claimedSession = null;
   try {
     const { date, startTime, endTime } = req.body;
-    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`))) {
+    if (!isValidIsoDate(date)) {
       return res.status(400).json({ error: 'A valid ISO date is required.' });
     }
     const startMin = timeToMinutes(startTime);

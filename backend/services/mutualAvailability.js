@@ -30,6 +30,37 @@ function todayIsoInTimeZone(timeZone) {
   return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 }
 
+/**
+ * Strictly validate a 'YYYY-MM-DD' calendar date. A regex + Date.parse check
+ * alone isn't enough: `new Date("2026-02-30T00:00:00Z")` doesn't throw or
+ * produce NaN, it silently overflows to March 2 — so an invalid date would
+ * pass validation and then get booked/confirmed under the wrong day. The
+ * round-trip through toISOString() catches that overflow.
+ */
+function isValidIsoDate(dateStr) {
+  return typeof dateStr === 'string'
+    && /^\d{4}-\d{2}-\d{2}$/.test(dateStr)
+    && !Number.isNaN(Date.parse(`${dateStr}T00:00:00Z`))
+    && new Date(`${dateStr}T00:00:00Z`).toISOString().slice(0, 10) === dateStr;
+}
+
+/**
+ * Slice a list of [start,end) minute ranges into back-to-back duration-sized
+ * slots, dropping any remainder shorter than `duration`. Pure function shared
+ * by mutual availability (free-time gaps between two calendars) and provider
+ * availability (merged weekly-availability rows) so both offer slots on the
+ * exact same slicing rule instead of each re-implementing it.
+ */
+function sliceIntoSlots(ranges, duration) {
+  const slots = [];
+  for (const { start, end } of ranges) {
+    for (let s = start; s + duration <= end; s += duration) {
+      slots.push({ start: s, end: s + duration });
+    }
+  }
+  return slots;
+}
+
 function minutesSinceMidnight(hhmm) {
   const [h, m] = (hhmm || '00:00').split(':').map(Number);
   return h * 60 + m;
@@ -243,16 +274,11 @@ async function getMutualFreeSlots(host, invitee, { locationId, duration, rangeDa
 
     // Slice each free gap into duration-sized slots (not one giant button per
     // gap) — this is also what confirm's duration-match check now requires.
-    const freeSlots = [];
-    for (const gap of free) {
-      for (let s = gap.start; s + duration <= gap.end; s += duration) {
-        freeSlots.push({
-          startTime: minutesToTime12(s),
-          endTime: minutesToTime12(s + duration),
-          durationMinutes: duration
-        });
-      }
-    }
+    const freeSlots = sliceIntoSlots(free, duration).map(s => ({
+      startTime: minutesToTime12(s.start),
+      endTime: minutesToTime12(s.end),
+      durationMinutes: duration
+    }));
 
     if (freeSlots.length) {
       results.push({ date: isoDate, day: dayOfWeek, freeSlots });
@@ -264,10 +290,12 @@ async function getMutualFreeSlots(host, invitee, { locationId, duration, rangeDa
 module.exports = {
   intersectFree,
   mergeIntervals,
+  sliceIntoSlots,
   getFreeBusyForDay,
   getLocalScheduleBusy,
   getLocationTimeZone,
   todayIsoInTimeZone,
+  isValidIsoDate,
   getMutualFreeSlots,
   isSlotMutuallyFree
 };

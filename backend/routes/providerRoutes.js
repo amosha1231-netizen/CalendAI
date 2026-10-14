@@ -13,7 +13,7 @@ const mongoose = require('mongoose');
 const User = require('../models/User');
 const ProviderBooking = require('../models/ProviderBooking');
 const { createOAuth2ClientWithRefresh } = require('../services/googleCalendar');
-const { mergeIntervals } = require('../services/mutualAvailability');
+const { mergeIntervals, sliceIntoSlots, isValidIsoDate } = require('../services/mutualAvailability');
 const { google } = require('googleapis');
 
 const VALID_DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -59,13 +59,6 @@ function dayNameFromDateStr(dateStr) {
   return VALID_DAYS[new Date(`${dateStr}T00:00:00Z`).getUTCDay()];
 }
 
-function isValidIsoDate(dateStr) {
-  return typeof dateStr === 'string'
-    && /^\d{4}-\d{2}-\d{2}$/.test(dateStr)
-    && !Number.isNaN(Date.parse(`${dateStr}T00:00:00Z`))
-    && new Date(`${dateStr}T00:00:00Z`).toISOString().slice(0, 10) === dateStr;
-}
-
 function minutesToTime12(totalMinutes) {
   const h = Math.floor(totalMinutes / 60);
   const m = totalMinutes % 60;
@@ -96,12 +89,8 @@ async function computeAvailableSlots(req, provider, service, dateStr) {
     .filter(r => r.start !== null && r.end !== null && r.end > r.start);
   const mergedRanges = mergeIntervals(rawRanges);
 
-  let candidates = [];
-  for (const { start: rowStart, end: rowEnd } of mergedRanges) {
-    for (let start = rowStart; start + service.duration <= rowEnd; start += service.duration) {
-      candidates.push({ startMin: start, endMin: start + service.duration });
-    }
-  }
+  let candidates = sliceIntoSlots(mergedRanges, service.duration)
+    .map(s => ({ startMin: s.start, endMin: s.end }));
 
   // For today, never offer a slot that has already started (mirrors the
   // "never scan from a past time" guard the legacy /api/schedule/free-slots
