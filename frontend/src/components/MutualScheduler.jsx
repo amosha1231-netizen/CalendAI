@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
 import { Calendar, Clock, Loader2, X, Check, Mail, AlertCircle, Users, ArrowRight, Sparkles } from "lucide-react";
 import safeStorage from "../utils/safeStorage";
 
@@ -64,6 +64,24 @@ export default function MutualScheduler({ lang, t, onClose, onFallbackToShareLin
       credentials: "include"
     }).catch(() => {});
   }, []);
+
+  // The explicit back/restart handlers below already cancel an abandoned
+  // session, but the parent can also unmount this component directly (e.g.
+  // navigating elsewhere without going through `onClose`), which would skip
+  // those and leave the session active forever. Mirror the latest
+  // sessionId/step into a ref so the unmount-only cleanup below can see them
+  // without re-running on every render.
+  const liveRef = useRef({ sessionId: null, step: 'invitee-email' });
+  useEffect(() => {
+    liveRef.current = { sessionId, step };
+  }, [sessionId, step]);
+
+  useEffect(() => {
+    return () => {
+      const { sessionId: sid, step: finalStep } = liveRef.current;
+      if (sid && finalStep !== 'success') cancelSession(sid);
+    };
+  }, [cancelSession]);
 
   const fetchAvailability = useCallback(async (sid) => {
     setAvailabilityLoading(true);
