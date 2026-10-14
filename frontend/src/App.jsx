@@ -33,6 +33,8 @@ import safeStorage from "./utils/safeStorage";
 import { openCheckout, consumePaymentSuccessParam, CREDITS_PURCHASED_EVENT, notifyCreditsPurchased } from './utils/lemonCheckout';
 import { isIosWhatsApp, isIosSafari, isIosNonSafari, isStandalone } from "./utils/browserDetection";
 import { normalizeCredits, normalizeUserCredits } from "./utils/credits";
+import { isShabbatNow as isShabbatNowAtUser } from "./utils/shabbatHelper";
+import { getUserTimeZone, setUserTimeZone, presetLocationForTimeZone, formatUtcOffset, PRESET_LOCATIONS } from "./utils/userLocation";
 
 // ── JWT Decode helper (client-side expiry check) ──
 function decodeJwtPayload(token) {
@@ -162,11 +164,7 @@ function AppRoutes() {
   const t = translations[lang] || translations['he'];
 
   // Timezone state
-  const [selectedTimezone, setSelectedTimezone] = useState(() => {
-    try {
-      return safeStorage.getItem('calendai-timezone') || Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Jerusalem';
-    } catch { return 'Asia/Jerusalem'; }
-  });
+  const [selectedTimezone, setSelectedTimezone] = useState(() => getUserTimeZone());
 
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [inputText, setInputText] = useState("");
@@ -215,7 +213,6 @@ function AppRoutes() {
   const [editModalData, setEditModalData] = useState(null);
   const [editLoading, setEditLoading] = useState(false);
 
-  const [selectedLocation, setSelectedLocation] = useState("jerusalem");
   const [locationFilter, setLocationFilter] = useState("all");
   const { user, isPro, isAuthenticated, authLoading, authStatus, handleLogin, handleLogout, setUser, setIsPro } = useAuth();
 
@@ -256,10 +253,22 @@ function AppRoutes() {
   });
 
   useEffect(() => {
+    // Leave the landing page once signed in, but keep a booking link (?book=true) open.
     if (isAuthenticated) {
-      setCurrentView('dashboard');
+      setCurrentView(view => (view === 'landing' ? 'dashboard' : view));
     }
   }, [isAuthenticated]);
+
+  // Keep the document's language and direction in step with the UI language
+  // (screen readers, native controls and fixed elements depend on them).
+  useEffect(() => {
+    try {
+      if (typeof document !== 'undefined') {
+        document.documentElement.lang = lang;
+        document.documentElement.dir = lang === 'he' ? 'rtl' : 'ltr';
+      }
+    } catch (e) {}
+  }, [lang]);
 
   // ── Re-check view when user returns to the app (iOS visibility fix) ──
   useEffect(() => {
@@ -344,7 +353,7 @@ function AppRoutes() {
       });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || lang === 'he' ? 'שגיאה ביצירת דף התשלום.' : 'Failed to create checkout session.');
+        throw new Error(data.error || (lang === 'he' ? 'שגיאה ביצירת דף התשלום.' : 'Failed to create checkout session.'));
       }
       if (data.url) {
         await openCheckout(data.url, { onSuccess: notifyCreditsPurchased });
@@ -391,6 +400,15 @@ function AppRoutes() {
   const [profileLocation, setProfileLocation] = useState(() => {
     try { return safeStorage.getItem('calendai-profile-location') || 'none'; } catch { return 'none'; }
   });
+  // The preset sent to the server (working hours). The time zone itself always
+  // travels with every request (see utils/authFetch.js), so users outside the
+  // four presets still get their own "today" and Google Calendar times.
+  const selectedLocation = profileLocation !== 'none'
+    ? profileLocation
+    : (presetLocationForTimeZone(selectedTimezone) || 'jerusalem');
+  const timezoneOptions = TIMEZONE_OPTIONS.some(tz => tz.value === selectedTimezone)
+    ? TIMEZONE_OPTIONS
+    : [{ value: selectedTimezone, label: `${selectedTimezone.replace(/_/g, ' ')} (${formatUtcOffset(selectedTimezone)})` }, ...TIMEZONE_OPTIONS];
 
 
   const incrementGuestUsage = useCallback(() => {
@@ -488,80 +506,17 @@ function AppRoutes() {
   }
 
   // ── Shabbat Mode ──
-  const [shabbatTimes, setShabbatTimes] = useState(null);
-  const [shabbatFetchError, setShabbatFetchError] = useState(false);
-
-  const fetchShabbatTimes = useCallback(async () => {
-    try {
-      const res = await fetch('https://www.hebcal.com/shabbat?cfg=json&geonameid=293397&m=50');
-      if (!res.ok) throw new Error('Failed to fetch Shabbat times');
-      const data = await res.json();
-      let candlesTime = null;
-      let havdalahTime = null;
-      for (const item of data.items) {
-        if (item.category === 'candles' && !candlesTime) {
-          candlesTime = new Date(item.date);
-        }
-        if (item.category === 'havdalah' && !havdalahTime) {
-          havdalahTime = new Date(item.date);
-        }
-      }
-      if (candlesTime && havdalahTime) {
-        setShabbatTimes({ candles: candlesTime, havdalah: havdalahTime });
-        setShabbatFetchError(false);
-      } else {
-        throw new Error('Could not find candles/havdalah times');
-      }
-    } catch (e) {
-      console.error('Hebcal API error:', e);
-      setShabbatFetchError(true);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchShabbatTimes();
-    const interval = setInterval(fetchShabbatTimes, 6 * 60 * 60 * 1000);
-    return () => clearInterval(interval);
-  }, [fetchShabbatTimes]);
-
-  const isShabbatNow = useCallback(() => {
-    if (!shabbatTimes || !shabbatTimes.candles || !shabbatTimes.havdalah) {
-      const now = new Date();
-      const day = now.getDay();
-      const hours = now.getHours();
-      const minutes = now.getMinutes();
-      const totalMinutes = hours * 60 + minutes;
-      if (day === 5 && totalMinutes >= 960) return true;
-      if (day === 6 && totalMinutes < 1200) return true;
-      return false;
-    }
-    const now = new Date();
-    return now >= shabbatTimes.candles && now < shabbatTimes.havdalah;
-  }, [shabbatTimes]);
-
-  const isTimeInShabbat = useCallback((date) => {
-    if (!shabbatTimes || !shabbatTimes.candles || !shabbatTimes.havdalah) {
-      const day = date.getDay();
-      const hours = date.getHours();
-      const minutes = date.getMinutes();
-      const totalMinutes = hours * 60 + minutes;
-      if (day === 5 && totalMinutes >= 960) return true;
-      if (day === 6 && totalMinutes < 1200) return true;
-      return false;
-    }
-    return date >= shabbatTimes.candles && date < shabbatTimes.havdalah;
-  }, [shabbatTimes]);
-
-  const [showShabbatOverlay, setShowShabbatOverlay] = useState(() => isShabbatNow());
+  // Shabbat follows the user's own location (time zone / GPS), not Jerusalem.
+  const [showShabbatOverlay, setShowShabbatOverlay] = useState(() => isShabbatNowAtUser());
 
   useEffect(() => {
     const checkShabbat = () => {
-      setShowShabbatOverlay(isShabbatNow());
+      setShowShabbatOverlay(isShabbatNowAtUser());
     };
     checkShabbat();
     const interval = setInterval(checkShabbat, 60000);
     return () => clearInterval(interval);
-  }, [isShabbatNow]);
+  }, [selectedTimezone]);
 
   const handleParseOriginalRef = useRef(null);
 
@@ -800,8 +755,8 @@ function AppRoutes() {
   };
 
   const handleTimezoneChange = (newTimezone) => {
-    setSelectedTimezone(newTimezone);
-    safeStorage.setItem('calendai-timezone', newTimezone);
+    setUserTimeZone(newTimezone);
+    setSelectedTimezone(getUserTimeZone());
   };
 
   const requestNotificationPermission = useCallback(async () => {
@@ -1387,7 +1342,6 @@ function AppRoutes() {
     return <AuthSuccess />;
   }
 
-  console.log('🔄 [App render] authLoading:', authLoading, 'isAuthenticated:', isAuthenticated, 'currentView:', currentView, 'authStatus:', authStatus);
   // Loading guard: show loader while auth is being checked.
   // Checks BOTH safeStorage and localStorage directly for the token.
   // This prevents the landing page from flashing while the OAuth callback
@@ -1568,7 +1522,7 @@ function AppRoutes() {
         </div>
       )}
 
-      <div className={`min-h-screen bg-[#F8FAFC] font-sans pb-24`} dir={isRTL ? 'rtl' : 'ltr'}>
+      <div className={`min-h-screen bg-[#F8FAFC] font-sans pb-[calc(6rem+env(safe-area-inset-bottom))]`} dir={isRTL ? 'rtl' : 'ltr'}>
         {/* iOS In-App Browser Banner */}
         {isIosWhatsApp() && (
           <div className="fixed top-0 left-0 right-0 z-[99999] bg-amber-50 border-b border-amber-200 px-3 py-2 text-xs text-amber-800 flex items-center justify-between gap-2 shadow-sm" dir="rtl">
@@ -1617,7 +1571,7 @@ function AppRoutes() {
                     <div className="font-bold text-sm text-slate-800">{ti.title}</div>
                     {ti.message && <div className="text-xs text-slate-500 mt-0.5">{ti.message}</div>}
                   </div>
-                  <button onClick={() => setToasts(prev => prev.filter(x => x.id !== ti.id))} className="text-slate-300 hover:text-slate-500">
+                  <button onClick={() => setToasts(prev => prev.filter(x => x.id !== ti.id))} aria-label={t.close || 'Close'} className="text-slate-300 hover:text-slate-500 p-2 -m-2">
                     <X className="w-4 h-4" />
                   </button>
                 </div>
@@ -1630,7 +1584,7 @@ function AppRoutes() {
         <header className="px-4 py-3 flex flex-wrap items-center gap-2 max-w-6xl mx-auto">
           {/* Left: Hamburger + Logo */}
           <div className="flex items-center gap-2 shrink-0">
-            <button onClick={() => setIsSidebarOpen(true)} className="flex items-center justify-center w-8 h-8 rounded-lg hover:bg-slate-100 transition text-slate-600">
+            <button onClick={() => setIsSidebarOpen(true)} aria-label={lang === 'he' ? 'תפריט' : 'Menu'} aria-expanded={isSidebarOpen} className="flex items-center justify-center w-11 h-11 -ms-2 rounded-lg hover:bg-slate-100 transition text-slate-600">
               <Menu className="w-5 h-5" />
             </button>
             <Calendar className="w-6 h-6 text-blue-600" />
@@ -1789,19 +1743,22 @@ function AppRoutes() {
 
             {/* Send Button */}
             <div className="mt-3 flex flex-wrap items-center gap-2">
+              {/* Primary actions get their own full-width row on phones so labels never truncate */}
+              <div className="grid grid-cols-2 gap-2 w-full sm:w-auto sm:flex">
               <button onClick={handleParse} disabled={loading}
-                className="flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-5 py-2.5 rounded-full font-semibold transition-all duration-200 shadow-md shadow-blue-200 hover:shadow-lg disabled:from-blue-400 disabled:to-indigo-400 disabled:cursor-not-allowed disabled:shadow-none flex-1 sm:flex-none sm:w-44 min-w-0">
-                {loading ? <><Loader2 className="w-4 h-4 animate-spin" /> <span className="truncate">{t.parsing}</span></> : <><Sparkles className="w-5 h-5 shrink-0" /> <span className="truncate">{t.parseButton}</span></>}
+                className="flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-3 sm:px-5 py-2.5 min-h-[44px] rounded-full font-semibold transition-all duration-200 shadow-md shadow-blue-200 hover:shadow-lg disabled:from-blue-400 disabled:to-indigo-400 disabled:cursor-not-allowed disabled:shadow-none sm:w-44 min-w-0">
+                {loading ? <><Loader2 className="w-4 h-4 animate-spin" /> <span className="truncate">{t.parsing}</span></> : <><Sparkles className="w-5 h-5 shrink-0" /> <span className="text-sm sm:text-base leading-tight text-center">{t.parseButton}</span></>}
               </button>
               {/* Prominent Schedule Event Button */}
               <button
                 onClick={() => setShowManualEvent(true)}
-                className="flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white px-5 py-2.5 rounded-full font-semibold transition-all duration-200 shadow-md shadow-emerald-200 hover:shadow-lg flex-1 sm:flex-none sm:w-48 min-w-0"
+                className="flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white px-3 sm:px-5 py-2.5 min-h-[44px] rounded-full font-semibold transition-all duration-200 shadow-md shadow-emerald-200 hover:shadow-lg sm:w-48 min-w-0"
                 title={t.manualEventTitle || 'הוספת אירוע ידנית'}
               >
                 <CalendarPlus className="w-5 h-5 shrink-0" />
-                <span className="truncate">{t.manualEvent || 'אירוע ידני'}</span>
+                <span className="text-sm sm:text-base leading-tight text-center">{t.manualEvent || 'אירוע ידני'}</span>
               </button>
+              </div>
               {/* Image Upload Button */}
               <div className="relative">
                 <input
@@ -1825,7 +1782,8 @@ function AppRoutes() {
                     </button>
                     <button
                       onClick={handleRemoveImage}
-                      className="p-2 text-slate-400 hover:text-red-500 transition"
+                      aria-label={t.removeImage || 'הסר תמונה'}
+                      className="p-3 text-slate-400 hover:text-red-500 transition"
                       title={t.removeImage || 'הסר תמונה'}
                     >
                       <X className="w-4 h-4" />
@@ -1834,22 +1792,25 @@ function AppRoutes() {
                 ) : (
                   <label
                     htmlFor="image-upload-input"
-                    className="flex items-center justify-center gap-1 w-9 h-9 sm:w-auto sm:px-3 sm:py-2.5 rounded-full text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition cursor-pointer text-xs"
+                    className="flex items-center justify-center gap-1 w-11 h-11 sm:w-auto sm:px-3 sm:py-2.5 rounded-full text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition cursor-pointer text-xs"
                     title={t.uploadImage || 'העלה תמונה'}
+                    aria-label={t.uploadImage || 'העלה תמונה'}
                   >
                     <Image className="w-4 h-4 shrink-0" />
                     <span className="hidden sm:inline">{t.uploadImage || 'תמונה'}</span>
                   </label>
                 )}
               </div>
-              <button onClick={handleUndo} disabled={scheduleHistoryRef.current.length === 0} className="flex items-center justify-center gap-1 text-slate-500 hover:text-slate-700 w-9 h-9 sm:px-3 sm:py-2.5 rounded-full hover:bg-slate-100 transition text-sm disabled:opacity-30 disabled:cursor-not-allowed">
+              <button onClick={handleUndo} disabled={scheduleHistoryRef.current.length === 0} aria-label={t.undo} className="flex items-center justify-center gap-1 text-slate-500 hover:text-slate-700 w-11 h-11 sm:w-auto sm:h-auto sm:px-3 sm:py-2.5 rounded-full hover:bg-slate-100 transition text-sm disabled:opacity-30 disabled:cursor-not-allowed">
                 <RotateCcw className="w-4 h-4 shrink-0" />
                 <span className="hidden sm:inline">{t.undo}</span>
               </button>
               {/* Advanced Toggle */}
               <button
                 onClick={() => setShowAdvanced(!showAdvanced)}
-                className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 px-2.5 py-2 rounded-full hover:bg-slate-100 transition"
+                aria-label={t.advanced}
+                aria-expanded={showAdvanced}
+                className="flex items-center justify-center gap-1 text-xs text-slate-500 hover:text-slate-700 min-w-[44px] min-h-[44px] px-2.5 py-2 rounded-full hover:bg-slate-100 transition"
               >
                 {showAdvanced ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                 <span className="hidden sm:inline">{t.advanced}</span>
@@ -1927,6 +1888,7 @@ function AppRoutes() {
               onNext={() => setDayOffset(prev => prev + 1)}
               onToday={() => setDayOffset(0)}
               t={t}
+              isRTL={isRTL}
             />
 
             {/* Day View (default) */}
@@ -2055,27 +2017,23 @@ function AppRoutes() {
           </div>
         </footer>
 
-        {/* ── Floating Action Button (FAB) ── */}
-        <button
-          onClick={() => setShowManualEvent(true)}
-          className="fixed bottom-20 right-5 z-40 w-14 h-14 bg-gradient-to-br from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white rounded-full shadow-xl shadow-emerald-200/60 hover:shadow-2xl hover:shadow-emerald-300/60 hover:scale-110 active:scale-95 transition-all duration-200 flex items-center justify-center"
-          title={t.manualEventTitle || 'הוספת אירוע'}
-        >
-          <CalendarPlus className="w-6 h-6" />
-        </button>
 
         {/* ── Bottom Navigation Bar ── */}
         <nav className="fixed bottom-0 left-0 right-0 z-50 bg-white/80 backdrop-blur-lg border-t border-slate-200/60 safe-area-bottom">
           <div className="max-w-lg mx-auto flex items-center justify-around py-2 px-4">
             {/* Home Tab */}
             <button
-              onClick={() => setActiveTab('home')}
+              onClick={() => {
+                setActiveTab('home');
+                setDayOffset(0);
+                try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (e) {}
+              }}
               className={`flex flex-col items-center gap-0.5 px-4 py-1 rounded-xl transition ${
                 activeTab === 'home' ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'
               }`}
             >
               <Home className="w-5 h-5" />
-              <span className="text-[10px] font-medium">{t.home}</span>
+              <span className="text-[11px] font-medium">{t.home}</span>
             </button>
 
             {/* Center Add Button - opens manual event form */}
@@ -2086,24 +2044,25 @@ function AppRoutes() {
               <div className="w-12 h-12 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-full flex items-center justify-center shadow-lg shadow-blue-200 hover:shadow-xl hover:-translate-y-0.5 transition-all active:translate-y-0">
                 <Plus className="w-6 h-6 text-white" />
               </div>
-              <span className="text-[10px] font-medium text-slate-500 mt-0.5">{t.addEvent}</span>
+              <span className="text-[11px] font-medium text-slate-500 mt-0.5">{t.addEvent}</span>
             </button>
 
             {/* Credits Tab */}
             <button
               onClick={() => {
+                // Show balance and packages first instead of jumping straight to payment.
                 if (user) {
-                  handleBuyCredits();
+                  setIsSidebarOpen(true);
                 } else {
                   setShowLoginPrompt(true);
                 }
               }}
-              className={`flex flex-col items-center gap-0.5 px-4 py-1 rounded-xl transition ${
+              className={`flex flex-col items-center gap-0.5 px-4 py-1 min-h-[44px] rounded-xl transition ${
                 activeTab === 'credits' ? 'text-amber-600' : 'text-slate-400 hover:text-slate-600'
               }`}
             >
               <Zap className="w-5 h-5" />
-              <span className="text-[10px] font-medium">{t.credits}</span>
+              <span className="text-[11px] font-medium">{t.credits}</span>
             </button>
           </div>
         </nav>
@@ -2547,7 +2506,7 @@ function AppRoutes() {
 
       {/* Meeting Wizard Modal */}
       {showWizard && (
-        <MeetingWizard schedule={schedule} lang={lang} t={t} hostName={user?.name || user?.displayName || user?.email || 'Host'} locationId={profileLocation !== 'none' ? profileLocation : selectedLocation} onClose={() => setShowWizard(false)} />
+        <MeetingWizard schedule={schedule} lang={lang} t={t} hostName={user?.name || user?.displayName || user?.email || 'Host'} locationId={selectedLocation} onClose={() => setShowWizard(false)} />
       )}
 
       {/* History Modal */}
@@ -2579,14 +2538,16 @@ function AppRoutes() {
         onLogout={handleLogout}
         onOpenShareModal={() => setShowWizard(true)}
         onOpenHistory={() => setShowHistoryModal(true)}
-        selectedLocation={profileLocation !== 'none' ? profileLocation : selectedLocation}
+        selectedLocation={profileLocation}
         onLocationChange={(loc) => {
           setProfileLocation(loc);
-          safeStorage.setItem('calendai-profile-location', loc);
+          try { safeStorage.setItem('calendai-profile-location', loc); } catch (e) {}
+          // Picking a city also means living in its time zone.
+          if (PRESET_LOCATIONS[loc]) handleTimezoneChange(PRESET_LOCATIONS[loc]);
         }}
         selectedTimezone={selectedTimezone}
         onTimezoneChange={handleTimezoneChange}
-        timezoneOptions={TIMEZONE_OPTIONS}
+        timezoneOptions={timezoneOptions}
       />
 
       {/* Public Goals & Challenges Modal */}
