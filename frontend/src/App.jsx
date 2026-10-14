@@ -30,6 +30,7 @@ import DeleteAccountPage from "./pages/DeleteAccount";
 import TermsPage from "./pages/Terms";
 import translations from "./i18n";
 import safeStorage from "./utils/safeStorage";
+import { openCheckout, consumePaymentSuccessParam, CREDITS_PURCHASED_EVENT, notifyCreditsPurchased } from './utils/lemonCheckout';
 import { isIosWhatsApp, isIosSafari, isIosNonSafari, isStandalone } from "./utils/browserDetection";
 import { normalizeCredits, normalizeUserCredits } from "./utils/credits";
 
@@ -346,7 +347,8 @@ function AppRoutes() {
         throw new Error(data.error || lang === 'he' ? 'שגיאה ביצירת דף התשלום.' : 'Failed to create checkout session.');
       }
       if (data.url) {
-        window.location.href = data.url;
+        await openCheckout(data.url, { onSuccess: notifyCreditsPurchased });
+        setCheckoutLoading(false);
       } else {
         throw new Error('Invalid response from server.');
       }
@@ -664,6 +666,24 @@ function AppRoutes() {
       console.warn("Failed to refresh user credits:", e);
     }
   }, [user, setUser]);
+
+  // ── After a purchase (overlay success event or return from the checkout redirect),
+  // refresh credits a few times: the Lemon Squeezy webhook can land a few seconds later.
+  // A ref keeps the timers alive when `user` (and so refreshUserCredits) changes mid-refresh.
+  const refreshUserCreditsRef = useRef(refreshUserCredits);
+  refreshUserCreditsRef.current = refreshUserCredits;
+  const hasUser = Boolean(user);
+  useEffect(() => {
+    if (!hasUser) return undefined;
+    // Timers are deliberately not cleared on cleanup: a late credits refresh is
+    // harmless, and clearing would drop it (StrictMode re-runs effects once).
+    const refreshSoon = () => {
+      [0, 3000, 8000].forEach(delay => setTimeout(() => refreshUserCreditsRef.current(), delay));
+    };
+    if (consumePaymentSuccessParam()) refreshSoon();
+    window.addEventListener(CREDITS_PURCHASED_EVENT, refreshSoon);
+    return () => window.removeEventListener(CREDITS_PURCHASED_EVENT, refreshSoon);
+  }, [hasUser]);
 
   const saveScheduleState = useCallback(() => {
     scheduleHistoryRef.current.push(JSON.parse(JSON.stringify(schedule)));
@@ -1042,6 +1062,11 @@ function AppRoutes() {
         }
         if (res.status === 409 && errorData.hasConflict === true) {
           setError(errorData.conflictMessage || errorData.replyMessage || 'יש כבר פעילות בזמן הזה. האם להוסיף בכל זאת או לקבוע לזמן אחר?');
+          return;
+        }
+        if (res.status === 401) {
+          // Session/token no longer valid: AI actions require a logged-in account.
+          setShowLoginPrompt(true);
           return;
         }
         if (res.status === 402) {

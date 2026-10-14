@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { X, BarChart3, Zap, Settings, Download, Moon, Sun, Target, Clock, Trophy, Activity, Share2, MapPin, Loader2, ExternalLink, CheckCircle, Mic, Globe } from 'lucide-react';
 import safeStorage from '../utils/safeStorage';
 import SiriSetupModal from './SiriSetupModal';
+import { openCheckout, notifyCreditsPurchased } from '../utils/lemonCheckout';
 
 const CATEGORY_KEYWORDS = {
   sport: ['אימון', 'ריצה', 'שחייה', 'הליכה', 'ספורט', 'חדר כושר', 'יוגה', 'פילאטיס', 'רכיבה', 'טיפוס', 'workout', 'run', 'swim', 'walk', 'sport', 'gym', 'yoga', 'pilates', 'bike', 'climb'],
@@ -515,7 +516,7 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangC
                         }
                         if (!res.ok) throw new Error(data.error || 'Failed to create checkout session');
                         if (data.url) {
-                          window.location.href = data.url;
+                          await openCheckout(data.url, { onSuccess: notifyCreditsPurchased });
                         } else {
                           throw new Error('No checkout URL returned');
                         }

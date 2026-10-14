@@ -76,6 +76,16 @@ router.post('/create-checkout', async (req, res) => {
                 userId: userId.toString(),
                 lang: userLang
               }
+            },
+            // Without an explicit redirect, "back to store" sends the buyer to the
+            // store URL configured in Lemon Squeezy, which may be a different
+            // (old) domain where the user's login token does not exist.
+            product_options: {
+              redirect_url: `${req.app.get('frontendUrl') || ''}/?payment=success`
+            },
+            // Lets the frontend open the checkout as an in-app overlay (Lemon.js).
+            checkout_options: {
+              embed: true
             }
           },
           relationships: {
