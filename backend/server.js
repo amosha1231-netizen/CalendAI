@@ -474,6 +474,7 @@ const { classifyRequest } = require('./services/semanticRouter');
 
 // ── Public Goals & Challenges Routes ──
 const goalRoutes = require('./routes/goalRoutes');
+const routineRoutes = require('./routes/routineRoutes');
 
 // Expose schedule helper functions for goal routes to auto-add challenge events to user schedules
 app.set('getUserSchedule', getUserSchedule);
@@ -4302,6 +4303,7 @@ app.use('/api/action-history', actionHistoryRoutes);
 
 // ── Public Goals & Challenges Routes ──
 app.use('/api/goals', goalRoutes);
+app.use('/api/routines', routineRoutes);
 
 // ── Daily Log / Personal Journal Routes ──
 const dailyLogRoutes = require('./routes/dailyLogRoutes');

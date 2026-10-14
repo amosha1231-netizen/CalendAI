@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, Suspense, lazy } from 
 import { motion } from "framer-motion";
 import { BrowserRouter } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
-import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Menu, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff, Home, Plus, Zap, ChevronDown, ChevronUp, FileText, Layout, Trophy, Image, Upload, Search, CalendarPlus, BookOpen } from "lucide-react";
+import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Menu, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff, Home, Plus, Zap, ChevronDown, ChevronUp, FileText, Layout, Trophy, Image, Upload, Search, CalendarPlus, BookOpen, ListChecks } from "lucide-react";
 import { staggerContainerVariants, staggerItemVariants } from "./hooks/useStaggeredAnimation";
 import GlobalSearch from "./components/GlobalSearch";
 import MonthlyCalendar from "./components/MonthlyCalendar";
@@ -19,6 +19,7 @@ import HistoryModal from "./components/HistoryModal";
 import PublicGoals from "./components/PublicGoals";
 import ChallengeDetail from "./components/ChallengeDetail";
 import DailyJournal from "./components/DailyJournal";
+import Routines, { RoutinesTodayCard, consumeSharedRoutineParam, clearSharedRoutineParam } from "./components/Routines";
 
 // ── Lazy-loaded page chunks ──
 const LandingPage = lazy(() => import("./components/LandingPage"));
@@ -375,6 +376,14 @@ function AppRoutes() {
   const [showChallengeDetail, setShowChallengeDetail] = useState(false);
   const [selectedChallengeId, setSelectedChallengeId] = useState(null);
   const [showJournal, setShowJournal] = useState(false);
+  // Routines & shared challenges (components/Routines.jsx)
+  const [routinesView, setRoutinesView] = useState(null); // null | 'today' | 'progress' | 'discover'
+  const [routinesRefresh, setRoutinesRefresh] = useState(0);
+  const [sharedRoutineCode, setSharedRoutineCode] = useState(() => consumeSharedRoutineParam());
+  // A shared routine link opens once the user is signed in.
+  useEffect(() => {
+    if (sharedRoutineCode && user) setRoutinesView(view => view || 'today');
+  }, [sharedRoutineCode, user]);
   const [showMobileSearch, setShowMobileSearch] = useState(false);
 
   const [installPrompt, setInstallPrompt] = useState(null);
@@ -1693,6 +1702,9 @@ function AppRoutes() {
         )}
 
         <main className="px-4 max-w-6xl mx-auto space-y-5">
+          {user && (
+            <RoutinesTodayCard lang={lang} user={user} refreshKey={routinesRefresh} onOpen={tab => setRoutinesView(tab)} />
+          )}
           {/* ── AI Prompt Floating Card ── */}
           <div className="bg-slate-50 p-3 sm:p-5 rounded-2xl sm:rounded-3xl shadow-sm border border-slate-100">
             {/* Suggestion Chips */}
@@ -2020,7 +2032,7 @@ function AppRoutes() {
 
         {/* ── Bottom Navigation Bar ── */}
         <nav className="fixed bottom-0 left-0 right-0 z-50 bg-white/80 backdrop-blur-lg border-t border-slate-200/60 safe-area-bottom">
-          <div className="max-w-lg mx-auto flex items-center justify-around py-2 px-4">
+          <div className="max-w-lg mx-auto flex items-center justify-around py-2 px-2">
             {/* Home Tab */}
             <button
               onClick={() => {
@@ -2028,12 +2040,23 @@ function AppRoutes() {
                 setDayOffset(0);
                 try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (e) {}
               }}
-              className={`flex flex-col items-center gap-0.5 px-4 py-1 rounded-xl transition ${
+              className={`flex flex-col items-center gap-0.5 px-2 py-1 min-h-[44px] rounded-xl transition ${
                 activeTab === 'home' ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'
               }`}
             >
               <Home className="w-5 h-5" />
               <span className="text-[11px] font-medium">{t.home}</span>
+            </button>
+
+            {/* Routines Tab */}
+            <button
+              onClick={() => setRoutinesView('today')}
+              className={`flex flex-col items-center gap-0.5 px-2 py-1 min-h-[44px] rounded-xl transition ${
+                routinesView ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'
+              }`}
+            >
+              <ListChecks className="w-5 h-5" />
+              <span className="text-[11px] font-medium">{lang === 'he' ? 'רוטינות' : 'Routines'}</span>
             </button>
 
             {/* Center Add Button - opens manual event form */}
@@ -2047,6 +2070,15 @@ function AppRoutes() {
               <span className="text-[11px] font-medium text-slate-500 mt-0.5">{t.addEvent}</span>
             </button>
 
+            {/* Shared challenges */}
+            <button
+              onClick={() => setRoutinesView('discover')}
+              className="flex flex-col items-center gap-0.5 px-2 py-1 min-h-[44px] rounded-xl transition text-slate-400 hover:text-slate-600"
+            >
+              <Trophy className="w-5 h-5" />
+              <span className="text-[11px] font-medium">{lang === 'he' ? 'אתגרים' : 'Challenges'}</span>
+            </button>
+
             {/* Credits Tab */}
             <button
               onClick={() => {
@@ -2057,7 +2089,7 @@ function AppRoutes() {
                   setShowLoginPrompt(true);
                 }
               }}
-              className={`flex flex-col items-center gap-0.5 px-4 py-1 min-h-[44px] rounded-xl transition ${
+              className={`flex flex-col items-center gap-0.5 px-2 py-1 min-h-[44px] rounded-xl transition ${
                 activeTab === 'credits' ? 'text-amber-600' : 'text-slate-400 hover:text-slate-600'
               }`}
             >
@@ -2581,6 +2613,20 @@ function AppRoutes() {
             fetchSchedule();
             setSuccess(lang === "he" ? "🎯 הצטרפת לאתגר! האירוע נוסף ליומן." : "🎯 Joined the challenge! Event added to your schedule.");
           }}
+        />
+      )}
+
+      {/* Routines, progress and shared challenges */}
+      {routinesView && (
+        <Routines
+          lang={lang}
+          user={user}
+          initialTab={routinesView || 'today'}
+          sharedCode={user ? sharedRoutineCode : null}
+          onSharedHandled={() => { clearSharedRoutineParam(); setSharedRoutineCode(null); }}
+          onClose={() => { setRoutinesView(null); setRoutinesRefresh(n => n + 1); }}
+          onChanged={() => setRoutinesRefresh(n => n + 1)}
+          onRequireLogin={() => { setRoutinesView(null); handleLogin(lang); }}
         />
       )}
 
