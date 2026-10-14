@@ -322,6 +322,7 @@ router.get('/:id', async (req, res) => {
         businessName: provider.providerProfile.businessName || provider.displayName || 'Provider',
         bio: provider.providerProfile.bio || '',
         category: provider.providerProfile.category || 'general',
+        locationId: provider.providerProfile.locationId || DEFAULT_LOCATION_ID,
         services: (provider.providerProfile.services || []).filter(s => s.active)
       }
     });
