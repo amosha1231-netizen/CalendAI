@@ -13,30 +13,15 @@ const mongoose = require('mongoose');
 const User = require('../models/User');
 const ProviderBooking = require('../models/ProviderBooking');
 const { createOAuth2ClientWithRefresh } = require('../services/googleCalendar');
-const { mergeIntervals, sliceIntoSlots, isValidIsoDate } = require('../services/mutualAvailability');
+const {
+  mergeIntervals, sliceIntoSlots, isValidIsoDate, getLocationTimeZone, todayIsoInTimeZone
+} = require('../services/mutualAvailability');
 const { google } = require('googleapis');
 
 const VALID_DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const MAX_SERVICES = 20;
 const MAX_AVAILABILITY_ROWS = 50;
-
-let LOCATIONS = [];
-try {
-  LOCATIONS = require('../data/locations.json').locations || [];
-} catch (err) {
-  console.error('[providerRoutes] Failed to load locations.json:', err.message);
-}
 const DEFAULT_LOCATION_ID = 'jerusalem';
-
-/** Resolve a location's IANA timezone, same lookup convention as mutualAvailability.js. */
-function getLocationTimeZone(locationId) {
-  const loc = LOCATIONS.find(l => l.id === locationId) || LOCATIONS.find(l => l.id === DEFAULT_LOCATION_ID);
-  return loc?.timezone || 'Asia/Jerusalem';
-}
-
-function todayIsoInTimeZone(timeZone) {
-  return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
-}
 
 function currentMinuteOfDay(timeZone) {
   const parts = new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date());
