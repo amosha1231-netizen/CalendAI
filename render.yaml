@@ -40,3 +40,11 @@ services:
         sync: false
       - key: BACKEND_URL
         sync: false
+      # Web Push for reminders: generate once with `npx web-push generate-vapid-keys`
+      # and keep them stable (changing them breaks existing subscriptions).
+      - key: VAPID_PUBLIC_KEY
+        sync: false
+      - key: VAPID_PRIVATE_KEY
+        sync: false
+      - key: VAPID_SUBJECT
+        sync: false

@@ -20,6 +20,7 @@ import PublicGoals from "./components/PublicGoals";
 import ChallengeDetail from "./components/ChallengeDetail";
 import DailyJournal from "./components/DailyJournal";
 import Routines, { RoutinesTodayCard, consumeSharedRoutineParam, clearSharedRoutineParam } from "./components/Routines";
+import Reminders, { RemindersCard, consumeRemindersParam } from "./components/Reminders";
 
 // ── Lazy-loaded page chunks ──
 const LandingPage = lazy(() => import("./components/LandingPage"));
@@ -379,6 +380,9 @@ function AppRoutes() {
   // Routines & shared challenges (components/Routines.jsx)
   const [routinesView, setRoutinesView] = useState(null); // null | 'today' | 'progress' | 'discover'
   const [routinesRefresh, setRoutinesRefresh] = useState(0);
+  // Reminders (components/Reminders.jsx); ?reminders=1 comes from a tapped notification
+  const [showReminders, setShowReminders] = useState(() => consumeRemindersParam());
+  const [remindersRefresh, setRemindersRefresh] = useState(0);
   const [sharedRoutineCode, setSharedRoutineCode] = useState(() => consumeSharedRoutineParam());
   // A shared routine link opens once the user is signed in.
   useEffect(() => {
@@ -1070,6 +1074,7 @@ function AppRoutes() {
       } else {
         refreshUserCredits();
       }
+      if (data.reminders?.length > 0) setRemindersRefresh(n => n + 1);
       await fetchSchedule();
       setSuccess(data.replyMessage || `${t.successAdded} ${data.events?.length || 0} ${t.successEvents}`);
       setInputText("");
@@ -1704,6 +1709,9 @@ function AppRoutes() {
         <main className="px-4 max-w-6xl mx-auto space-y-5">
           {user && (
             <RoutinesTodayCard lang={lang} user={user} refreshKey={routinesRefresh} onOpen={tab => setRoutinesView(tab)} />
+          )}
+          {user && (
+            <RemindersCard lang={lang} user={user} refreshKey={remindersRefresh} onOpen={() => setShowReminders(true)} onTryExample={setInputText} />
           )}
           {/* ── AI Prompt Floating Card ── */}
           <div className="bg-slate-50 p-3 sm:p-5 rounded-2xl sm:rounded-3xl shadow-sm border border-slate-100">
@@ -2613,6 +2621,17 @@ function AppRoutes() {
             fetchSchedule();
             setSuccess(lang === "he" ? "🎯 הצטרפת לאתגר! האירוע נוסף ליומן." : "🎯 Joined the challenge! Event added to your schedule.");
           }}
+        />
+      )}
+
+      {/* Recurring reminders ("every day at 8: take a pill") */}
+      {showReminders && (
+        <Reminders
+          lang={lang}
+          user={user}
+          onClose={() => { setShowReminders(false); setRemindersRefresh(n => n + 1); }}
+          onChanged={() => setRemindersRefresh(n => n + 1)}
+          onRequireLogin={() => { setShowReminders(false); handleLogin(lang); }}
         />
       )}
 
