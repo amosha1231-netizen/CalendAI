@@ -12,7 +12,8 @@
 const assert = require('node:assert/strict');
 const { test, mock } = require('node:test');
 const {
-  intersectFree, mergeIntervals, sliceIntoSlots, getLocalScheduleBusy, getLocationTimeZone, todayIsoInTimeZone, isValidIsoDate
+  intersectFree, mergeIntervals, sliceIntoSlots, getLocalScheduleBusy, getLocationTimeZone, todayIsoInTimeZone, isValidIsoDate,
+  isSlotMutuallyFree
 } = require('../services/mutualAvailability');
 
 // ── intersectFree(): pure interval math ──
@@ -169,6 +170,27 @@ test('getLocationTimeZone: resolves a known location id, and falls back to the d
   assert.equal(getLocationTimeZone('newyork'), 'America/New_York');
   assert.equal(getLocationTimeZone('does-not-exist'), 'Asia/Jerusalem');
   assert.equal(getLocationTimeZone(undefined), 'Asia/Jerusalem');
+});
+
+// ── isSlotMutuallyFree(): server-side race-guard re-check the /confirm route
+// relies on. getMutualFreeSlots() never *lists* a Shabbat day, but a direct
+// API call (bypassing the UI) could still ask to confirm one — this must be
+// rejected on its own, the same "HARD SHABBAT GUARD" every other AI/booking
+// entry point in this app enforces, not merely assumed free because neither
+// calendar happens to have a conflicting event that day. Fake, clearly-
+// invalid Google credentials below prove the point: if the guard didn't
+// short-circuit before the freebusy.query call, this would reject with a
+// network/auth error (or hang) instead of resolving with free:false.
+test('isSlotMutuallyFree: rejects a Saturday (Shabbat) slot without even checking the calendars', async () => {
+  const host = { _id: 'host-1', googleAccessToken: 'fake' };
+  const invitee = { _id: 'invitee-1', googleAccessToken: 'fake' };
+  const result = await isSlotMutuallyFree(host, invitee, {
+    locationId: 'jerusalem',
+    date: '2026-11-07', // a Saturday
+    startTime: '10:00 AM',
+    endTime: '10:30 AM'
+  });
+  assert.deepEqual(result, { free: false, timeZone: 'Asia/Jerusalem' });
 });
 
 test('todayIsoInTimeZone: resolves the calendar day in the given timezone, not the server/UTC day', () => {

@@ -223,6 +223,16 @@ async function isSlotMutuallyFree(host, invitee, { locationId, date, startTime, 
   }
 
   const dayName = DAY_NAMES[new Date(`${date}T12:00:00Z`).getUTCDay()];
+
+  // HARD SHABBAT GUARD: getMutualFreeSlots() never lists a Shabbat day, but
+  // this function is the server-side source of truth the /confirm route
+  // relies on to re-verify a client-supplied date — without this check, a
+  // direct API call (bypassing the UI) could still lock in a Shabbat meeting
+  // as long as neither calendar happened to be busy then.
+  if (shabbatService.isShabbatDay(dayName)) {
+    return { free: false, timeZone };
+  }
+
   const [busyHost, busyInvitee] = await Promise.all([
     getFreeBusyForDay(host, date, dayStartHHMM, dayEndHHMM, timeZone),
     getFreeBusyForDay(invitee, date, dayStartHHMM, dayEndHHMM, timeZone)
