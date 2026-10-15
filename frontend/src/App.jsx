@@ -19,6 +19,7 @@ import HistoryModal from "./components/HistoryModal";
 import PublicGoals from "./components/PublicGoals";
 import ChallengeDetail from "./components/ChallengeDetail";
 import DailyJournal from "./components/DailyJournal";
+import SmartAlarm from "./components/SmartAlarm";
 import Routines, { RoutinesTodayCard, consumeSharedRoutineParam, clearSharedRoutineParam } from "./components/Routines";
 import Reminders, { RemindersCard, consumeRemindersParam } from "./components/Reminders";
 
@@ -302,6 +303,7 @@ function AppRoutes() {
 
   const [expandedDays, setExpandedDays] = useState({});
   const [dayDetailModal, setDayDetailModal] = useState(null);
+  const [showAlarmSettings, setShowAlarmSettings] = useState(false);
   
   // ── Calendar View State (day / weekly / monthly / yearly / 100year) ──
   const [calendarView, setCalendarView] = useState('day');
@@ -2578,6 +2580,7 @@ function AppRoutes() {
         onLogout={handleLogout}
         onOpenShareModal={() => setShowWizard(true)}
         onOpenHistory={() => setShowHistoryModal(true)}
+        onOpenAlarm={() => setShowAlarmSettings(true)}
         selectedLocation={profileLocation}
         onLocationChange={(loc) => {
           setProfileLocation(loc);
@@ -2588,6 +2591,15 @@ function AppRoutes() {
         selectedTimezone={selectedTimezone}
         onTimezoneChange={handleTimezoneChange}
         timezoneOptions={timezoneOptions}
+      />
+
+      {/* Smart alarm: always mounted so it can ring from any screen */}
+      <SmartAlarm
+        lang={lang}
+        t={t}
+        schedule={schedule}
+        settingsOpen={showAlarmSettings}
+        onCloseSettings={() => setShowAlarmSettings(false)}
       />
 
       {/* Public Goals & Challenges Modal */}
