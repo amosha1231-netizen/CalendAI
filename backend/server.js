@@ -249,7 +249,8 @@ app.use('/api/', (req, res, next) => {
 app.use('/api/', (req, res, next) => {
   // Skip Shabbat check for these whitelisted paths
   const whitelistedPaths = ['/api/health', '/api/shabbat/status'];
-  if (whitelistedPaths.includes(req.path)) {
+  // Inside app.use('/api/') req.path has the mount stripped ('/health'), so compare the full path.
+  if (whitelistedPaths.includes(req.baseUrl + req.path)) {
     return next();
   }
 
