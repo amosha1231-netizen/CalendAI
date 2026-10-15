@@ -251,7 +251,14 @@ export default function ProviderProfileEditor({ lang, user, onClose }) {
               </div>
               <div className="space-y-2">
                 {services.map((s, i) => (
-                  <div key={i} className="flex gap-2 items-center bg-gray-50 dark:bg-gray-700/50 p-2 rounded-lg">
+                  <div key={i} className={`flex gap-2 items-center bg-gray-50 dark:bg-gray-700/50 p-2 rounded-lg ${s.active === false ? "opacity-50" : ""}`}>
+                    <input
+                      type="checkbox"
+                      checked={s.active !== false}
+                      onChange={(e) => updateService(i, "active", e.target.checked)}
+                      title={lang === "he" ? "שירות פעיל (זמין להזמנה)" : "Active (bookable)"}
+                      className="w-4 h-4 accent-indigo-600 shrink-0"
+                    />
                     <input
                       type="text"
                       value={s.name}
