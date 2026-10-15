@@ -175,8 +175,12 @@ const translations = {
     // Footer
     footerVersion: 'גרסה מעודכנת:',
     footerLocal: 'מקומית',
-    footerPrivacy: 'Privacy Policy',
-    footerTerms: 'Terms of Service',
+    footerPrivacy: 'מדיניות פרטיות',
+    footerTerms: 'תנאי שימוש',
+    guestTimezoneNote: 'השעות מוצגות לפי אזור הזמן שלך',
+    deleteEvent: 'מחיקת אירוע',
+    viewPrevious: 'הקודם',
+    viewNext: 'הבא',
 
     // Toast notifications
     toastReminder: 'תזכורת:',
@@ -768,6 +772,10 @@ const translations = {
     footerLocal: 'Local',
     footerPrivacy: 'Privacy Policy',
     footerTerms: 'Terms of Service',
+    guestTimezoneNote: 'Times are shown in your time zone',
+    deleteEvent: 'Delete event',
+    viewPrevious: 'Previous',
+    viewNext: 'Next',
 
     // Toast notifications
     toastReminder: 'Reminder:',
@@ -1357,6 +1365,10 @@ const translations = {
     footerLocal: 'Locale',
     footerPrivacy: 'Politique de confidentialité',
     footerTerms: 'Conditions d\'utilisation',
+    guestTimezoneNote: 'Les horaires sont affichés dans votre fuseau horaire',
+    deleteEvent: "Supprimer l'événement",
+    viewPrevious: 'Précédent',
+    viewNext: 'Suivant',
 
     // Toast notifications
     toastReminder: 'Rappel :',
@@ -1946,6 +1958,10 @@ const translations = {
     footerLocal: 'Local',
     footerPrivacy: 'Política de privacidad',
     footerTerms: 'Términos de servicio',
+    guestTimezoneNote: 'Los horarios se muestran en tu zona horaria',
+    deleteEvent: 'Eliminar evento',
+    viewPrevious: 'Anterior',
+    viewNext: 'Siguiente',
 
     // Toast notifications
     toastReminder: 'Recordatorio:',

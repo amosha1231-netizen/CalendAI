@@ -25,6 +25,7 @@ const bookingSchema = new mongoose.Schema({
   endTime: String,
   guestTimezone: String,
   locationId: { type: String, default: 'jerusalem' },
+  hostTimezone: String,
   slots: { type: [bookingSlotSchema], default: [] },
   status: { type: String, enum: ['active', 'processing', 'completed'], default: 'active', index: true },
   confirmedBy: String,

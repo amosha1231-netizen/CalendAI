@@ -7,10 +7,12 @@
  * identify the user there: the backend falls back to the shared 'anonymous'
  * schedule. Many call sites only send the cookie, so this wraps window.fetch
  * once and adds the stored JWT as a Bearer token to every request aimed at
- * our own API. Requests to any other host are left untouched, so the token
- * never leaks to third parties.
+ * our own API, together with the user's time zone / location headers.
+ * Requests to any other host are left untouched, so neither leaks to third
+ * parties.
  */
 import safeStorage from './safeStorage';
+import { getLocationHeaders } from './userLocation';
 
 const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '');
 
@@ -48,12 +50,14 @@ export function installAuthFetch() {
         const url = isRequest ? input.url : String(input);
         if (!isOwnApiUrl(url)) return originalFetch(input, init);
 
-        const token = getToken();
-        if (!token) return originalFetch(input, init);
-
         const headers = new Headers((init && init.headers) || (isRequest ? input.headers : undefined));
-        if (headers.has('Authorization')) return originalFetch(input, init);
-        headers.set('Authorization', `Bearer ${token}`);
+        // Where the user is, so the server uses their "today" and Shabbat times.
+        const locationHeaders = getLocationHeaders();
+        Object.keys(locationHeaders).forEach(name => {
+          if (!headers.has(name)) headers.set(name, locationHeaders[name]);
+        });
+        const token = getToken();
+        if (token && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`);
 
         return originalFetch(input, { ...(init || {}), headers });
       } catch (e) {

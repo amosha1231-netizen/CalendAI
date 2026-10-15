@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { formatClock, formatTimeString } from "../utils/timeFormat";
 import { 
   Clock, Moon, Bell, BellRing, MapPin, Edit3, Trash2, 
   ChevronLeft, ChevronRight, Sun
@@ -81,11 +82,7 @@ export default function DayView({
   const events = getEventsForDay();
   const sortedEvents = [...events].sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
 
-  const formatHour = (hour) => {
-    const h12 = hour % 12 || 12;
-    const ampm = hour >= 12 ? 'PM' : 'AM';
-    return `${String(h12).padStart(2, '0')}:00 ${ampm}`;
-  };
+  const formatHour = (hour) => formatClock(hour, 0, lang);
 
   const monthNames = t.monthNames || ['January','February','March','April','May','June','July','August','September','October','November','December'];
   const dayNames = [t.daySunday, t.dayMonday, t.dayTuesday, t.dayWednesday, t.dayThursday, t.dayFriday, t.daySaturday];
@@ -161,7 +158,7 @@ export default function DayView({
                 {formatHour(hour)}
               </div>
               {/* Content */}
-              <div className="flex-1 min-h-[40px] py-1">
+              <div className="flex-1 min-w-0 min-h-[40px] py-1">
                 {hasEvents ? (
                   <div className="space-y-1">
                     {hourEvents.map((event, idx) => {
@@ -174,7 +171,8 @@ export default function DayView({
                         >
                           <button
                             onClick={e => { e.stopPropagation(); if (actualIndex >= 0) onRemoveEvent && onRemoveEvent(event._dayKey || dayKey, actualIndex); }}
-                            className="absolute -top-1.5 -right-1.5 opacity-0 group-hover:opacity-100 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center transition shadow-sm z-10"
+                            aria-label={t.deleteEvent || (isRTL ? 'מחק אירוע' : 'Delete event')}
+                            className="absolute -top-2 -end-2 md:opacity-0 md:group-hover:opacity-100 focus:opacity-100 bg-red-500 text-white rounded-full w-7 h-7 md:w-5 md:h-5 flex items-center justify-center transition shadow-sm z-10"
                           >
                             <Trash2 className="w-3 h-3" />
                           </button>
@@ -182,11 +180,11 @@ export default function DayView({
                             {event.isSleep && <Moon className="w-3.5 h-3.5 text-indigo-500 shrink-0" />}
                             {event.reminderMinutesBefore > 0 && <Bell className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
                             <span className="truncate">{event.title}</span>
-                            <Edit3 className="w-3 h-3 text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity mr-auto shrink-0" />
+                            <Edit3 className="w-3 h-3 text-slate-300 md:opacity-0 md:group-hover:opacity-100 transition-opacity ms-auto shrink-0" />
                           </div>
                           <div className="flex items-center gap-1 text-xs text-slate-500">
                             <Clock className="w-3 h-3 text-slate-400 shrink-0" />
-                            <span dir="ltr">{event.startTime} - {event.endTime}</span>
+                            <span dir="ltr">{formatTimeString(event.startTime, lang)} - {formatTimeString(event.endTime, lang)}</span>
                             {event.isSleep && <span className="text-[10px] text-indigo-500 mr-1">{t.sleepLabel}</span>}
                           </div>
                           {event.reminderMinutesBefore > 0 && (
