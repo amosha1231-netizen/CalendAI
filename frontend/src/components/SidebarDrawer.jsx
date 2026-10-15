@@ -582,9 +582,16 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangC
                       setUpgradeLoading(true);
                       setUpgradeError("");
                       try {
+                        let authToken = null;
+                        try {
+                          authToken = safeStorage.getItem('token') || safeStorage.getItem('calendai-jwt');
+                        } catch (e) {}
                         const res = await fetch('/api/payments/create-checkout', {
                           method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
+                          headers: {
+                            'Content-Type': 'application/json',
+                            ...(authToken ? { Authorization: `Bearer ${authToken}` } : {})
+                          },
                           credentials: 'include'
                         });
                         // Handle empty or non-JSON responses safely
