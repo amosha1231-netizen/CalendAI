@@ -24,13 +24,13 @@ export function roundCredits(n) {
 }
 
 /**
- * Display string for a credit balance: at most 2 decimals, no trailing zeros
- * (15 → "15", 14.5 → "14.5", 14.999999 → "15").
+ * Display string for a credit balance, always with 2 decimals
+ * (15 → "15.00", 14.5 → "14.50", 14.999999 → "15.00").
  */
 export function formatCredits(credits) {
   const n = normalizeCredits(credits);
   if (typeof n !== 'number' || !Number.isFinite(n)) return '';
-  return String(roundCredits(n));
+  return roundCredits(n).toFixed(2);
 }
 
 /**
