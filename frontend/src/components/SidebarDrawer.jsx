@@ -124,7 +124,7 @@ function isStandalone() {
   return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
 }
 
-export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangChange, t, user, isPro, onUpgradeToPro, onLogout, onOpenShareModal, selectedLocation, onLocationChange, selectedTimezone, onTimezoneChange, timezoneOptions, onOpenHistory }) {
+export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangChange, t, user, isPro, onUpgradeToPro, onLogout, onOpenShareModal, selectedLocation, onLocationChange, selectedTimezone, onTimezoneChange, timezoneOptions, onOpenHistory, onOpenAlarm }) {
   const [activeTab, setActiveTab] = useState('settings');
   const [settingsData, setSettingsData] = useState({
     lang: lang,
@@ -388,6 +388,17 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangC
             <Clock className="w-5 h-5" />
             <span>{lang === 'he' ? '📜 היסטוריית פעולות ובקשות' : '📜 Action & Request History'}</span>
           </button>
+          {onOpenAlarm && (
+            <button
+              onClick={() => {
+                onClose();
+                onOpenAlarm();
+              }}
+              className="w-full mt-2 flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200 transition"
+            >
+              <span>{t.alarmMenuButton || '⏰ Smart alarm'}</span>
+            </button>
+          )}
         </div>
 
         {/* Content Area */}
