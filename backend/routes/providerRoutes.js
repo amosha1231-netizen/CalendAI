@@ -10,6 +10,7 @@
 const express = require('express');
 const router = express.Router();
 const mongoose = require('mongoose');
+const rateLimit = require('express-rate-limit');
 const User = require('../models/User');
 const ProviderBooking = require('../models/ProviderBooking');
 const { createOAuth2ClientWithRefresh } = require('../services/googleCalendar');
@@ -22,6 +23,19 @@ const VALID_DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Fri
 const MAX_SERVICES = 20;
 const MAX_AVAILABILITY_ROWS = 50;
 const DEFAULT_LOCATION_ID = 'jerusalem';
+
+// POST /:id/book is reachable by anonymous guests (no auth required) and
+// writes a DB row + optionally a Google Calendar event per call — without a
+// limiter it's an open door for booking-spam or for sweeping a provider's
+// whole day via repeated 409 probes. Not AI-metered, so server.js's
+// aiLimiter doesn't cover it.
+const bookLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'יותר מדי ניסיונות הזמנה. נסה שוב בעוד דקה.' }
+});
 
 function currentMinuteOfDay(timeZone) {
   const parts = new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date());
@@ -438,7 +452,7 @@ router.get('/:id/availability', async (req, res) => {
 // POST /api/providers/:id/book
 // Body: { serviceId, date, startTime, guestName, guestEmail, guestPhone, guestNotes }
 // ──────────────────────────────────────────────
-router.post('/:id/book', async (req, res) => {
+router.post('/:id/book', bookLimiter, async (req, res) => {
   let createdBooking = null;
   let pushedScheduleEvent = false;
   let syncedEventId = null;

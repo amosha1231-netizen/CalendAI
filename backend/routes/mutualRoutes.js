@@ -11,6 +11,7 @@ const router = express.Router();
 const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
 const crypto = require('crypto');
+const rateLimit = require('express-rate-limit');
 const { google } = require('googleapis');
 
 const JWT_SECRET = require('../config/jwtSecret');
@@ -21,6 +22,19 @@ const { getMutualFreeSlots, isSlotMutuallyFree, getLocationTimeZone, todayIsoInT
 
 const DEFAULT_LOCATION_ID = 'jerusalem';
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+// `/lookup` resolves an arbitrary email to "found" + "has Google Calendar
+// connected" — without a limiter, it's an open account-enumeration oracle
+// for anyone signed in. `/sessions` creates a DB row and emails-by-proxy an
+// invitee's lookup on every call. Neither route is AI-metered, so the
+// server.js aiLimiter doesn't cover them.
+const mutualAbuseLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests. Please try again in a minute.' }
+});
 
 // ── Auth helper (same JWT/session extraction convention as the other route files) ──
 function getAuthenticatedUserId(req) {
@@ -146,7 +160,7 @@ async function pushToSchedule(userDoc, dayName, eventObj) {
 // Resolves whether `email` belongs to a Google-connected CalendAI user,
 // without ever exposing tokens or other account details.
 // ──────────────────────────────────────────────
-router.get('/lookup', requireAuth, async (req, res) => {
+router.get('/lookup', mutualAbuseLimiter, requireAuth, async (req, res) => {
   try {
     const email = String(req.query.email || '').trim().toLowerCase();
     if (!email) return res.status(400).json({ error: 'email is required.' });
@@ -166,7 +180,7 @@ router.get('/lookup', requireAuth, async (req, res) => {
 // an invitee resolved by email. Both sides must already have Google
 // Calendar connected.
 // ──────────────────────────────────────────────
-router.post('/sessions', requireAuth, async (req, res) => {
+router.post('/sessions', mutualAbuseLimiter, requireAuth, async (req, res) => {
   try {
     const { inviteeEmail, subject, duration, locationId } = req.body;
     const email = String(inviteeEmail || '').trim().toLowerCase();
