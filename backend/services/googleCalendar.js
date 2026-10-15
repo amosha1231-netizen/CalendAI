@@ -24,16 +24,18 @@ const GOOGLE_CALLBACK_URL = (process.env.GOOGLE_CALLBACK_URL?.trim() || `${BACKE
  * @returns {string} ISO 8601 string with offset (e.g., '2026-08-24T07:00:00+03:00')
  */
 function formatDateTimeWithTimezone(date, hours, minutes, timeZone) {
-  const dateParts = new Intl.DateTimeFormat('en-CA', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  }).formatToParts(date);
-
-  const year = dateParts.find(p => p.type === 'year').value;
-  const month = dateParts.find(p => p.type === 'month').value;
-  const day = dateParts.find(p => p.type === 'day').value;
+  // Read the calendar day off `date` using its own local getters, not via
+  // Intl.DateTimeFormat(timeZone) — every caller builds `date` from literal
+  // Y/M/D components (new Date(y, m-1, d), optionally with .setHours()) in
+  // the server's own local zone, intending it as "this calendar day", not a
+  // specific UTC instant. Re-reading it through an unrelated target
+  // `timeZone` (e.g. a UTC server + an America/* location) rolls the day
+  // backward whenever that zone is far enough behind UTC that local
+  // midnight falls on the previous UTC day — silently booking the Google
+  // Calendar event one day earlier than the date the user actually picked.
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
 
   const hh = String(hours).padStart(2, '0');
   const mm = String(minutes).padStart(2, '0');
@@ -42,8 +44,13 @@ function formatDateTimeWithTimezone(date, hours, minutes, timeZone) {
     timeZone,
     timeZoneName: 'longOffset'
   }).format(date);
+  // A zero UTC offset renders as the bare string "GMT" (no "+00:00" suffix),
+  // so the offset regex below doesn't match it — without this case, a
+  // UTC+0 location (e.g. London in winter) would silently fall through to
+  // the '+03:00' last-resort default and every event would be booked 3
+  // hours off from the time the user actually picked.
   const offsetMatch = formatted.match(/GMT([+-]\d{2}:\d{2})/);
-  const offset = offsetMatch ? offsetMatch[1] : '+03:00';
+  const offset = offsetMatch ? offsetMatch[1] : (formatted.includes('GMT') ? '+00:00' : '+03:00');
 
   return `${year}-${month}-${day}T${hh}:${mm}:00${offset}`;
 }
