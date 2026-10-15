@@ -249,7 +249,8 @@ app.use('/api/', (req, res, next) => {
 app.use('/api/', (req, res, next) => {
   // Skip Shabbat check for these whitelisted paths
   const whitelistedPaths = ['/api/health', '/api/shabbat/status'];
-  if (whitelistedPaths.includes(req.path)) {
+  // Inside app.use('/api/') req.path has the mount stripped ('/health'), so compare the full path.
+  if (whitelistedPaths.includes(req.baseUrl + req.path)) {
     return next();
   }
 
@@ -475,6 +476,10 @@ const { classifyRequest } = require('./services/semanticRouter');
 // ── Public Goals & Challenges Routes ──
 const goalRoutes = require('./routes/goalRoutes');
 const routineRoutes = require('./routes/routineRoutes');
+const reminderRoutes = require('./routes/reminderRoutes');
+const { createReminders } = reminderRoutes;
+const { reminderSpecsFromEvents } = require('./services/reminderSchedule');
+const { createDispatcher } = require('./services/reminderDispatcher');
 
 // Expose schedule helper functions for goal routes to auto-add challenge events to user schedules
 app.set('getUserSchedule', getUserSchedule);
@@ -2041,6 +2046,20 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
 
     const { events: parsedEvents, replyMessage } = parsedResult;
 
+    // ── REMINDERS: "remind me every day at 8 to take a pill" becomes a Reminder
+    // that pings the user (see routes/reminderRoutes), not a calendar block.
+    // Guests have nowhere to receive pings, so they keep the calendar event.
+    let eventsToSchedule = Array.isArray(parsedEvents) ? parsedEvents : [];
+    let createdReminders = [];
+    if (mongoose.Types.ObjectId.isValid(userId)) {
+      const timeZone = getCurrentRequestTimeZone();
+      const { reminders: reminderSpecs, remainingEvents } = reminderSpecsFromEvents(eventsToSchedule, { timeZone, todayName });
+      if (reminderSpecs.length) {
+        createdReminders = await createReminders(userId, reminderSpecs, { timeZone, source: 'ai', sourceText: text });
+        if (createdReminders.length) eventsToSchedule = remainingEvents;
+      }
+    }
+
     const locationId = location || DEFAULT_LOCATION_ID;
     const locData = resolveUserLocation(locationId);
     const locationOptions = locData ? {
@@ -2052,7 +2071,7 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
     const conflictWarnings = [];
     const shabbatFilteredEvents = [];
 
-    for (const event of parsedEvents) {
+    for (const event of eventsToSchedule) {
       let day = event.day || todayName;
       if (day === 'Today') {
         day = todayName;
@@ -2156,7 +2175,8 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
 
     res.json({ 
       events: addedEvents,
-      replyMessage: replyMessage || `נוספו ${addedEvents.length} אירועים.`,
+      reminders: createdReminders.length ? createdReminders : undefined,
+      replyMessage: replyMessage || (createdReminders.length ? `נוספו ${createdReminders.length} תזכורות.` : `נוספו ${addedEvents.length} אירועים.`),
       totalEvents: Object.values(schedule).reduce((sum, arr) => sum + arr.length, 0),
       conflicts: conflictWarnings.length > 0 ? conflictWarnings : undefined,
       aiCredits: remainingCredits,
@@ -4304,6 +4324,7 @@ app.use('/api/action-history', actionHistoryRoutes);
 // ── Public Goals & Challenges Routes ──
 app.use('/api/goals', goalRoutes);
 app.use('/api/routines', routineRoutes);
+app.use('/api/reminders', reminderRoutes);
 
 // ── Daily Log / Personal Journal Routes ──
 const dailyLogRoutes = require('./routes/dailyLogRoutes');
@@ -4413,6 +4434,13 @@ app.get('*', (req, res) => {
 mongoReady
   .then(() => {
     console.log('MongoDB connected');
+    // Reminder pings: checks every 30s for reminders that are due (services/reminderDispatcher).
+    createDispatcher({
+      Reminder: require('./models/Reminder'),
+      PushSubscription: require('./models/PushSubscription'),
+      push: require('./services/webPush'),
+      isShabbatAt: reminderRoutes.isShabbatAt
+    }).start(30000, () => mongoose.connection.readyState === 1);
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`Backend running at http://localhost:${PORT}`);
     });
