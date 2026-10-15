@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { X, BarChart3, Zap, Settings, Download, Moon, Sun, Target, Clock, Trophy, Activity, Share2, MapPin, Loader2, ExternalLink, CheckCircle, Mic, Globe } from 'lucide-react';
 import safeStorage from '../utils/safeStorage';
+import { getDeviceTimeZone, setDetectedLocation, presetLocationForTimeZone } from '../utils/userLocation';
 import SiriSetupModal from './SiriSetupModal';
-import { openCheckout, notifyCreditsPurchased } from '../utils/lemonCheckout';
+import { openCheckout, readCheckoutResponse, notifyCreditsPurchased } from '../utils/lemonCheckout';
 
 const CATEGORY_KEYWORDS = {
   sport: ['אימון', 'ריצה', 'שחייה', 'הליכה', 'ספורט', 'חדר כושר', 'יוגה', 'פילאטיס', 'רכיבה', 'טיפוס', 'workout', 'run', 'swim', 'walk', 'sport', 'gym', 'yoga', 'pilates', 'bike', 'climb'],
@@ -168,49 +169,30 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangC
       });
       const { latitude, longitude } = position.coords;
       
-      // Use reverse geocoding via OpenStreetMap Nominatim API
-      const geoRes = await fetch(
-        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&accept-language=he`,
-        { headers: { 'User-Agent': 'CalendAI/1.0' } }
-      );
-      if (!geoRes.ok) throw new Error('Geocoding failed');
-      const geoData = await geoRes.json();
-      const city = geoData.address?.city || geoData.address?.town || geoData.address?.village || geoData.address?.county || 'Unknown';
-      const detectedTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      
-      setDetectedCity(city);
-      
-      // Update the location in localStorage
+      // The device's time zone is the reliable signal; the city name is only for display.
+      const detectedTimezone = getDeviceTimeZone();
+      let city = '';
       try {
-        safeStorage.setItem('calendai-detected-location', JSON.stringify({
-          city,
-          timezone: detectedTimezone,
-          lat: latitude,
-          lng: longitude,
-          timestamp: Date.now()
-        }));
-      } catch (e) {}
-      
-      // If we have a city name, try to match it to a known location
-      const cityLower = city.toLowerCase();
-      let matchedLocation = 'none';
-      if (cityLower.includes('jerusalem') || cityLower.includes('ירושלים')) matchedLocation = 'jerusalem';
-      else if (cityLower.includes('new york') || cityLower.includes('nyc') || cityLower.includes('manhattan')) matchedLocation = 'newyork';
-      else if (cityLower.includes('london') || cityLower.includes('לונדון')) matchedLocation = 'london';
-      else if (cityLower.includes('los angeles') || cityLower.includes('la ')) matchedLocation = 'losangeles';
-      
-      if (matchedLocation !== 'none' && onLocationChange) {
-        onLocationChange(matchedLocation);
-      }
-      
-      // Auto-detect timezone
-      if (detectedTimezone && onTimezoneChange) {
-        const tzMatch = timezoneOptions?.find(tz => tz.value === detectedTimezone);
-        if (tzMatch) {
-          onTimezoneChange(detectedTimezone);
+        // Reverse geocoding via OpenStreetMap Nominatim (display only; failures are fine)
+        const geoRes = await fetch(
+          `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&accept-language=${lang === 'he' ? 'he' : 'en'}`
+        );
+        if (geoRes.ok) {
+          const geoData = await geoRes.json();
+          city = geoData.address?.city || geoData.address?.town || geoData.address?.village || geoData.address?.county || '';
         }
-      }
-      
+      } catch (e) {}
+
+      setDetectedCity(city || detectedTimezone.split('/').pop().replace(/_/g, ' '));
+
+      // Coordinates are kept for exact Shabbat times at this spot.
+      setDetectedLocation({ city, timezone: detectedTimezone, lat: latitude, lng: longitude });
+
+      if (onTimezoneChange) onTimezoneChange(detectedTimezone);
+      // Match a preset city by time zone (Tel Aviv → Jerusalem preset, Brooklyn → New York…)
+      const matchedLocation = presetLocationForTimeZone(detectedTimezone);
+      if (onLocationChange) onLocationChange(matchedLocation || 'none');
+
       // Show success via settingsSaved styled message
       setDetectLoading(false);
     } catch (err) {
@@ -511,21 +493,20 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangC
                       setUpgradeLoading(true);
                       setUpgradeError("");
                       try {
-                        const res = await fetch('/api/payments/create-checkout', {
+                        let token = null;
+                        try { token = safeStorage.getItem('token') || safeStorage.getItem('calendai-jwt'); } catch (e) {}
+                        // The checkout route authenticates with the JWT only, so the header is required.
+                        const res = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/payments/create-checkout`, {
                           method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
+                          headers: {
+                            'Content-Type': 'application/json',
+                            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+                          },
+                          body: JSON.stringify({ lang }),
                           credentials: 'include'
                         });
-                        // Handle empty or non-JSON responses safely
-                        let data;
-                        const text = await res.text();
-                        try {
-                          data = JSON.parse(text);
-                        } catch (parseErr) {
-                          console.error('Upgrade response was not valid JSON:', text);
-                          throw new Error(lang === 'he' ? 'תשובה לא תקינה מהשרת. נסה שוב מאוחר יותר.' : 'Invalid response from server. Please try again later.');
-                        }
-                        if (!res.ok) throw new Error(data.error || 'Failed to create checkout session');
+                        const data = await readCheckoutResponse(res, lang);
+                        if (!res.ok) throw new Error(data.error || (lang === 'he' ? 'שגיאה ביצירת דף התשלום.' : 'Failed to create checkout session.'));
                         if (data.url) {
                           await openCheckout(data.url, { onSuccess: notifyCreditsPurchased });
                         } else {

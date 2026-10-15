@@ -34,6 +34,7 @@ const path = require('path');
 const rateLimit = require('express-rate-limit');
 const crypto = require('crypto'); // For Lemon Squeezy webhook HMAC signature verification
 const multer = require('multer');
+const { getRequestLocation, getRequestTimeZone, isValidTimeZone } = require('./services/userLocation');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }); // 10MB max
 
 dotenv.config({ path: path.join(__dirname, '.env') });
@@ -242,14 +243,20 @@ const aiLimiter = rateLimit({
 // except for: /api/health, /api/shabbat/status, and static files.
 // ──────────────────────────────────────────────
 app.use('/api/', (req, res, next) => {
+  requestTimeZone.run(getRequestTimeZone(req), next);
+});
+
+app.use('/api/', (req, res, next) => {
   // Skip Shabbat check for these whitelisted paths
   const whitelistedPaths = ['/api/health', '/api/shabbat/status'];
-  if (whitelistedPaths.includes(req.path)) {
+  // Inside app.use('/api/') req.path has the mount stripped ('/health'), so compare the full path.
+  if (whitelistedPaths.includes(req.baseUrl + req.path)) {
     return next();
   }
 
-  // Check if currently Shabbat
-  const shabbatStatus = shabbatService.isShabbatNow();
+  // Check if it is currently Shabbat where the requesting user is
+  // (their time zone / GPS, sent by the app; Jerusalem when unknown).
+  const shabbatStatus = shabbatService.isShabbatNow(getRequestLocation(req));
   if (shabbatStatus) {
     return res.status(503).json({
       isShabbat: true,
@@ -382,6 +389,31 @@ try {
   LOCATIONS = [];
 }
 
+/**
+ * Resolve a location for scheduling: the preset (working hours etc.) for
+ * `locationId`, with the time zone replaced by the user's own when it is a
+ * valid IANA zone. Users outside the four preset cities get Jerusalem's
+ * working hours in their own time zone.
+ */
+function resolveLocation(locationId, timeZone) {
+  const base = LOCATIONS.find(loc => loc.id === locationId)
+    || LOCATIONS.find(loc => loc.id === DEFAULT_LOCATION_ID)
+    || { id: DEFAULT_LOCATION_ID, timezone: 'Asia/Jerusalem', defaultDayStart: '06:00', defaultDayEnd: '23:00' };
+  return { ...base, timezone: isValidTimeZone(timeZone) ? timeZone : base.timezone };
+}
+
+// The requesting user's time zone for the duration of a request, so helpers
+// like getTodayDayName() use the user's "today" without threading it through.
+const { AsyncLocalStorage } = require('async_hooks');
+const requestTimeZone = new AsyncLocalStorage();
+function getCurrentRequestTimeZone() {
+  return requestTimeZone.getStore() || 'Asia/Jerusalem';
+}
+// A location preset resolved with the requesting user's time zone (when the app sent one).
+function resolveUserLocation(locationId) {
+  return resolveLocation(locationId || DEFAULT_LOCATION_ID, requestTimeZone.getStore());
+}
+
 // ──────────────────────────────────────────────
 // 4. Persistent schedule storage per user (file-backed for anonymous, MongoDB for logged-in)
 // ──────────────────────────────────────────────
@@ -443,6 +475,11 @@ const { classifyRequest } = require('./services/semanticRouter');
 
 // ── Public Goals & Challenges Routes ──
 const goalRoutes = require('./routes/goalRoutes');
+const routineRoutes = require('./routes/routineRoutes');
+const reminderRoutes = require('./routes/reminderRoutes');
+const { createReminders } = reminderRoutes;
+const { reminderSpecsFromEvents } = require('./services/reminderSchedule');
+const { createDispatcher } = require('./services/reminderDispatcher');
 
 // Expose schedule helper functions for goal routes to auto-add challenge events to user schedules
 app.set('getUserSchedule', getUserSchedule);
@@ -552,7 +589,14 @@ async function deductAICredit(userId, usage = null, modelName = 'deepseek/deepse
       error.status = existing ? 402 : 401;
       throw error;
     }
-    const remaining = updated.aiCredits;
+    // Fractional $inc leaves floating-point noise (14.999999999999998); store and return 2 decimals.
+    // Conditioned on the value just read, so a concurrent deduction is never overwritten.
+    let remaining = updated.aiCredits;
+    const rounded = Math.round(remaining * 100) / 100;
+    if (rounded !== remaining) {
+      await User.updateOne({ _id: userId, aiCredits: remaining }, { $set: { aiCredits: rounded } });
+      remaining = rounded;
+    }
     console.log(`[PAYG] Credits deducted: ${costInfo.costCredits} | Remaining: ${remaining}`);
     return { remainingCredits: remaining, costInfo };
   } catch (err) {
@@ -845,9 +889,19 @@ function minutesToTime(totalMinutes) {
   return `${String(displayH).padStart(2, '0')}:${String(m).padStart(2, '0')} ${ampm}`;
 }
 
+// "Now" in the requesting user's time zone (see requestTimeZone below). The
+// server itself runs in UTC, so Date#getHours/getDay would be wrong for users.
+function getUserNowParts(timeZone = getCurrentRequestTimeZone()) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone, weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+  }).formatToParts(new Date());
+  const get = type => parts.find(p => p.type === type)?.value;
+  const dayIndex = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }[get('weekday')];
+  return { dayIndex: dayIndex ?? new Date().getDay(), minutes: (parseInt(get('hour'), 10) || 0) * 60 + (parseInt(get('minute'), 10) || 0) };
+}
+
 function getCurrentMinutes() {
-  const now = new Date();
-  return now.getHours() * 60 + now.getMinutes();
+  return getUserNowParts().minutes;
 }
 
 function findGapsInSchedule(schedule) {
@@ -1679,7 +1733,7 @@ function detectConflicts(newEvent, existingEvents, options = {}) {
 
 function getTodayDayName() {
   const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  return dayNames[new Date().getDay()];
+  return dayNames[getUserNowParts().dayIndex];
 }
 
 function syncTodayWithCurrentDay(schedule) {
@@ -1694,7 +1748,7 @@ function syncTodayWithCurrentDay(schedule) {
 
 function findFreeSlotsForDay(schedule, dayName, locationId, dayEventsOverride = null, dateISO = null) {
   const dayEvents = dayEventsOverride || schedule[dayName] || [];
-  const locData = LOCATIONS.find(loc => loc.id === (locationId || DEFAULT_LOCATION_ID));
+  const locData = resolveUserLocation(locationId);
   const dayStart = locData ? parseTimeToMinutes24(locData.defaultDayStart) : 6 * 60;
   const dayEnd = locData ? parseTimeToMinutes24(locData.defaultDayEnd) : 23 * 60;
   
@@ -1776,7 +1830,7 @@ app.get('/api/schedule/free-slots', async (req, res) => {
       try {
         const user = await User.findById(userId);
         if (user?.googleAccessToken) {
-          const location = LOCATIONS.find(loc => loc.id === locationId) || LOCATIONS.find(loc => loc.id === DEFAULT_LOCATION_ID);
+          const location = resolveUserLocation(locationId);
           const timeZone = location?.timezone || 'Asia/Jerusalem';
           const zonedMidnight = isoDate => {
             const [year, month, datePart] = isoDate.split('-').map(Number);
@@ -1999,8 +2053,22 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
 
     const { events: parsedEvents, replyMessage } = parsedResult;
 
+    // ── REMINDERS: "remind me every day at 8 to take a pill" becomes a Reminder
+    // that pings the user (see routes/reminderRoutes), not a calendar block.
+    // Guests have nowhere to receive pings, so they keep the calendar event.
+    let eventsToSchedule = Array.isArray(parsedEvents) ? parsedEvents : [];
+    let createdReminders = [];
+    if (mongoose.Types.ObjectId.isValid(userId)) {
+      const timeZone = getCurrentRequestTimeZone();
+      const { reminders: reminderSpecs, remainingEvents } = reminderSpecsFromEvents(eventsToSchedule, { timeZone, todayName });
+      if (reminderSpecs.length) {
+        createdReminders = await createReminders(userId, reminderSpecs, { timeZone, source: 'ai', sourceText: text });
+        if (createdReminders.length) eventsToSchedule = remainingEvents;
+      }
+    }
+
     const locationId = location || DEFAULT_LOCATION_ID;
-    const locData = LOCATIONS.find(loc => loc.id === locationId);
+    const locData = resolveUserLocation(locationId);
     const locationOptions = locData ? {
       dayStart: locData.defaultDayStart,
       dayEnd: locData.defaultDayEnd
@@ -2010,7 +2078,7 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
     const conflictWarnings = [];
     const shabbatFilteredEvents = [];
 
-    for (const event of parsedEvents) {
+    for (const event of eventsToSchedule) {
       let day = event.day || todayName;
       if (day === 'Today') {
         day = todayName;
@@ -2114,7 +2182,8 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
 
     res.json({ 
       events: addedEvents,
-      replyMessage: replyMessage || `נוספו ${addedEvents.length} אירועים.`,
+      reminders: createdReminders.length ? createdReminders : undefined,
+      replyMessage: replyMessage || (createdReminders.length ? `נוספו ${createdReminders.length} תזכורות.` : `נוספו ${addedEvents.length} אירועים.`),
       totalEvents: Object.values(schedule).reduce((sum, arr) => sum + arr.length, 0),
       conflicts: conflictWarnings.length > 0 ? conflictWarnings : undefined,
       aiCredits: remainingCredits,
@@ -2734,7 +2803,9 @@ async function createOAuth2ClientWithRefresh(user) {
   return oauth2Client;
 }
 
-async function syncEventToGoogleCalendar(userId, event, locationId) {
+// timeZoneOverride: the calendar owner's zone when the request comes from
+// someone else (a guest confirming a booking); otherwise the requester's zone.
+async function syncEventToGoogleCalendar(userId, event, locationId, timeZoneOverride = null) {
   // Only sync for logged-in users with valid ObjectId
   if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
     return { success: false, error: 'Not a logged-in user', eventId: null };
@@ -2745,9 +2816,9 @@ async function syncEventToGoogleCalendar(userId, event, locationId) {
       return { success: false, error: 'No Google token stored', eventId: null };
     }
 
-    const locId = locationId || DEFAULT_LOCATION_ID;
-    const locData = LOCATIONS.find(loc => loc.id === locId);
-    const timeZone = locData ? locData.timezone : 'Asia/Jerusalem';
+    const timeZone = isValidTimeZone(timeZoneOverride)
+      ? timeZoneOverride
+      : resolveUserLocation(locationId).timezone;
 
     // Create OAuth2 client with auto-refresh capability
     const oauth2Client = await createOAuth2ClientWithRefresh(user);
@@ -2896,8 +2967,8 @@ app.post('/api/add-to-google-calendar', async (req, res) => {
   }
 
   const locationId = location || DEFAULT_LOCATION_ID;
-  const locData = LOCATIONS.find(loc => loc.id === locationId);
-  const timeZone = locData ? locData.timezone : 'Asia/Jerusalem';
+  const locData = resolveUserLocation(locationId);
+  const timeZone = locData.timezone;
 
   // Look up the full user from MongoDB to get refresh_token for auto-refresh
   let user = null;
@@ -3606,6 +3677,8 @@ app.post('/api/booking/create-link', async (req, res) => {
       endTime: isLocked ? endTime : null,
       guestTimezone: guestTimezone || null,
       locationId: locationId || DEFAULT_LOCATION_ID,
+      // Slot hours are wall-clock times in the host's zone; guests convert from it.
+      hostTimezone: getRequestTimeZone(req) || resolveLocation(locationId || DEFAULT_LOCATION_ID).timezone,
       slots: isLocked 
         ? [] 
         : slots.map(s => ({ hour: s.hour, minute: s.minute, booked: false })),
@@ -3658,6 +3731,7 @@ app.get('/api/booking/:id', async (req, res) => {
         endTime: booking.isLocked ? booking.endTime : null,
         guestTimezone: booking.guestTimezone || null,
         locationId: booking.locationId || DEFAULT_LOCATION_ID,
+        hostTimezone: booking.hostTimezone || resolveLocation(booking.locationId || DEFAULT_LOCATION_ID).timezone,
         createdAt: booking.createdAt
       },
       slots: availableSlots
@@ -3758,7 +3832,7 @@ app.post('/api/booking/:id/confirm', async (req, res) => {
     };
     let googleCalendar = { success: false, reason: 'Host has no connected Google Calendar' };
     if (host.googleAccessToken) {
-      const syncResult = await syncEventToGoogleCalendar(hostId, eventToPersist, bookingData.locationId || DEFAULT_LOCATION_ID);
+      const syncResult = await syncEventToGoogleCalendar(hostId, eventToPersist, bookingData.locationId || DEFAULT_LOCATION_ID, bookingData.hostTimezone || resolveLocation(bookingData.locationId || DEFAULT_LOCATION_ID).timezone);
       if (!syncResult.success) throw Object.assign(new Error(`Google Calendar insertion failed: ${syncResult.error || 'unknown error'}`), { status: 502 });
       syncedEventId = syncResult.eventId;
       googleCalendar = { success: true, eventId: syncedEventId };
@@ -4256,6 +4330,8 @@ app.use('/api/action-history', actionHistoryRoutes);
 
 // ── Public Goals & Challenges Routes ──
 app.use('/api/goals', goalRoutes);
+app.use('/api/routines', routineRoutes);
+app.use('/api/reminders', reminderRoutes);
 
 // ── Daily Log / Personal Journal Routes ──
 const dailyLogRoutes = require('./routes/dailyLogRoutes');
@@ -4335,8 +4411,8 @@ app.get('/api/health', (_req, res) => {
 
 // ── Shabbat Status Endpoint ──
 // Returns the current Shabbat status so the frontend can display Shabbat banner.
-app.get('/api/shabbat/status', (_req, res) => {
-  res.json(shabbatService.getShabbatStatus());
+app.get('/api/shabbat/status', (req, res) => {
+  res.json(shabbatService.getShabbatStatus(getRequestLocation(req)));
 });
 
 // ──────────────────────────────────────────────
@@ -4365,6 +4441,13 @@ app.get('*', (req, res) => {
 mongoReady
   .then(() => {
     console.log('MongoDB connected');
+    // Reminder pings: checks every 30s for reminders that are due (services/reminderDispatcher).
+    createDispatcher({
+      Reminder: require('./models/Reminder'),
+      PushSubscription: require('./models/PushSubscription'),
+      push: require('./services/webPush'),
+      isShabbatAt: reminderRoutes.isShabbatAt
+    }).start(30000, () => mongoose.connection.readyState === 1);
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`Backend running at http://localhost:${PORT}`);
     });

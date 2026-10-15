@@ -1,109 +1,102 @@
 /**
- * Shabbat Helper — checks if the current time according to Israel timezone
- * falls within Shabbat.
+ * Shabbat Helper — is it Shabbat where the user is?
  *
- * Uses accurate Asia/Jerusalem timezone detection and rough sunset estimates
- * by season (summer/winter). For the most precise times, the frontend should
- * call GET /api/shabbat/status from the backend (which uses SunCalc).
+ * Computes sunset at the user's location (GPS when detected, otherwise a city
+ * in their time zone) and reads the day of week in their own time zone, so a
+ * guest in New York is blocked during Shabbat in New York.
+ * Mirrors backend/services/shabbatService.js (same SunCalc library); the
+ * server enforces the same rule.
  *
- * Shabbat start (Friday): 20 minutes before sunset
- *   - Summer (April-Sep): ~16:30 → 16:10
- *   - Winter (Oct-March): ~15:15 → 14:55
- *
- * Shabbat end (Saturday): 42 minutes after sunset (Rabbeinu Tam / Havdalah)
- *   - Summer (April-Sep): ~17:25 → 18:07
- *   - Winter (Oct-March): ~15:10 → 15:52
+ * Shabbat start (Friday):  20 minutes before local sunset
+ * Shabbat end (Saturday):  42 minutes after local sunset
+ * Where the sun does not set, sunset is taken as 18:00 local time.
  */
+import { getTimes } from 'suncalc';
+import { getUserLocation } from './userLocation';
 
-/**
- * Check if the current time in Asia/Jerusalem is within Shabbat.
- * @returns {boolean} True if currently Shabbat.
- */
-export function isShabbatNow() {
-  const now = new Date();
+const CANDLE_LIGHTING_OFFSET = -20;
+const HAVDALAH_OFFSET = 42;
+const DAY_MS = 864e5;
+const WEEKDAYS = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
 
-  // Format parts according to Asia/Jerusalem timezone
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'Asia/Jerusalem',
-    hour12: false,
-    weekday: 'short',
-    hour: 'numeric',
-    minute: 'numeric'
-  });
-
-  const parts = formatter.formatToParts(now);
-  const weekday = parts.find(p => p.type === 'weekday')?.value; // Fri, Sat, Sun...
-  const hour = parseInt(parts.find(p => p.type === 'hour')?.value || '0', 10);
-  const minute = parseInt(parts.find(p => p.type === 'minute')?.value || '0', 10);
-  const timeDecimal = hour + minute / 60;
-
-  // Determine if summer (April-September) or winter
-  const month = now.getMonth(); // 0=Jan, 11=Dec
-  const isSummer = month >= 3 && month <= 8; // April through September
-
-  // Friday starting times (candle lighting, 20 min before sunset)
-  const fridayStart = isSummer ? 16.1 : 14.9; // ~16:10 summer, ~14:55 winter
-
-  // Saturday ending times (havdalah, 42 min after sunset)
-  const saturdayEnd = isSummer ? 18.1 : 15.9; // ~18:07 summer, ~15:52 winter
-
-  // Friday: from candle-lighting onward → Shabbat
-  if (weekday === 'Fri' && timeDecimal >= fridayStart) {
-    return true;
+function computeSunset(date, lat, lng) {
+  try {
+    const { sunset } = getTimes(date, lat, lng);
+    return sunset instanceof Date && !isNaN(sunset.getTime()) ? sunset : null;
+  } catch (e) {
+    return null;
   }
+}
 
-  // Saturday: until havdalah → Shabbat
-  if (weekday === 'Sat' && timeDecimal <= saturdayEnd) {
-    return true;
-  }
+function getLocalParts(date, timeZone) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone, weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+  }).formatToParts(date);
+  const get = type => parts.find(p => p.type === type)?.value;
+  const hours = parseInt(get('hour'), 10) || 0;
+  const minutes = parseInt(get('minute'), 10) || 0;
+  return { dayOfWeek: WEEKDAYS[get('weekday')] ?? date.getDay(), hours, minutes, totalMinutes: hours * 60 + minutes };
+}
 
-  return false;
+function localNoon(date, timeZone, dayShift) {
+  const { totalMinutes } = getLocalParts(date, timeZone);
+  return new Date(date.getTime() - (totalMinutes - 720) * 60000 + dayShift * DAY_MS);
+}
+
+function sunsetNear(noon, loc) {
+  const sunset = computeSunset(noon, loc.lat, loc.lng);
+  if (sunset && Math.abs(sunset - noon) < DAY_MS / 2) return sunset;
+  return new Date(noon.getTime() + 6 * 3600000);
+}
+
+function formatLocalTime(date, timeZone) {
+  return new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(date);
 }
 
 /**
- * Get the current Shabbat status with detailed times.
- * Uses approximate seasonal times for client-side check.
- * @returns {{ isShabbat: boolean, shabbatStart: string, shabbatEnd: string, currentTime: string }}
+ * Start and end of this week's Shabbat at a location (the coming one on
+ * Sunday–Thursday, the current one on Friday and Saturday).
  */
-export function getShabbatStatus() {
-  const now = new Date();
-
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'Asia/Jerusalem',
-    hour12: false,
-    weekday: 'short',
-    hour: 'numeric',
-    minute: 'numeric'
-  });
-
-  const parts = formatter.formatToParts(now);
-  const weekday = parts.find(p => p.type === 'weekday')?.value;
-  const hour = parseInt(parts.find(p => p.type === 'hour')?.value || '0', 10);
-  const minute = parseInt(parts.find(p => p.type === 'minute')?.value || '0', 10);
-
-  const month = now.getMonth();
-  const isSummer = month >= 3 && month <= 8;
-
-  const fridayStart = isSummer ? 16.1 : 14.9;
-  const saturdayEnd = isSummer ? 18.1 : 15.9;
-
-  const fridayStartH = Math.floor(fridayStart);
-  const fridayStartM = Math.round((fridayStart - fridayStartH) * 60);
-  const saturdayEndH = Math.floor(saturdayEnd);
-  const saturdayEndM = Math.round((saturdayEnd - saturdayEndH) * 60);
-
-  let isShabbat = false;
-  if (weekday === 'Fri') {
-    isShabbat = (hour + minute / 60) >= fridayStart;
-  } else if (weekday === 'Sat') {
-    isShabbat = (hour + minute / 60) <= saturdayEnd;
-  }
-
+export function getShabbatWindow(date = new Date(), location = getUserLocation()) {
+  const { dayOfWeek } = getLocalParts(date, location.timeZone);
+  const fridayNoon = localNoon(date, location.timeZone, dayOfWeek === 6 ? -1 : 5 - dayOfWeek);
+  const saturdayNoon = new Date(fridayNoon.getTime() + DAY_MS);
   return {
-    isShabbat,
-    shabbatStart: `${String(fridayStartH).padStart(2, '0')}:${String(fridayStartM).padStart(2, '0')}`,
-    shabbatEnd: `${String(saturdayEndH).padStart(2, '0')}:${String(saturdayEndM).padStart(2, '0')}`,
-    currentTime: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`,
-    timezone: 'Asia/Jerusalem'
+    start: new Date(sunsetNear(fridayNoon, location).getTime() + CANDLE_LIGHTING_OFFSET * 60000),
+    end: new Date(sunsetNear(saturdayNoon, location).getTime() + HAVDALAH_OFFSET * 60000)
+  };
+}
+
+/** Is `date` within Shabbat at the location (default: the user's)? */
+export function isShabbatAt(date = new Date(), location) {
+  try {
+    const loc = location || getUserLocation();
+    const { start, end } = getShabbatWindow(date, loc);
+    return date >= start && date < end;
+  } catch (e) {
+    return false;
+  }
+}
+
+/** Is it Shabbat right now where the user is? */
+export function isShabbatNow(location) {
+  return isShabbatAt(new Date(), location);
+}
+
+/**
+ * Current Shabbat status with local times.
+ * @returns {{ isShabbat: boolean, shabbatStart: string, shabbatEnd: string, currentTime: string, timezone: string }}
+ */
+export function getShabbatStatus(location) {
+  const loc = location || getUserLocation();
+  const now = new Date();
+  const { start, end } = getShabbatWindow(now, loc);
+  const { hours, minutes } = getLocalParts(now, loc.timeZone);
+  return {
+    isShabbat: now >= start && now < end,
+    shabbatStart: formatLocalTime(start, loc.timeZone),
+    shabbatEnd: formatLocalTime(end, loc.timeZone),
+    currentTime: `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`,
+    timezone: loc.timeZone
   };
 }
