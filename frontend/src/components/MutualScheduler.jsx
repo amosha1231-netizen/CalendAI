@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
 import { Calendar, Clock, Loader2, X, Check, Mail, AlertCircle, Users, ArrowRight, Sparkles } from "lucide-react";
 import safeStorage from "../utils/safeStorage";
 
@@ -53,6 +53,36 @@ export default function MutualScheduler({ lang, t, onClose, onFallbackToShareLin
 
   const dayLabel = (dayKey) => (lang === 'he' ? (DAY_NAMES_HE[dayKey] || dayKey) : dayKey);
 
+  // Best-effort cleanup for a session that's being abandoned (user went back
+  // to restart with a different invitee/duration, or left without
+  // confirming) — never blocks the UI on it, and swallows any failure.
+  const cancelSession = useCallback((sid) => {
+    if (!sid) return;
+    fetch(`${API_BASE}/api/mutual/sessions/${sid}/cancel`, {
+      method: "POST",
+      headers: authHeaders(),
+      credentials: "include"
+    }).catch(() => {});
+  }, []);
+
+  // The explicit back/restart handlers below already cancel an abandoned
+  // session, but the parent can also unmount this component directly (e.g.
+  // navigating elsewhere without going through `onClose`), which would skip
+  // those and leave the session active forever. Mirror the latest
+  // sessionId/step into a ref so the unmount-only cleanup below can see them
+  // without re-running on every render.
+  const liveRef = useRef({ sessionId: null, step: 'invitee-email' });
+  useEffect(() => {
+    liveRef.current = { sessionId, step };
+  }, [sessionId, step]);
+
+  useEffect(() => {
+    return () => {
+      const { sessionId: sid, step: finalStep } = liveRef.current;
+      if (sid && finalStep !== 'success') cancelSession(sid);
+    };
+  }, [cancelSession]);
+
   const fetchAvailability = useCallback(async (sid) => {
     setAvailabilityLoading(true);
     setAvailabilityError("");
@@ -74,6 +104,10 @@ export default function MutualScheduler({ lang, t, onClose, onFallbackToShareLin
   const handleFindMutualTime = async () => {
     const email = inviteeEmail.trim().toLowerCase();
     if (!email) return;
+    // Starting over (new invitee/duration) abandons any session from a
+    // previous attempt — cancel it so it doesn't sit active forever.
+    cancelSession(sessionId);
+    setSessionId(null);
     setLookupLoading(true);
     setLookupError("");
     setNotFound(false);
@@ -109,6 +143,15 @@ export default function MutualScheduler({ lang, t, onClose, onFallbackToShareLin
     } finally {
       setLookupLoading(false);
     }
+  };
+
+  const handleBackToEmailStep = () => {
+    cancelSession(sessionId);
+    setSessionId(null);
+    setSelectedSlot(null);
+    setDays([]);
+    setAvailabilityError("");
+    setStep('invitee-email');
   };
 
   const handlePickSlot = (date, day, slot) => {
@@ -259,7 +302,7 @@ export default function MutualScheduler({ lang, t, onClose, onFallbackToShareLin
     return (
       <div className="booking-container" dir={isRTL ? 'rtl' : 'ltr'}>
         <div className="booking-header">
-          <button onClick={() => setStep('invitee-email')} className="booking-close-btn">
+          <button onClick={handleBackToEmailStep} className="booking-close-btn">
             <X className="w-5 h-5" />
           </button>
           <div className="booking-header-content">

@@ -20,6 +20,47 @@ function getLocation(locationId) {
   return LOCATIONS.find(l => l.id === locationId) || LOCATIONS.find(l => l.id === DEFAULT_LOCATION_ID) || null;
 }
 
+/** Resolve a location's IANA timezone, same lookup convention as providerRoutes.js. */
+function getLocationTimeZone(locationId) {
+  return getLocation(locationId)?.timezone || 'Asia/Jerusalem';
+}
+
+/** Today's date (YYYY-MM-DD) as observed in the given IANA timezone, not server-local/UTC. */
+function todayIsoInTimeZone(timeZone) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+}
+
+/**
+ * Strictly validate a 'YYYY-MM-DD' calendar date. A regex + Date.parse check
+ * alone isn't enough: `new Date("2026-02-30T00:00:00Z")` doesn't throw or
+ * produce NaN, it silently overflows to March 2 — so an invalid date would
+ * pass validation and then get booked/confirmed under the wrong day. The
+ * round-trip through toISOString() catches that overflow.
+ */
+function isValidIsoDate(dateStr) {
+  return typeof dateStr === 'string'
+    && /^\d{4}-\d{2}-\d{2}$/.test(dateStr)
+    && !Number.isNaN(Date.parse(`${dateStr}T00:00:00Z`))
+    && new Date(`${dateStr}T00:00:00Z`).toISOString().slice(0, 10) === dateStr;
+}
+
+/**
+ * Slice a list of [start,end) minute ranges into back-to-back duration-sized
+ * slots, dropping any remainder shorter than `duration`. Pure function shared
+ * by mutual availability (free-time gaps between two calendars) and provider
+ * availability (merged weekly-availability rows) so both offer slots on the
+ * exact same slicing rule instead of each re-implementing it.
+ */
+function sliceIntoSlots(ranges, duration) {
+  const slots = [];
+  for (const { start, end } of ranges) {
+    for (let s = start; s + duration <= end; s += duration) {
+      slots.push({ start: s, end: s + duration });
+    }
+  }
+  return slots;
+}
+
 function minutesSinceMidnight(hhmm) {
   const [h, m] = (hhmm || '00:00').split(':').map(Number);
   return h * 60 + m;
@@ -97,6 +138,25 @@ function intersectFree(busyA, busyB, windowStartMin, windowEndMin, minGapMinutes
 }
 
 /**
+ * Busy intervals (minutes-since-midnight) from a user's own local CalendAI
+ * `schedule` for one day — events there never necessarily made it to Google
+ * (e.g. /api/schedule/add-to-free-slot doesn't sync, and a provider booking
+ * only syncs if the provider has Google connected). The single-user
+ * /api/schedule/free-slots route already merges local schedule + Google
+ * events for this reason; mutual availability must do the same or it can
+ * offer/confirm a slot that's actually already taken locally.
+ */
+function getLocalScheduleBusy(user, isoDate, dayName) {
+  const dayEvents = (user?.schedule?.[dayName] || []).filter(ev => {
+    if (ev.targetDate && String(ev.targetDate).slice(0, 10) !== isoDate) return false;
+    return true;
+  });
+  return dayEvents
+    .map(ev => ({ start: parseClock12(ev.startTime), end: parseClock12(ev.endTime) }))
+    .filter(r => r.start !== null && r.end !== null && r.end > r.start);
+}
+
+/**
  * Fetch one user's busy intervals (minutes-since-midnight, in `timeZone`) for a
  * single day window via Google's freebusy.query — busy/free only, no event
  * titles pulled into our backend.
@@ -154,12 +214,33 @@ async function isSlotMutuallyFree(host, invitee, { locationId, date, startTime, 
     return { free: false, timeZone };
   }
 
+  // Reject a slot that has already started "today" in the session's own
+  // location timezone — the availability list the client saw may be stale
+  // (mirrors the same cutoff getMutualFreeSlots applies when listing slots).
+  const todayIso = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  if (date === todayIso && startMin < currentMinuteOfDay(timeZone)) {
+    return { free: false, timeZone };
+  }
+
+  const dayName = DAY_NAMES[new Date(`${date}T12:00:00Z`).getUTCDay()];
+
+  // HARD SHABBAT GUARD: getMutualFreeSlots() never lists a Shabbat day, but
+  // this function is the server-side source of truth the /confirm route
+  // relies on to re-verify a client-supplied date — without this check, a
+  // direct API call (bypassing the UI) could still lock in a Shabbat meeting
+  // as long as neither calendar happened to be busy then.
+  if (shabbatService.isShabbatDay(dayName)) {
+    return { free: false, timeZone };
+  }
+
   const [busyHost, busyInvitee] = await Promise.all([
     getFreeBusyForDay(host, date, dayStartHHMM, dayEndHHMM, timeZone),
     getFreeBusyForDay(invitee, date, dayStartHHMM, dayEndHHMM, timeZone)
   ]);
+  const combinedHost = [...busyHost, ...getLocalScheduleBusy(host, date, dayName)];
+  const combinedInvitee = [...busyInvitee, ...getLocalScheduleBusy(invitee, date, dayName)];
 
-  const free = intersectFree(busyHost, busyInvitee, startMin, endMin, endMin - startMin);
+  const free = intersectFree(combinedHost, combinedInvitee, startMin, endMin, endMin - startMin);
   const ok = free.some(f => f.start <= startMin && f.end >= endMin);
   return { free: ok, timeZone };
 }
@@ -195,22 +276,19 @@ async function getMutualFreeSlots(host, invitee, { locationId, duration, rangeDa
       getFreeBusyForDay(host, isoDate, dayStartHHMM, dayEndHHMM, timeZone),
       getFreeBusyForDay(invitee, isoDate, dayStartHHMM, dayEndHHMM, timeZone)
     ]);
+    const combinedHost = [...busyHost, ...getLocalScheduleBusy(host, isoDate, dayOfWeek)];
+    const combinedInvitee = [...busyInvitee, ...getLocalScheduleBusy(invitee, isoDate, dayOfWeek)];
 
     const windowStartMin = offset === 0 ? Math.max(dayStartMin, currentMinuteOfDay(timeZone)) : dayStartMin;
-    const free = intersectFree(busyHost, busyInvitee, windowStartMin, dayEndMin, duration);
+    const free = intersectFree(combinedHost, combinedInvitee, windowStartMin, dayEndMin, duration);
 
     // Slice each free gap into duration-sized slots (not one giant button per
     // gap) — this is also what confirm's duration-match check now requires.
-    const freeSlots = [];
-    for (const gap of free) {
-      for (let s = gap.start; s + duration <= gap.end; s += duration) {
-        freeSlots.push({
-          startTime: minutesToTime12(s),
-          endTime: minutesToTime12(s + duration),
-          durationMinutes: duration
-        });
-      }
-    }
+    const freeSlots = sliceIntoSlots(free, duration).map(s => ({
+      startTime: minutesToTime12(s.start),
+      endTime: minutesToTime12(s.end),
+      durationMinutes: duration
+    }));
 
     if (freeSlots.length) {
       results.push({ date: isoDate, day: dayOfWeek, freeSlots });
@@ -222,7 +300,12 @@ async function getMutualFreeSlots(host, invitee, { locationId, duration, rangeDa
 module.exports = {
   intersectFree,
   mergeIntervals,
+  sliceIntoSlots,
   getFreeBusyForDay,
+  getLocalScheduleBusy,
+  getLocationTimeZone,
+  todayIsoInTimeZone,
+  isValidIsoDate,
   getMutualFreeSlots,
   isSlotMutuallyFree
 };

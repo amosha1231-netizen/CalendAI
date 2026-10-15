@@ -13,11 +13,20 @@ const mongoose = require('mongoose');
 const User = require('../models/User');
 const ProviderBooking = require('../models/ProviderBooking');
 const { createOAuth2ClientWithRefresh } = require('../services/googleCalendar');
+const {
+  mergeIntervals, sliceIntoSlots, isValidIsoDate, getLocationTimeZone, todayIsoInTimeZone
+} = require('../services/mutualAvailability');
 const { google } = require('googleapis');
 
 const VALID_DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const MAX_SERVICES = 20;
 const MAX_AVAILABILITY_ROWS = 50;
+const DEFAULT_LOCATION_ID = 'jerusalem';
+
+function currentMinuteOfDay(timeZone) {
+  const parts = new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date());
+  return Number(parts.find(p => p.type === 'hour').value) * 60 + Number(parts.find(p => p.type === 'minute').value);
+}
 
 /**
  * Extract the authenticated user's id. Delegates to the same
@@ -35,11 +44,28 @@ function dayNameFromDateStr(dateStr) {
   return VALID_DAYS[new Date(`${dateStr}T00:00:00Z`).getUTCDay()];
 }
 
-function isValidIsoDate(dateStr) {
-  return typeof dateStr === 'string'
-    && /^\d{4}-\d{2}-\d{2}$/.test(dateStr)
-    && !Number.isNaN(Date.parse(`${dateStr}T00:00:00Z`))
-    && new Date(`${dateStr}T00:00:00Z`).toISOString().slice(0, 10) === dateStr;
+/**
+ * Map client-submitted services into the shape stored on providerProfile.services.
+ * Preserves each existing service's _id when the client sends one back (the
+ * editor round-trips the _id it loaded) — without this, replacing the whole
+ * array with plain objects makes Mongoose mint a brand new subdocument _id
+ * on every single profile save, even one that only edits the bio, which
+ * breaks any booking already in flight against the old serviceId
+ * (computeAvailableSlots/:book 404 "service not found"). A new service
+ * (added client-side, no _id yet) still gets a fresh one as before.
+ */
+function mapServicesForSave(services) {
+  return services.map(s => {
+    const svc = {
+      name: s.name.trim().slice(0, 100),
+      duration: Math.round(Number(s.duration)),
+      price: s.price !== undefined ? Number(s.price) : 0,
+      color: typeof s.color === 'string' ? s.color : '#6366f1',
+      active: s.active !== false
+    };
+    if (s._id && mongoose.Types.ObjectId.isValid(s._id)) svc._id = s._id;
+    return svc;
+  });
 }
 
 function minutesToTime12(totalMinutes) {
@@ -64,15 +90,26 @@ async function computeAvailableSlots(req, provider, service, dateStr) {
   const rows = (provider.providerProfile?.availability || []).filter(r => r.day === dayName);
   if (!rows.length) return { dayName, slots: [] };
 
-  const candidates = [];
-  for (const row of rows) {
-    const rowStart = timeToMinutes(row.startTime);
-    const rowEnd = timeToMinutes(row.endTime);
-    if (rowStart === null || rowEnd === null || rowEnd <= rowStart) continue;
-    for (let start = rowStart; start + service.duration <= rowEnd; start += service.duration) {
-      candidates.push({ startMin: start, endMin: start + service.duration });
-    }
+  // Merge overlapping/adjacent availability rows for this day first (a
+  // provider can save two rows that overlap, e.g. 9-12 and 11-14) — slicing
+  // each raw row independently would offer the same startTime more than once.
+  const rawRanges = rows
+    .map(row => ({ start: timeToMinutes(row.startTime), end: timeToMinutes(row.endTime) }))
+    .filter(r => r.start !== null && r.end !== null && r.end > r.start);
+  const mergedRanges = mergeIntervals(rawRanges);
+
+  let candidates = sliceIntoSlots(mergedRanges, service.duration)
+    .map(s => ({ startMin: s.start, endMin: s.end }));
+
+  // For today, never offer a slot that has already started (mirrors the
+  // "never scan from a past time" guard the legacy /api/schedule/free-slots
+  // flow applies, scoped to the provider's own location timezone).
+  const timeZone = getLocationTimeZone(provider.providerProfile?.locationId);
+  if (dateStr === todayIsoInTimeZone(timeZone)) {
+    const nowMin = currentMinuteOfDay(timeZone);
+    candidates = candidates.filter(c => c.startMin >= nowMin);
   }
+
   if (!candidates.length) return { dayName, slots: [] };
 
   const existingBookings = await ProviderBooking.find({
@@ -176,15 +213,7 @@ router.put('/me', async (req, res) => {
     if (bio !== undefined) update['providerProfile.bio'] = String(bio).trim().slice(0, 2000);
     if (category !== undefined) update['providerProfile.category'] = String(category).trim().slice(0, 50) || 'general';
     if (locationId !== undefined) update['providerProfile.locationId'] = String(locationId).trim() || 'jerusalem';
-    if (services !== undefined) {
-      update['providerProfile.services'] = services.map(s => ({
-        name: s.name.trim().slice(0, 100),
-        duration: Math.round(Number(s.duration)),
-        price: s.price !== undefined ? Number(s.price) : 0,
-        color: typeof s.color === 'string' ? s.color : '#6366f1',
-        active: s.active !== false
-      }));
-    }
+    if (services !== undefined) update['providerProfile.services'] = mapServicesForSave(services);
     if (availability !== undefined) {
       update['providerProfile.availability'] = availability.map(r => ({
         day: r.day,
@@ -213,7 +242,11 @@ router.get('/my-bookings', async (req, res) => {
     const userId = getUserId(req);
     if (!userId) return res.status(401).json({ error: 'עליך להתחבר.' });
 
-    const today = new Date().toISOString().slice(0, 10);
+    // "Today" in the provider's own location timezone, not the server's
+    // (UTC) clock — same convention as every other date gate in this file
+    // (computeAvailableSlots, the availability/book routes' past-date checks).
+    const providerUser = await User.findById(userId).select('providerProfile.locationId').lean();
+    const today = todayIsoInTimeZone(getLocationTimeZone(providerUser?.providerProfile?.locationId));
     const bookings = await ProviderBooking.find({
       providerId: userId,
       status: { $ne: 'cancelled' },
@@ -224,6 +257,62 @@ router.get('/my-bookings', async (req, res) => {
   } catch (err) {
     console.error('My provider bookings error:', err);
     res.status(500).json({ error: 'שגיאה בטעינת ההזמנות.' });
+  }
+});
+
+// ──────────────────────────────────────────────
+// POST /api/providers/bookings/:id/cancel
+// Cancellable by the provider who owns the booking, or by the signed-in
+// guest who made it (bookedByUserId) — an anonymous guest booking has
+// neither an account nor a cancel link yet, so it can't self-cancel here.
+// Mirrors rollbackCompletedSession's calendar-delete + schedule-pull pattern
+// from mutualRoutes.js, scoped to a single provider-side event.
+// ──────────────────────────────────────────────
+router.post('/bookings/:id/cancel', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'עליך להתחבר.' });
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'מזהה הזמנה לא תקין.' });
+    }
+
+    const booking = await ProviderBooking.findById(req.params.id);
+    if (!booking) return res.status(404).json({ error: 'ההזמנה לא נמצאה.' });
+
+    const isProvider = booking.providerId.equals(userId);
+    const isGuestOwner = booking.bookedByUserId && booking.bookedByUserId.equals(userId);
+    if (!isProvider && !isGuestOwner) {
+      return res.status(403).json({ error: 'אין לך הרשאה לבטל הזמנה זו.' });
+    }
+
+    if (booking.status === 'cancelled') return res.json({ ok: true, alreadyCancelled: true });
+
+    if (booking.status === 'confirmed') {
+      const provider = await User.findById(booking.providerId);
+      if (booking.googleEventId && provider?.googleAccessToken) {
+        try {
+          const oauth = await createOAuth2ClientWithRefresh(provider);
+          await google.calendar({ version: 'v3', auth: oauth }).events.delete({ calendarId: 'primary', eventId: booking.googleEventId });
+        } catch (err) {
+          console.error('Failed to delete provider Google Calendar event on cancel:', err.message);
+        }
+      }
+      if (provider) {
+        const pull = { [`schedule.${booking.day}`]: { providerBookingId: booking._id.toString() } };
+        const getTodayDayName = req.app.get('getTodayDayName');
+        if (getTodayDayName && booking.day === getTodayDayName()) {
+          pull['schedule.Today'] = { providerBookingId: booking._id.toString() };
+        }
+        await User.updateOne({ _id: provider._id }, { $pull: pull }).catch(() => {});
+      }
+    }
+
+    booking.status = 'cancelled';
+    await booking.save();
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Cancel provider booking error:', err);
+    res.status(500).json({ error: 'שגיאה בביטול ההזמנה.' });
   }
 });
 
@@ -289,6 +378,7 @@ router.get('/:id', async (req, res) => {
         businessName: provider.providerProfile.businessName || provider.displayName || 'Provider',
         bio: provider.providerProfile.bio || '',
         category: provider.providerProfile.category || 'general',
+        locationId: provider.providerProfile.locationId || DEFAULT_LOCATION_ID,
         services: (provider.providerProfile.services || []).filter(s => s.active)
       }
     });
@@ -313,13 +403,16 @@ router.get('/:id/availability', async (req, res) => {
     if (!serviceId || !mongoose.Types.ObjectId.isValid(serviceId)) {
       return res.status(400).json({ error: 'נדרש מזהה שירות תקין.' });
     }
-    const today = new Date().toISOString().slice(0, 10);
-    if (date < today) {
-      return res.status(400).json({ error: 'לא ניתן לבדוק זמינות בתאריך שעבר.' });
-    }
 
     const provider = await User.findOne({ _id: req.params.id, 'providerProfile.enabled': true });
     if (!provider) return res.status(404).json({ error: 'נותן השירות לא נמצא.' });
+
+    // "Past date" relative to the provider's own location timezone, not the
+    // server's (UTC) clock — see computeAvailableSlots' same-day cutoff below.
+    const today = todayIsoInTimeZone(getLocationTimeZone(provider.providerProfile?.locationId));
+    if (date < today) {
+      return res.status(400).json({ error: 'לא ניתן לבדוק זמינות בתאריך שעבר.' });
+    }
 
     const service = (provider.providerProfile.services || []).find(
       s => s._id.toString() === serviceId && s.active
@@ -364,13 +457,16 @@ router.post('/:id/book', async (req, res) => {
     if (!serviceId || !mongoose.Types.ObjectId.isValid(serviceId)) {
       return res.status(400).json({ error: 'נדרש מזהה שירות תקין.' });
     }
-    const today = new Date().toISOString().slice(0, 10);
-    if (date < today) {
-      return res.status(400).json({ error: 'לא ניתן להזמין תאריך שעבר.' });
-    }
 
     provider = await User.findOne({ _id: req.params.id, 'providerProfile.enabled': true });
     if (!provider) return res.status(404).json({ error: 'נותן השירות לא נמצא.' });
+
+    // "Past date" relative to the provider's own location timezone, not the
+    // server's (UTC) clock — see computeAvailableSlots' same-day cutoff below.
+    const today = todayIsoInTimeZone(getLocationTimeZone(provider.providerProfile?.locationId));
+    if (date < today) {
+      return res.status(400).json({ error: 'לא ניתן להזמין תאריך שעבר.' });
+    }
 
     const service = (provider.providerProfile.services || []).find(
       s => s._id.toString() === serviceId && s.active
@@ -465,6 +561,7 @@ router.post('/:id/book', async (req, res) => {
 
     createdBooking.status = 'confirmed';
     createdBooking.confirmedAt = new Date();
+    if (syncedEventId) createdBooking.googleEventId = syncedEventId;
     await createdBooking.save();
 
     // Best-effort in-memory schedule cache sync (mirrors legacy booking confirm).
@@ -519,3 +616,6 @@ router.post('/:id/book', async (req, res) => {
 });
 
 module.exports = router;
+// Exposed for unit testing only (pure function, no I/O) — the router itself
+// stays the module's default export so `app.use('/api/providers', ...)` is unaffected.
+module.exports.mapServicesForSave = mapServicesForSave;

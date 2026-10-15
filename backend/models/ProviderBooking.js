@@ -23,7 +23,8 @@ const providerBookingSchema = new mongoose.Schema({
   guestPhone: String,
   guestNotes: String,
   status: { type: String, enum: ['processing', 'confirmed', 'cancelled'], default: 'processing', index: true },
-  confirmedAt: Date
+  confirmedAt: Date,
+  googleEventId: String
 }, { timestamps: true });
 
 // Atomic double-booking guard: only one non-cancelled reservation may hold

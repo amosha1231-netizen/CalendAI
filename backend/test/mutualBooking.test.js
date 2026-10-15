@@ -1,8 +1,14 @@
 // ──────────────────────────────────────────────
-// Characterization tests for peer-to-peer mutual scheduling:
-//   1. intersectFree() — pure interval-math correctness (no I/O).
-//   2. Mutual session slot claim must be atomic (no double-confirm of one
+// Characterization tests for peer-to-peer mutual scheduling's DB-backed
+// invariants against a real (in-memory) MongoDB replica set:
+//   1. Mutual session slot claim must be atomic (no double-confirm of one
 //      session), mirroring the existing Booking double-claim invariant.
+//   2. Provider booking slot claim: unique partial index guards against
+//      double-booking.
+//
+// Pure interval/date math (intersectFree, mergeIntervals, getLocalScheduleBusy,
+// getLocationTimeZone, todayIsoInTimeZone) lives in mutualAvailability.test.js
+// instead, which needs no MongoMemoryReplSet.
 //
 // Run with: npm test  (from backend/)
 // ──────────────────────────────────────────────
@@ -13,13 +19,14 @@ const { MongoMemoryReplSet } = require('mongodb-memory-server');
 
 const User = require('../models/User');
 const MutualBooking = require('../models/MutualBooking');
-const { intersectFree } = require('../services/mutualAvailability');
+const ProviderBooking = require('../models/ProviderBooking');
 
 let replSet;
 
 before(async () => {
   replSet = await MongoMemoryReplSet.create({ replSet: { count: 1, storageEngine: 'wiredTiger' } });
   await mongoose.connect(replSet.getUri());
+  await ProviderBooking.init(); // ensure the unique partial index is built before the double-booking tests run
 });
 
 after(async () => {
@@ -31,50 +38,11 @@ beforeEach(async () => {
   await Promise.all([
     User.deleteMany({}),
     MutualBooking.deleteMany({}),
+    ProviderBooking.deleteMany({}),
   ]);
 });
 
-// ── 1. intersectFree(): pure interval math ──
-test('intersectFree: finds the gap between two users\' busy blocks', () => {
-  // Host busy 09:00-10:00 (540-600), invitee busy 10:30-11:00 (630-660).
-  // Window 09:00-12:00 (540-720), need >= 30 min.
-  const busyHost = [{ start: 540, end: 600 }];
-  const busyInvitee = [{ start: 630, end: 660 }];
-  const free = intersectFree(busyHost, busyInvitee, 540, 720, 30);
-
-  assert.deepEqual(free, [
-    { start: 600, end: 630 },
-    { start: 660, end: 720 },
-  ]);
-});
-
-test('intersectFree: overlapping busy blocks from both users merge correctly', () => {
-  const busyHost = [{ start: 540, end: 600 }, { start: 660, end: 700 }];
-  const busyInvitee = [{ start: 580, end: 650 }];
-  // Union of busy: 540-650 (540-600 merges with 580-650), 660-700.
-  const free = intersectFree(busyHost, busyInvitee, 540, 720, 5);
-
-  assert.deepEqual(free, [
-    { start: 650, end: 660 },
-    { start: 700, end: 720 },
-  ]);
-});
-
-test('intersectFree: drops gaps shorter than the requested duration', () => {
-  const busyHost = [{ start: 540, end: 600 }];
-  const busyInvitee = [{ start: 610, end: 720 }]; // only a 10-minute gap remains
-  const free = intersectFree(busyHost, busyInvitee, 540, 720, 30);
-
-  assert.deepEqual(free, []);
-});
-
-test('intersectFree: fully busy day (either side) yields no free slots', () => {
-  const busyHost = [{ start: 0, end: 1440 }];
-  const free = intersectFree(busyHost, [], 540, 720, 15);
-  assert.deepEqual(free, []);
-});
-
-// ── 2. Mutual session claim: atomic active → processing transition ──
+// ── 1. Mutual session claim: atomic active → processing transition ──
 test('mutual session claim: host and invitee racing to confirm — only one wins', async () => {
   const host = await User.create({ email: 'mutual-host@test.com', googleAccessToken: 'tok-host' });
   const invitee = await User.create({ email: 'mutual-invitee@test.com', googleAccessToken: 'tok-invitee' });
@@ -121,4 +89,62 @@ test('mutual session claim: a cancelled session cannot be claimed', async () => 
   );
 
   assert.equal(claim, null, 'a non-active session must be refused a claim');
+});
+
+// ── 3. Provider booking slot claim: unique partial index guards against double-booking ──
+function providerBookingDoc(overrides = {}) {
+  return {
+    providerId: new mongoose.Types.ObjectId(),
+    serviceId: new mongoose.Types.ObjectId(),
+    serviceName: 'Haircut',
+    duration: 30,
+    date: '2026-12-01',
+    day: 'Tuesday',
+    startTime: '10:00 AM',
+    endTime: '10:30 AM',
+    guestName: 'Guest',
+    status: 'processing',
+    ...overrides,
+  };
+}
+
+test('provider booking: two guests racing for the same provider+date+startTime — only one claims it', async () => {
+  const providerId = new mongoose.Types.ObjectId();
+  const claim = () => ProviderBooking.create(providerBookingDoc({ providerId }));
+
+  const results = await Promise.allSettled([claim(), claim()]);
+  const fulfilled = results.filter(r => r.status === 'fulfilled');
+  const rejected = results.filter(r => r.status === 'rejected');
+
+  assert.equal(fulfilled.length, 1, 'exactly one of the two concurrent slot claims should succeed');
+  assert.equal(rejected.length, 1, 'the losing claim must be refused');
+  assert.equal(rejected[0].reason.code, 11000, 'the loser must fail on the unique providerId+date+startTime index, not some other error');
+
+  const count = await ProviderBooking.countDocuments({ providerId, date: '2026-12-01', startTime: '10:00 AM' });
+  assert.equal(count, 1, 'only one booking document should exist for that provider+date+startTime');
+});
+
+test('provider booking: a cancelled booking does not block re-booking the same slot', async () => {
+  const providerId = new mongoose.Types.ObjectId();
+  await ProviderBooking.create(providerBookingDoc({ providerId, status: 'cancelled' }));
+
+  // The unique index has a partial filter excluding status:'cancelled', so this must succeed.
+  const rebooked = await ProviderBooking.create(providerBookingDoc({ providerId, status: 'processing' }));
+  assert.ok(rebooked._id, 'a new booking for the same provider+date+startTime must be allowed once the prior one is cancelled');
+});
+
+test('provider booking: cancelling a confirmed booking with a synced calendar event frees the slot for re-booking', async () => {
+  const providerId = new mongoose.Types.ObjectId();
+  const confirmed = await ProviderBooking.create(
+    providerBookingDoc({ providerId, status: 'confirmed', googleEventId: 'gcal-evt-123' })
+  );
+  assert.equal(confirmed.googleEventId, 'gcal-evt-123', 'googleEventId must round-trip so a later cancel can delete the right calendar event');
+
+  // Mirrors what POST /api/providers/bookings/:id/cancel does once it has
+  // deleted the calendar event and pulled the schedule entry.
+  confirmed.status = 'cancelled';
+  await confirmed.save();
+
+  const rebooked = await ProviderBooking.create(providerBookingDoc({ providerId, status: 'processing' }));
+  assert.ok(rebooked._id, 'the slot must be bookable again once the confirmed booking is cancelled');
 });

@@ -1,11 +1,26 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { X, Loader2, Check, Calendar, Clock, Mail, Phone, MessageSquare } from "lucide-react";
 import safeStorage from "../utils/safeStorage";
 
 var API_BASE = import.meta.env.VITE_API_URL || "";
 
+// Server/UTC "today" — only a fallback until the provider's own location
+// timezone is known (see todayIsoInTimeZone below). Using this as the final
+// answer would drift from the backend's location-timezone past-date gate
+// (providerRoutes.js) for hours around UTC midnight.
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
+}
+
+// Mirrors backend providerRoutes.js' todayIsoInTimeZone(): "today" as observed
+// in the given IANA timezone, not the browser's local/UTC day. Needed so the
+// date picker's default and minimum match the provider's own past-date check.
+function todayIsoInTimeZone(timeZone) {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  } catch {
+    return todayIso();
+  }
 }
 
 export default function ProviderBookingView({ providerId, lang, user, onClose }) {
@@ -16,7 +31,9 @@ export default function ProviderBookingView({ providerId, lang, user, onClose })
   const [error, setError] = useState("");
 
   const [selectedServiceId, setSelectedServiceId] = useState("");
+  const [minDate, setMinDate] = useState(todayIso());
   const [selectedDate, setSelectedDate] = useState(todayIso());
+  const dateTouchedRef = useRef(false);
   const [slots, setSlots] = useState([]);
   const [slotsLoading, setSlotsLoading] = useState(false);
   const [slotsError, setSlotsError] = useState("");
@@ -44,13 +61,33 @@ export default function ProviderBookingView({ providerId, lang, user, onClose })
       setLoading(true);
       setError("");
       try {
-        const res = await fetch(`${API_BASE}/api/providers/${providerId}`);
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "Failed to load provider");
-        if (!cancelled) {
-          setProvider(data.provider);
-          if (data.provider.services?.length) setSelectedServiceId(data.provider.services[0]._id);
+        const [providerRes, locationsRes] = await Promise.all([
+          fetch(`${API_BASE}/api/providers/${providerId}`),
+          fetch(`${API_BASE}/api/locations`).catch(() => null)
+        ]);
+        const data = await providerRes.json();
+        if (!providerRes.ok) throw new Error(data.error || "Failed to load provider");
+        if (cancelled) return;
+
+        setProvider(data.provider);
+        if (data.provider.services?.length) setSelectedServiceId(data.provider.services[0]._id);
+
+        // "Today" must match the provider's own location timezone, not the
+        // browser's — otherwise the date picker's default/min can disagree
+        // with providerRoutes.js' location-timezone past-date check for
+        // hours around UTC midnight.
+        let timeZone = null;
+        try {
+          if (locationsRes?.ok) {
+            const locData = await locationsRes.json();
+            timeZone = (locData.locations || []).find(l => l.id === data.provider.locationId)?.timezone || null;
+          }
+        } catch {
+          timeZone = null;
         }
+        const resolvedToday = timeZone ? todayIsoInTimeZone(timeZone) : todayIso();
+        setMinDate(resolvedToday);
+        if (!dateTouchedRef.current) setSelectedDate(resolvedToday);
       } catch (err) {
         if (!cancelled) setError(err.message);
       } finally {
@@ -210,9 +247,9 @@ export default function ProviderBookingView({ providerId, lang, user, onClose })
                 </label>
                 <input
                   type="date"
-                  min={todayIso()}
+                  min={minDate}
                   value={selectedDate}
-                  onChange={(e) => setSelectedDate(e.target.value)}
+                  onChange={(e) => { dateTouchedRef.current = true; setSelectedDate(e.target.value); }}
                   className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-xl text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
               </div>

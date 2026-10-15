@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from "react";
-import { X, Loader2, Check, Plus, Trash2, Briefcase } from "lucide-react";
+import React, { useState, useEffect, useCallback } from "react";
+import { X, Loader2, Check, Plus, Trash2, Briefcase, CalendarClock, Ban } from "lucide-react";
 import safeStorage from "../utils/safeStorage";
 
 var API_BASE = import.meta.env.VITE_API_URL || "";
@@ -26,8 +26,15 @@ export default function ProviderProfileEditor({ lang, user, onClose }) {
   const [businessName, setBusinessName] = useState("");
   const [bio, setBio] = useState("");
   const [category, setCategory] = useState("general");
+  const [locationId, setLocationId] = useState("jerusalem");
+  const [locations, setLocations] = useState([]);
   const [services, setServices] = useState([]);
   const [availability, setAvailability] = useState([]);
+
+  const [bookings, setBookings] = useState([]);
+  const [bookingsLoading, setBookingsLoading] = useState(false);
+  const [bookingsError, setBookingsError] = useState("");
+  const [cancellingId, setCancellingId] = useState(null);
 
   const getToken = () => {
     try {
@@ -43,18 +50,24 @@ export default function ProviderProfileEditor({ lang, user, onClose }) {
       setError("");
       try {
         const token = getToken();
-        const res = await fetch(`${API_BASE}/api/providers/me`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {}
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "Failed to load profile");
+        const [profileRes, locationsRes] = await Promise.all([
+          fetch(`${API_BASE}/api/providers/me`, { headers: token ? { Authorization: `Bearer ${token}` } : {} }),
+          fetch(`${API_BASE}/api/locations`)
+        ]);
+        const data = await profileRes.json();
+        if (!profileRes.ok) throw new Error(data.error || "Failed to load profile");
         const p = data.providerProfile || {};
         setEnabled(!!p.enabled);
         setBusinessName(p.businessName || "");
         setBio(p.bio || "");
         setCategory(p.category || "general");
+        setLocationId(p.locationId || "jerusalem");
         setServices(p.services || []);
         setAvailability(p.availability || []);
+        if (locationsRes.ok) {
+          const locData = await locationsRes.json();
+          setLocations(locData.locations || []);
+        }
       } catch (err) {
         setError(err.message);
       } finally {
@@ -62,6 +75,44 @@ export default function ProviderProfileEditor({ lang, user, onClose }) {
       }
     })();
   }, []);
+
+  const loadBookings = useCallback(async () => {
+    setBookingsLoading(true);
+    setBookingsError("");
+    try {
+      const token = getToken();
+      const res = await fetch(`${API_BASE}/api/providers/my-bookings`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to load bookings");
+      setBookings(data.bookings || []);
+    } catch (err) {
+      setBookingsError(err.message);
+    } finally {
+      setBookingsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadBookings(); }, [loadBookings]);
+
+  const handleCancelBooking = async (bookingId) => {
+    setCancellingId(bookingId);
+    try {
+      const token = getToken();
+      const res = await fetch(`${API_BASE}/api/providers/bookings/${bookingId}/cancel`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to cancel booking");
+      setBookings(bookings.filter(b => b._id !== bookingId));
+    } catch (err) {
+      setBookingsError(err.message);
+    } finally {
+      setCancellingId(null);
+    }
+  };
 
   const addService = () => {
     setServices([...services, { name: "", duration: 30, price: 0, active: true }]);
@@ -100,6 +151,7 @@ export default function ProviderProfileEditor({ lang, user, onClose }) {
           businessName,
           bio,
           category,
+          locationId,
           services: services.map(s => ({ ...s, name: s.name.trim(), duration: Number(s.duration), price: Number(s.price) || 0 })),
           availability
         })
@@ -170,6 +222,21 @@ export default function ProviderProfileEditor({ lang, user, onClose }) {
               >
                 {CATEGORY_OPTIONS.map(c => <option key={c} value={c}>{categoryLabels[c]}</option>)}
               </select>
+              <select
+                value={locationId}
+                onChange={(e) => setLocationId(e.target.value)}
+                className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-xl text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                {locations.length === 0 && <option value="jerusalem">Jerusalem</option>}
+                {locations.map(loc => (
+                  <option key={loc.id} value={loc.id}>{loc.label} ({loc.timezone})</option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-400">
+                {lang === "he"
+                  ? "אזור הזמן של בית העסק — קובע את שעות הפעילות והזמינות."
+                  : "Your business's timezone — used for your availability and booking hours."}
+              </p>
             </div>
 
             {/* Services */}
@@ -184,7 +251,14 @@ export default function ProviderProfileEditor({ lang, user, onClose }) {
               </div>
               <div className="space-y-2">
                 {services.map((s, i) => (
-                  <div key={i} className="flex gap-2 items-center bg-gray-50 dark:bg-gray-700/50 p-2 rounded-lg">
+                  <div key={i} className={`flex gap-2 items-center bg-gray-50 dark:bg-gray-700/50 p-2 rounded-lg ${s.active === false ? "opacity-50" : ""}`}>
+                    <input
+                      type="checkbox"
+                      checked={s.active !== false}
+                      onChange={(e) => updateService(i, "active", e.target.checked)}
+                      title={lang === "he" ? "שירות פעיל (זמין להזמנה)" : "Active (bookable)"}
+                      className="w-4 h-4 accent-indigo-600 shrink-0"
+                    />
                     <input
                       type="text"
                       value={s.name}
@@ -269,6 +343,42 @@ export default function ProviderProfileEditor({ lang, user, onClose }) {
                   </p>
                 )}
               </div>
+            </div>
+
+            {/* Upcoming bookings */}
+            <div>
+              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2 flex items-center gap-1.5">
+                <CalendarClock className="w-4 h-4" />
+                {lang === "he" ? "הזמנות קרובות" : "Upcoming bookings"}
+              </h3>
+              {bookingsLoading ? (
+                <div className="flex justify-center py-4"><Loader2 className="w-5 h-5 animate-spin text-indigo-600" /></div>
+              ) : bookingsError ? (
+                <div className="text-sm text-red-600 bg-red-50 dark:bg-red-900/30 rounded-lg p-3">{bookingsError}</div>
+              ) : bookings.length === 0 ? (
+                <p className="text-xs text-gray-400 text-center py-3">
+                  {lang === "he" ? "אין הזמנות קרובות." : "No upcoming bookings."}
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {bookings.map(b => (
+                    <div key={b._id} className="flex gap-2 items-center justify-between bg-gray-50 dark:bg-gray-700/50 p-2.5 rounded-lg">
+                      <div className="min-w-0 text-xs text-gray-700 dark:text-gray-300">
+                        <div className="font-medium truncate">{b.serviceName} · {b.guestName}</div>
+                        <div className="text-gray-400">{b.date} · {b.startTime}–{b.endTime}</div>
+                      </div>
+                      <button
+                        onClick={() => handleCancelBooking(b._id)}
+                        disabled={cancellingId === b._id}
+                        className="shrink-0 p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg disabled:opacity-50"
+                        title={lang === "he" ? "בטל הזמנה" : "Cancel booking"}
+                      >
+                        {cancellingId === b._id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Ban className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {error && (

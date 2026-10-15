@@ -17,7 +17,7 @@ const JWT_SECRET = require('../config/jwtSecret');
 const User = require('../models/User');
 const MutualBooking = require('../models/MutualBooking');
 const { createOAuth2ClientWithRefresh, buildGcalEventBody } = require('../services/googleCalendar');
-const { getMutualFreeSlots, isSlotMutuallyFree } = require('../services/mutualAvailability');
+const { getMutualFreeSlots, isSlotMutuallyFree, getLocationTimeZone, todayIsoInTimeZone, isValidIsoDate } = require('../services/mutualAvailability');
 
 const DEFAULT_LOCATION_ID = 'jerusalem';
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -190,7 +190,7 @@ router.post('/sessions', requireAuth, async (req, res) => {
       hostId: host._id,
       inviteeId: invitee._id,
       inviteeEmail: email,
-      subject: subject || 'Meeting',
+      subject: String(subject || 'Meeting').trim().slice(0, 200) || 'Meeting',
       duration: Number(duration),
       locationId: locationId || DEFAULT_LOCATION_ID,
       status: 'active'
@@ -253,12 +253,8 @@ router.post('/sessions/:id/confirm', requireAuth, async (req, res) => {
   let claimedSession = null;
   try {
     const { date, startTime, endTime } = req.body;
-    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`))) {
+    if (!isValidIsoDate(date)) {
       return res.status(400).json({ error: 'A valid ISO date is required.' });
-    }
-    const today = new Date().toISOString().slice(0, 10);
-    if (date < today) {
-      return res.status(400).json({ error: 'Cannot confirm a meeting on a past date.' });
     }
     const startMin = timeToMinutes(startTime);
     const endMin = timeToMinutes(endTime);
@@ -272,6 +268,15 @@ router.post('/sessions/:id/confirm', requireAuth, async (req, res) => {
     if (!isParty) return res.status(403).json({ error: 'Not authorized for this session.' });
     if (endMin - startMin !== existing.duration) {
       return res.status(400).json({ error: `The selected window must be exactly ${existing.duration} minutes long.` });
+    }
+
+    // "Past date" relative to the session's own location timezone, not the
+    // server's (UTC) clock — a UTC-day check can wrongly reject "today" for
+    // a location behind UTC near midnight, or wrongly accept a stale date
+    // for one ahead of UTC.
+    const sessionTimeZone = getLocationTimeZone(existing.locationId);
+    if (date < todayIsoInTimeZone(sessionTimeZone)) {
+      return res.status(400).json({ error: 'Cannot confirm a meeting on a past date.' });
     }
 
     claimedSession = await MutualBooking.findOneAndUpdate(
