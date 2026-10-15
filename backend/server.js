@@ -489,6 +489,7 @@ app.set('syncTodayWithCurrentDay', syncTodayWithCurrentDay);
 
 // ── Token Usage Tracker (Pay-As-You-Go billing)
 const { calculateCost, formatCostBreakdown } = require('./services/tokenTracker');
+const { refillOwnerCredits } = require('./services/ownerCredits');
 
 // ──────────────────────────────────────────────
 // AI Credit System (Pay As You Go / PAYG)
@@ -513,7 +514,7 @@ async function checkAICredits(userId) {
   try {
     const user = await User.findById(userId);
     if (!user) return { allowed: false, credits: null, status: 401, error: 'User account not found.' };
-    const credits = user.aiCredits;
+    const credits = await refillOwnerCredits(User, user);
     if (credits === undefined || credits === null || credits > 0) {
       return { allowed: true, credits };
     }
@@ -1317,6 +1318,11 @@ app.get('/api/auth/me', async (req, res) => {
       dbUser = await User.findOne({ googleId: userId }).catch(() => null);
     }
     if (dbUser) {
+      try {
+        dbUser.aiCredits = await refillOwnerCredits(User, dbUser);
+      } catch (refillErr) {
+        console.error('Failed to refill owner credits:', refillErr.message);
+      }
       freshUser = {
         _id: dbUser._id,
         id: dbUser._id,
