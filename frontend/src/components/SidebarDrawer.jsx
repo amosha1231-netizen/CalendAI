@@ -4,6 +4,7 @@ import safeStorage from '../utils/safeStorage';
 import { getDeviceTimeZone, setDetectedLocation, presetLocationForTimeZone } from '../utils/userLocation';
 import SiriSetupModal from './SiriSetupModal';
 import { openCheckout, readCheckoutResponse, notifyCreditsPurchased } from '../utils/lemonCheckout';
+import { isNativeApp } from '../utils/nativeApp';
 
 const CATEGORY_KEYWORDS = {
   sport: ['אימון', 'ריצה', 'שחייה', 'הליכה', 'ספורט', 'חדר כושר', 'יוגה', 'פילאטיס', 'רכיבה', 'טיפוס', 'workout', 'run', 'swim', 'walk', 'sport', 'gym', 'yoga', 'pilates', 'bike', 'climb'],
@@ -335,13 +336,16 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangC
             <BarChart3 className="w-5 h-5" />
             <span>{t.sidebarAnalytics}</span>
           </button>
-          <button
-            className={`sidebar-nav-item ${activeTab === 'pro' ? 'active' : ''}`}
-            onClick={() => setActiveTab('pro')}
-          >
-            <Zap className="w-5 h-5" />
-            <span>{t.sidebarPro}</span>
-          </button>
+          {/* Not in the native app: App Store purchases must use in-app purchase, and it is already installed. */}
+          {!isNativeApp() && (
+            <button
+              className={`sidebar-nav-item ${activeTab === 'pro' ? 'active' : ''}`}
+              onClick={() => setActiveTab('pro')}
+            >
+              <Zap className="w-5 h-5" />
+              <span>{t.sidebarPro}</span>
+            </button>
+          )}
           <button
             className={`sidebar-nav-item ${activeTab === 'settings' ? 'active' : ''}`}
             onClick={() => setActiveTab('settings')}
@@ -349,13 +353,15 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangC
             <Settings className="w-5 h-5" />
             <span>{t.sidebarSettings}</span>
           </button>
-          <button
-            className={`sidebar-nav-item ${activeTab === 'install' ? 'active' : ''}`}
-            onClick={() => setActiveTab('install')}
-          >
-            <Download className="w-5 h-5" />
-            <span>{t.sidebarInstall}</span>
-          </button>
+          {!isNativeApp() && (
+            <button
+              className={`sidebar-nav-item ${activeTab === 'install' ? 'active' : ''}`}
+              onClick={() => setActiveTab('install')}
+            >
+              <Download className="w-5 h-5" />
+              <span>{t.sidebarInstall}</span>
+            </button>
+          )}
         </div>
 
         {/* History Button — triggers modal instead of tab */}
