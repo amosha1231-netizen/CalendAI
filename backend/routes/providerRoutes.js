@@ -44,6 +44,30 @@ function dayNameFromDateStr(dateStr) {
   return VALID_DAYS[new Date(`${dateStr}T00:00:00Z`).getUTCDay()];
 }
 
+/**
+ * Map client-submitted services into the shape stored on providerProfile.services.
+ * Preserves each existing service's _id when the client sends one back (the
+ * editor round-trips the _id it loaded) — without this, replacing the whole
+ * array with plain objects makes Mongoose mint a brand new subdocument _id
+ * on every single profile save, even one that only edits the bio, which
+ * breaks any booking already in flight against the old serviceId
+ * (computeAvailableSlots/:book 404 "service not found"). A new service
+ * (added client-side, no _id yet) still gets a fresh one as before.
+ */
+function mapServicesForSave(services) {
+  return services.map(s => {
+    const svc = {
+      name: s.name.trim().slice(0, 100),
+      duration: Math.round(Number(s.duration)),
+      price: s.price !== undefined ? Number(s.price) : 0,
+      color: typeof s.color === 'string' ? s.color : '#6366f1',
+      active: s.active !== false
+    };
+    if (s._id && mongoose.Types.ObjectId.isValid(s._id)) svc._id = s._id;
+    return svc;
+  });
+}
+
 function minutesToTime12(totalMinutes) {
   const h = Math.floor(totalMinutes / 60);
   const m = totalMinutes % 60;
@@ -189,15 +213,7 @@ router.put('/me', async (req, res) => {
     if (bio !== undefined) update['providerProfile.bio'] = String(bio).trim().slice(0, 2000);
     if (category !== undefined) update['providerProfile.category'] = String(category).trim().slice(0, 50) || 'general';
     if (locationId !== undefined) update['providerProfile.locationId'] = String(locationId).trim() || 'jerusalem';
-    if (services !== undefined) {
-      update['providerProfile.services'] = services.map(s => ({
-        name: s.name.trim().slice(0, 100),
-        duration: Math.round(Number(s.duration)),
-        price: s.price !== undefined ? Number(s.price) : 0,
-        color: typeof s.color === 'string' ? s.color : '#6366f1',
-        active: s.active !== false
-      }));
-    }
+    if (services !== undefined) update['providerProfile.services'] = mapServicesForSave(services);
     if (availability !== undefined) {
       update['providerProfile.availability'] = availability.map(r => ({
         day: r.day,
@@ -600,3 +616,6 @@ router.post('/:id/book', async (req, res) => {
 });
 
 module.exports = router;
+// Exposed for unit testing only (pure function, no I/O) — the router itself
+// stays the module's default export so `app.use('/api/providers', ...)` is unaffected.
+module.exports.mapServicesForSave = mapServicesForSave;
