@@ -1,32 +1,22 @@
 import React, { useState, useEffect } from "react";
 import { Calendar, Clock, Loader2, Check, X, Sparkles, ExternalLink, Mail, Phone, MessageSquare } from "lucide-react";
-import { isShabbatNow } from "../utils/shabbatHelper";
-import ShabbatBanner from "./ShabbatBanner";
+import ShabbatGate from "./ShabbatGate";
+import { getUserTimeZone, isValidTimeZone, zonedTimeToDate, formatUtcOffset } from "../utils/userLocation";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
 
 const DAY_NAMES_EN = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const DAY_NAMES_HE = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
 
-export default function GuestBookingView({ bookingId, lang, t, onClose }) {
-  // ── Shabbat Guard ──
-  const [shabbatActive] = useState(() => isShabbatNow());
+export default function GuestBookingView(props) {
+  return (
+    <ShabbatGate t={props.t} lang={props.lang}>
+      <GuestBookingViewScreen {...props} />
+    </ShabbatGate>
+  );
+}
 
-  // Check every minute if Shabbat status changed
-  useEffect(() => {
-    if (!shabbatActive) return;
-    const interval = setInterval(() => {
-      if (!isShabbatNow()) {
-        window.location.reload();
-      }
-    }, 60000);
-    return () => clearInterval(interval);
-  }, [shabbatActive]);
-
-  if (shabbatActive) {
-    return <ShabbatBanner t={t} lang={lang} />;
-  }
-
+function GuestBookingViewScreen({ bookingId, lang, t, onClose }) {
   const [booking, setBooking] = useState(null);
   const [slots, setSlots] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -62,11 +52,71 @@ export default function GuestBookingView({ bookingId, lang, t, onClose }) {
     fetchBooking();
   }, [bookingId]);
 
+  // Slot times are wall-clock times in the host's zone. When the guest is in
+  // another zone and the booking has a real date, show them in the guest's zone.
+  const guestTimeZone = getUserTimeZone();
+  const hostTimeZone = booking?.hostTimezone;
+  const showInGuestZone = !!(booking?.date && isValidTimeZone(hostTimeZone) && hostTimeZone !== guestTimeZone);
+  const locale = lang === 'he' ? 'he-IL' : lang === 'fr' ? 'fr-FR' : lang === 'es' ? 'es-ES' : 'en-US';
+
+  function slotInstant(hour, minute) {
+    return booking?.date ? zonedTimeToDate(booking.date, hour, minute, hostTimeZone || guestTimeZone) : null;
+  }
+
   function formatTimeDisplay(hour, minute) {
+    const hour12 = lang === 'en';
+    if (showInGuestZone) {
+      const instant = slotInstant(hour, minute);
+      if (instant) {
+        return new Intl.DateTimeFormat(locale, { timeZone: guestTimeZone, hour: '2-digit', minute: '2-digit', hour12 }).format(instant);
+      }
+    }
+    if (!hour12) return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
     const h12 = hour % 12 || 12;
     const ampm = hour >= 12 ? 'PM' : 'AM';
     return `${String(h12).padStart(2, '0')}:${String(minute).padStart(2, '0')} ${ampm}`;
   }
+
+  // "10:00 AM" / "10:00" → displayed in the guest's format and zone.
+  function formatTimeString(value) {
+    const match = String(value || '').match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+    if (!match) return value;
+    let hour = parseInt(match[1], 10);
+    const minute = parseInt(match[2], 10);
+    if (match[3]) {
+      const pm = match[3].toUpperCase() === 'PM';
+      if (pm && hour !== 12) hour += 12;
+      if (!pm && hour === 12) hour = 0;
+    }
+    return formatTimeDisplay(hour, minute);
+  }
+
+  function formatBookingDate() {
+    if (!booking?.date) {
+      return `${getDayDisplayName(booking?.day)} · ${getDayDate(booking?.day)} ${getMonthName(booking?.day)}`;
+    }
+    // Use the first time on offer so a meeting that falls on another calendar
+    // day in the guest's zone shows that day.
+    const first = booking.isLocked ? null : slots[selectedSlotIndex ?? 0];
+    const lockedMatch = String(booking.startTime || '').match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+    let instant = null;
+    if (first) instant = slotInstant(first.hour, first.minute);
+    else if (lockedMatch) {
+      let h = parseInt(lockedMatch[1], 10);
+      if (lockedMatch[3]) { const pm = lockedMatch[3].toUpperCase() === 'PM'; if (pm && h !== 12) h += 12; if (!pm && h === 12) h = 0; }
+      instant = slotInstant(h, parseInt(lockedMatch[2], 10));
+    }
+    if (!instant) instant = slotInstant(12, 0);
+    if (!instant) return booking.date;
+    return new Intl.DateTimeFormat(locale, {
+      timeZone: showInGuestZone ? guestTimeZone : (hostTimeZone || guestTimeZone),
+      weekday: 'long', day: 'numeric', month: 'long'
+    }).format(instant);
+  }
+
+  const timeZoneNote = showInGuestZone
+    ? (t.guestTimezoneNote || 'Times are shown in your time zone') + ` (${guestTimeZone.split('/').pop().replace(/_/g, ' ')}, ${formatUtcOffset(guestTimeZone)})`
+    : '';
 
   function getDayDisplayName(dayKey) {
     const dayIndex = DAY_NAMES_EN.indexOf(dayKey);
@@ -199,12 +249,12 @@ export default function GuestBookingView({ bookingId, lang, t, onClose }) {
               <div className="flex items-center gap-2 text-sm mb-1">
                 <Calendar className="w-4 h-4 text-blue-500" />
                 <span className="font-medium text-slate-700">
-                  {booking.date || `${getDayDisplayName(booking.day)} · ${getDayDate(booking.day)}/${getMonthName(booking.day)}`}
+                  {formatBookingDate()}
                 </span>
               </div>
               <div className="flex items-center gap-2 text-sm text-slate-600 mb-1">
                 <Clock className="w-4 h-4 text-blue-500" />
-                <span>{booking.startTime} – {booking.endTime} · {booking.duration} {t.wizardDurationMinutes || 'min'}</span>
+                <span>{formatTimeString(booking.startTime)} – {formatTimeString(booking.endTime)} · {booking.duration} {t.wizardDurationMinutes || 'min'}</span>
               </div>
               <div className="flex items-center gap-2 text-sm text-slate-600">
                 <span className="font-medium">{t.wizardSubject}:</span> {booking.subject}
@@ -285,7 +335,7 @@ export default function GuestBookingView({ bookingId, lang, t, onClose }) {
                 <div>
                   <p className="text-sm text-slate-500">{t.bookingDayPicker || 'Day'}</p>
                   <p className="font-semibold text-slate-800">
-                    {booking.date || `${getDayDisplayName(booking.day)} · ${getDayDate(booking.day)} ${getMonthName(booking.day)}`}
+                    {formatBookingDate()}
                   </p>
                 </div>
               </div>
@@ -298,11 +348,12 @@ export default function GuestBookingView({ bookingId, lang, t, onClose }) {
                 <div>
                   <p className="text-sm text-slate-500">{t.bookingDuration || 'Duration'}</p>
                   <p className="font-semibold text-slate-800">
-                    {booking.startTime} – {booking.endTime} 
+                    {formatTimeString(booking.startTime)} – {formatTimeString(booking.endTime)} 
                     <span className="text-slate-500 font-normal"> · {booking.duration} {t.wizardDurationMinutes || 'min'}</span>
                   </p>
                 </div>
               </div>
+              {timeZoneNote && <p className="mt-3 text-xs text-blue-700 bg-blue-50 rounded-lg px-3 py-2">{timeZoneNote}</p>}
             </div>
 
             {/* Guest Details Form */}
@@ -416,7 +467,7 @@ export default function GuestBookingView({ bookingId, lang, t, onClose }) {
               <div className="flex items-center gap-2 text-sm mb-2">
                 <Calendar className="w-4 h-4 text-blue-500" />
                 <span className="font-medium text-slate-700">
-                  {booking.date || `${getDayDisplayName(booking.day)} · ${getDayDate(booking.day)}/${getMonthName(booking.day)}`}
+                  {formatBookingDate()}
                 </span>
               </div>
               <div className="flex items-center gap-2 text-sm text-slate-600 mb-2">
@@ -484,9 +535,10 @@ export default function GuestBookingView({ bookingId, lang, t, onClose }) {
               <Clock className="w-3 h-3" />
               <span>{booking.duration} {t.wizardDurationMinutes || 'min'}</span>
               <span className="mx-1">·</span>
-              <span>{booking.date || `${getDayDisplayName(booking.day)}, ${getDayDate(booking.day)} ${getMonthName(booking.day)}`}</span>
+              <span>{formatBookingDate()}</span>
             </div>
           )}
+          {timeZoneNote && <p className="mt-2 text-xs text-blue-700 bg-blue-50 rounded-lg px-3 py-2">{timeZoneNote}</p>}
         </div>
 
         <div className="p-6 space-y-5">

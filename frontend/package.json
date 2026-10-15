@@ -10,9 +10,9 @@
     "cap:sync": "npx cap sync",
     "cap:android": "npx cap open android",
     "cap:ios": "npx cap open ios",
-    "cap:build": "vite build && npx cap copy",
-    "cap:build:android": "vite build && npx cap copy && npx cap sync android",
-    "cap:build:ios": "vite build && npx cap copy && npx cap sync ios"
+    "cap:build": "vite build --base=./ && npx cap copy",
+    "cap:build:android": "vite build --base=./ && npx cap copy && npx cap sync android",
+    "cap:build:ios": "vite build --base=./ && npx cap copy && npx cap sync ios"
   },
   "dependencies": {
     "@hebcal/core": "^6.9.2",
@@ -21,7 +21,8 @@
     "lucide-react": "^0.436.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-router-dom": "^6.26.2"
+    "react-router-dom": "^6.26.2",
+    "suncalc": "^2.1.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
