@@ -3,8 +3,11 @@
   "appName": "CalendAI",
   "webDir": "dist",
   "server": {
-    "androidScheme": "https",
-    "iosScheme": "https"
+    "androidScheme": "https"
+  },
+  "ios": {
+    "contentInset": "never",
+    "backgroundColor": "#ffffff"
   },
   "plugins": {
     "SplashScreen": {

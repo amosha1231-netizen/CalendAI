@@ -113,6 +113,15 @@ console.log('========================================');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+// The native app opens sign-in in the system browser (Google blocks web views),
+// tagged with ?platform=native. The OAuth `state` carries that tag through the
+// provider, and the callback then returns to the app via its URL scheme.
+const NATIVE_OAUTH_STATE = 'native';
+const NATIVE_APP_AUTH_URL = 'com.amos.calendai://auth';
+function oauthReturnBase(req) {
+  return req.query.state === NATIVE_OAUTH_STATE ? NATIVE_APP_AUTH_URL : FRONTEND_URL;
+}
+
 async function createOAuthHandoff(userId) {
   const code = crypto.randomBytes(32).toString('base64url');
   const codeHash = crypto.createHash('sha256').update(code).digest('hex');
@@ -185,13 +194,15 @@ app.set('trust proxy', 1);
 app.set('frontendUrl', FRONTEND_URL);
 
 const corsOrigin = process.env.FRONTEND_URL?.trim() || process.env.CORS_ORIGIN?.trim();
+// Origins of the Capacitor native apps (iOS: capacitor://localhost, Android: https://localhost).
+const NATIVE_APP_ORIGINS = ['capacitor://localhost', 'https://localhost'];
 // CRITICAL: CORS origin must be explicit URLs, NOT wildcard '*', when using credentials: true
-const allowedOrigins = corsOrigin && corsOrigin !== '*'
-  ? corsOrigin.split(',').map(origin => origin.trim().replace(/\/+$/, '')).filter(Boolean)
-  : [
-      'http://localhost:5173',
-      PRODUCTION_APP_URL
-    ];
+const allowedOrigins = [
+  ...(corsOrigin && corsOrigin !== '*'
+    ? corsOrigin.split(',').map(origin => origin.trim().replace(/\/+$/, '')).filter(Boolean)
+    : ['http://localhost:5173', PRODUCTION_APP_URL]),
+  ...NATIVE_APP_ORIGINS
+];
 app.use(cors({
   origin: allowedOrigins,
   credentials: true
@@ -1082,6 +1093,7 @@ app.get('/api/auth/google',
       scope: OAUTH_SCOPES,
       accessType: 'offline',
       prompt: 'consent',
+      ...(req.query.platform === 'native' ? { state: NATIVE_OAUTH_STATE } : {}),
       // @ts-ignore - Passport supports custom params via this property
       customParams: { hl }
     })(req, res, next);
@@ -1090,7 +1102,7 @@ app.get('/api/auth/google',
 
 app.get('/api/auth/google/callback',
   (req, res, next) => {
-    const rawUrl = FRONTEND_URL;
+    const rawUrl = oauthReturnBase(req);
     passport.authenticate('google', {
       session: false,
       failureRedirect: `${rawUrl}/?error=auth_failed`,
@@ -1114,7 +1126,7 @@ app.get('/api/auth/google/callback',
 
       try {
         const code = await createOAuthHandoff(user._id || user.id);
-        res.redirect(`${FRONTEND_URL}/?oauth_code=${encodeURIComponent(code)}&login=success`);
+        res.redirect(`${rawUrl}/?oauth_code=${encodeURIComponent(code)}&login=success`);
       } catch (jwtErr) {
         console.error('=== GOOGLE CALLBACK: JWT CREATION FAILED ===');
         console.error('Error:', jwtErr.message);
@@ -1122,7 +1134,7 @@ app.get('/api/auth/google/callback',
         console.error('JWT_SECRET available:', !!process.env.JWT_SECRET);
         console.error('user object:', JSON.stringify({ _id: user._id, id: user.id, displayName: user.displayName }));
         console.error('============================================');
-        const errorRedirectUrl = `${FRONTEND_URL}/?error=${encodeURIComponent(jwtErr.message)}`;
+        const errorRedirectUrl = `${rawUrl}/?error=${encodeURIComponent(jwtErr.message)}`;
         console.log("Redirecting to (error):", errorRedirectUrl);
         res.redirect(errorRedirectUrl);
       }
@@ -1162,7 +1174,8 @@ app.get('/api/auth/microsoft', (req, res) => {
     `&response_type=code` +
     `&redirect_uri=${encodeURIComponent(redirectUri)}` +
     `&scope=${encodeURIComponent(scopes)}` +
-    `&response_mode=query`;
+    `&response_mode=query` +
+    (req.query.platform === 'native' ? `&state=${NATIVE_OAUTH_STATE}` : '');
 
   res.redirect(authorizeUrl);
 });
@@ -1175,14 +1188,15 @@ app.get('/api/auth/microsoft', (req, res) => {
  */
 app.get('/api/auth/microsoft/callback', async (req, res) => {
   const { code, error } = req.query;
+  const returnBase = oauthReturnBase(req);
 
   if (error) {
     console.error('Microsoft OAuth error:', error);
-    return res.redirect(`${FRONTEND_URL}/?error=microsoft_auth_failed`);
+    return res.redirect(`${returnBase}/?error=microsoft_auth_failed`);
   }
 
   if (!code) {
-    return res.redirect(`${FRONTEND_URL}/?error=microsoft_no_code`);
+    return res.redirect(`${returnBase}/?error=microsoft_no_code`);
   }
 
   try {
@@ -1202,7 +1216,7 @@ app.get('/api/auth/microsoft/callback', async (req, res) => {
     if (!tokenResponse.ok) {
       const tokenError = await tokenResponse.text();
       console.error('Microsoft token exchange failed:', tokenError);
-      return res.redirect(`${FRONTEND_URL}/?error=microsoft_token_exchange_failed`);
+      return res.redirect(`${returnBase}/?error=microsoft_token_exchange_failed`);
     }
 
     const tokens = await tokenResponse.json();
@@ -1217,7 +1231,7 @@ app.get('/api/auth/microsoft/callback', async (req, res) => {
     if (!profileResponse.ok) {
       const profileError = await profileResponse.text();
       console.error('Microsoft profile fetch failed:', profileError);
-      return res.redirect(`${FRONTEND_URL}/?error=microsoft_profile_failed`);
+      return res.redirect(`${returnBase}/?error=microsoft_profile_failed`);
     }
 
     const profile = await profileResponse.json();
@@ -1253,10 +1267,10 @@ app.get('/api/auth/microsoft/callback', async (req, res) => {
     await user.save();
 
     const codeValue = await createOAuthHandoff(user._id || user.id);
-    res.redirect(`${FRONTEND_URL}/?oauth_code=${encodeURIComponent(codeValue)}&login=success`);
+    res.redirect(`${returnBase}/?oauth_code=${encodeURIComponent(codeValue)}&login=success`);
   } catch (err) {
     console.error('Microsoft OAuth callback error:', err);
-    res.redirect(`${FRONTEND_URL}/?error=microsoft_auth_failed`);
+    res.redirect(`${returnBase}/?error=microsoft_auth_failed`);
   }
 });
 

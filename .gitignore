@@ -2,7 +2,6 @@ node_modules/
 .env
 frontend/dist/
 android/
-ios/
 .DS_Store
 *.log
 *.apk
