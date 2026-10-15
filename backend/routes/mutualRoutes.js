@@ -380,15 +380,25 @@ router.post('/sessions/:id/confirm', requireAuth, async (req, res) => {
     // Reuse the same calendar-delete + schedule-pull logic the /cancel route
     // uses for a completed session, instead of duplicating it inline here.
     // Safe to call unconditionally once claimed: it no-ops on whichever side
-    // (calendar event / schedule push) never actually happened.
+    // (calendar event / schedule push) never actually happened. Guarded by
+    // its own try/catch — a transient failure here (e.g. a dropped Mongo
+    // connection on the User.findById lookups inside it) must not skip the
+    // status-reset below or leave this request hanging with no response;
+    // worst case a stray calendar event/schedule entry needs manual cleanup,
+    // which is far better than the session being stuck in 'processing'
+    // forever (unclaimable, unconfirmable, unrecoverable from the UI).
     if (claimed && claimedSession) {
-      await rollbackCompletedSession({
-        hostId: claimedSession.hostId,
-        inviteeId: claimedSession.inviteeId,
-        sessionId: claimedSession.sessionId,
-        hostEventId,
-        inviteeEventId
-      });
+      try {
+        await rollbackCompletedSession({
+          hostId: claimedSession.hostId,
+          inviteeId: claimedSession.inviteeId,
+          sessionId: claimedSession.sessionId,
+          hostEventId,
+          inviteeEventId
+        });
+      } catch (rollbackErr) {
+        console.error('Failed to roll back mutual session side-effects:', rollbackErr.message);
+      }
     }
     if (claimed) await MutualBooking.updateOne({ sessionId: req.params.id, status: 'processing' }, { $set: { status: 'active' } }).catch(() => {});
 
