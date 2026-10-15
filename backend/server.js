@@ -289,6 +289,13 @@ if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET &&
       let user = await User.findOne({ googleId: profile.id });
       if (!user) {
         user = await User.findOne({ email: profile.emails?.[0]?.value || '' });
+        // An account created through Microsoft login carries an email Microsoft
+        // did not necessarily verify, so a stranger could have pre-registered
+        // this address there. Never hand such an account to a Google login.
+        if (user && user.microsoftId && !user.googleId) {
+          console.warn(`Google login refused to link to Microsoft-created account ${user._id}`);
+          return done(null, false, { message: 'email_registered_with_microsoft' });
+        }
         if (user) {
           user.googleId = profile.id;
           if (!user.displayName) user.displayName = profile.displayName;
@@ -1226,21 +1233,22 @@ app.get('/api/auth/microsoft/callback', async (req, res) => {
     const displayName = profile.displayName || '';
 
     // Find or create user in MongoDB
+    // Accounts are matched by Microsoft's stable id only. The email from Graph
+    // (mail / userPrincipalName) can be set by any tenant admin without
+    // verification, so linking by email would let a stranger log in to an
+    // existing account that owns that address.
     let user = await User.findOne({ microsoftId });
     if (!user) {
-      user = await User.findOne({ email: email.toLowerCase() });
-      if (user) {
-        user.microsoftId = microsoftId;
-        if (!user.displayName) user.displayName = displayName;
-        await user.save();
-      } else {
-        user = await User.create({
-          microsoftId,
-          displayName,
-          email: email.toLowerCase(),
-          photo: ''
-        });
+      if (!email || await User.exists({ email: email.toLowerCase() })) {
+        console.warn('Microsoft login refused: email missing or already registered to another account');
+        return res.redirect(`${FRONTEND_URL}/?error=microsoft_email_in_use`);
       }
+      user = await User.create({
+        microsoftId,
+        displayName,
+        email: email.toLowerCase(),
+        photo: ''
+      });
     }
 
     // Save Microsoft tokens
