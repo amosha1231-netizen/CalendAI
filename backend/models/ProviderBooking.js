@@ -30,6 +30,11 @@ const providerBookingSchema = new mongoose.Schema({
 // Atomic double-booking guard: only one non-cancelled reservation may hold
 // a given provider+date+startTime. A duplicate insert attempt fails with a
 // Mongo E11000 error, which route handlers treat as "slot already taken".
+// This only catches a collision at the exact same startTime — two services
+// with different durations can produce overlapping slots at *different*
+// startTimes, which this index does not see. providerRoutes.js' POST
+// /:id/book does a secondary overlap re-check right after insert to narrow
+// that gap (see the comment there); it is not a full fix (no transaction/lock).
 providerBookingSchema.index(
   { providerId: 1, date: 1, startTime: 1 },
   { unique: true, partialFilterExpression: { status: { $ne: 'cancelled' } } }

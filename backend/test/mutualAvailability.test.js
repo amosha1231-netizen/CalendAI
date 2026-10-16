@@ -12,7 +12,7 @@
 const assert = require('node:assert/strict');
 const { test, mock } = require('node:test');
 const {
-  intersectFree, mergeIntervals, sliceIntoSlots, getLocalScheduleBusy, getLocationTimeZone, todayIsoInTimeZone, isValidIsoDate,
+  intersectFree, mergeIntervals, sliceIntoSlots, overlapsAny, getLocalScheduleBusy, getLocationTimeZone, todayIsoInTimeZone, isValidIsoDate,
   isSlotMutuallyFree
 } = require('../services/mutualAvailability');
 
@@ -134,6 +134,42 @@ test('sliceIntoSlots: slices each input range independently, in order', () => {
 
 test('sliceIntoSlots: an empty range list yields no slots', () => {
   assert.deepEqual(sliceIntoSlots([], 30), []);
+});
+
+// ── overlapsAny(): shared strict-overlap predicate used by both
+// computeAvailableSlots' free-slot filter and providerRoutes.js' POST
+// /:id/book secondary double-booking re-check ──
+test('overlapsAny: detects a genuine overlap', () => {
+  assert.equal(overlapsAny(600, 630, [{ start: 615, end: 645 }]), true);
+});
+
+test('overlapsAny: ranges that only touch at a boundary do not count as overlapping', () => {
+  assert.equal(overlapsAny(600, 630, [{ start: 630, end: 660 }]), false);
+  assert.equal(overlapsAny(600, 630, [{ start: 540, end: 600 }]), false);
+});
+
+test('overlapsAny: no overlap against an empty or disjoint range list', () => {
+  assert.equal(overlapsAny(600, 630, []), false);
+  assert.equal(overlapsAny(600, 630, [{ start: 0, end: 100 }, { start: 700, end: 800 }]), false);
+});
+
+// ── Documents a real gap: ProviderBooking's unique index only guards an
+// exact-startTime collision. Two services with different durations, sliced
+// from the same availability window, land on different startTimes but can
+// still overlap in time — the index alone would let both bookings through.
+// This is exactly why providerRoutes.js' POST /:id/book re-checks overlap
+// (via overlapsAny) against every other non-cancelled booking right after
+// its insert, instead of relying on the index alone. ──
+test('sliceIntoSlots: two different-duration services over the same window produce overlapping, differently-timed slots (the gap the index alone misses)', () => {
+  const window = [{ start: 540, end: 600 }]; // 09:00-10:00
+  const thirtyMinSlots = sliceIntoSlots(window, 30); // 09:00-09:30, 09:30-10:00
+  const fortyFiveMinSlots = sliceIntoSlots(window, 45); // 09:00-09:45
+
+  // Different startTimes (so the unique providerId+date+startTime index
+  // would not catch a collision between them)...
+  assert.notDeepEqual(thirtyMinSlots[1], fortyFiveMinSlots[0]);
+  // ...yet the second 30-min slot (09:30-10:00) overlaps the 45-min slot (09:00-09:45).
+  assert.equal(overlapsAny(thirtyMinSlots[1].start, thirtyMinSlots[1].end, [fortyFiveMinSlots[0]]), true);
 });
 
 // ── isValidIsoDate(): guards the 'YYYY-MM-DD' confirm/book inputs against

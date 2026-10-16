@@ -93,6 +93,16 @@ function currentMinuteOfDay(timeZone) {
   return Number(parts.find(p => p.type === 'hour').value) * 60 + Number(parts.find(p => p.type === 'minute').value);
 }
 
+/**
+ * True if [startMin,endMin) strictly overlaps any range in `ranges` (touching
+ * at a boundary, e.g. 10:00-10:30 against 10:30-11:00, does not count).
+ * Pure function — shared so every overlap check in the codebase (free-slot
+ * filtering, the provider double-booking re-check) uses the same rule.
+ */
+function overlapsAny(startMin, endMin, ranges) {
+  return ranges.some(r => startMin < r.end && endMin > r.start);
+}
+
 /** Merge overlapping/adjacent [start,end) intervals (minutes). Pure function. */
 function mergeIntervals(intervals) {
   const sorted = intervals
@@ -301,6 +311,7 @@ module.exports = {
   intersectFree,
   mergeIntervals,
   sliceIntoSlots,
+  overlapsAny,
   getFreeBusyForDay,
   getLocalScheduleBusy,
   getLocationTimeZone,

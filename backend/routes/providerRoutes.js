@@ -15,7 +15,7 @@ const User = require('../models/User');
 const ProviderBooking = require('../models/ProviderBooking');
 const { createOAuth2ClientWithRefresh } = require('../services/googleCalendar');
 const {
-  mergeIntervals, sliceIntoSlots, isValidIsoDate, getLocationTimeZone, todayIsoInTimeZone
+  mergeIntervals, sliceIntoSlots, overlapsAny, isValidIsoDate, getLocationTimeZone, todayIsoInTimeZone
 } = require('../services/mutualAvailability');
 const { google } = require('googleapis');
 
@@ -145,9 +145,7 @@ async function computeAvailableSlots(req, provider, service, dateStr) {
     .filter(r => r.start !== null && r.end !== null);
 
   const occupied = [...bookedRanges, ...scheduleRanges];
-  const freeSlots = candidates.filter(c =>
-    !occupied.some(o => c.startMin < o.end && c.endMin > o.start)
-  );
+  const freeSlots = candidates.filter(c => !overlapsAny(c.startMin, c.endMin, occupied));
 
   return {
     dayName,
@@ -523,6 +521,32 @@ router.post('/:id/book', bookLimiter, async (req, res) => {
         return res.status(409).json({ error: 'השעה שנבחרה הוזמנה הרגע על ידי מישהו אחר. בחר שעה אחרת.' });
       }
       throw createErr;
+    }
+
+    // The unique index above only catches a second booking at the exact same
+    // startTime — it does NOT stop a double-booking between two *different*
+    // services whose slots are sliced to different durations and so can
+    // overlap at different startTimes (e.g. a 30-min and a 45-min service
+    // both starting from the same availability window). Re-check for any
+    // other non-cancelled booking on this provider+date whose range overlaps
+    // the one just claimed, and undo our own insert if one slipped in
+    // between the availability read above and this create. Still a
+    // (much narrower) check-then-act race, not a transaction — closing it
+    // fully would need a per-provider lock, which is a larger change.
+    const claimedStartMin = timeToMinutes(matchedSlot.startTime);
+    const claimedEndMin = timeToMinutes(matchedSlot.endTime);
+    const otherBookings = await ProviderBooking.find({
+      providerId: provider._id,
+      date,
+      status: { $ne: 'cancelled' },
+      _id: { $ne: createdBooking._id }
+    }).select('startTime endTime').lean();
+    const otherRanges = otherBookings
+      .map(b => ({ start: timeToMinutes(b.startTime), end: timeToMinutes(b.endTime) }))
+      .filter(r => r.start !== null && r.end !== null);
+    if (overlapsAny(claimedStartMin, claimedEndMin, otherRanges)) {
+      await ProviderBooking.deleteOne({ _id: createdBooking._id }).catch(() => {});
+      return res.status(409).json({ error: 'השעה שנבחרה הוזמנה הרגע על ידי מישהו אחר. בחר שעה אחרת.' });
     }
 
     const DEFAULT_LOCATION_ID = req.app.get('DEFAULT_LOCATION_ID');
