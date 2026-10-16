@@ -26,8 +26,11 @@ const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Frid
 // `/lookup` resolves an arbitrary email to "found" + "has Google Calendar
 // connected" — without a limiter, it's an open account-enumeration oracle
 // for anyone signed in. `/sessions` creates a DB row and emails-by-proxy an
-// invitee's lookup on every call. Neither route is AI-metered, so the
-// server.js aiLimiter doesn't cover them.
+// invitee's lookup on every call. `/sessions/:id/availability` calls Google's
+// freebusy.query for BOTH host and invitee, once per day in range (up to 14
+// days = ~28 Google API calls per request) — unmetered, a tight retry loop
+// could burn through Google API quota fast. None of these routes are
+// AI-metered, so the server.js aiLimiter doesn't cover them.
 const mutualAbuseLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 20,
@@ -221,7 +224,7 @@ router.post('/sessions', mutualAbuseLimiter, requireAuth, async (req, res) => {
 // GET /api/mutual/sessions/:id/availability
 // Returns mutual free slots across the next few days for both users.
 // ──────────────────────────────────────────────
-router.get('/sessions/:id/availability', requireAuth, async (req, res) => {
+router.get('/sessions/:id/availability', mutualAbuseLimiter, requireAuth, async (req, res) => {
   try {
     const session = await loadAuthorizedSession(req, res);
     if (!session) return;

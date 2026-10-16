@@ -1,9 +1,11 @@
 // ──────────────────────────────────────────────
-// Characterization tests for the abuse-rate-limiters added to the two
+// Characterization tests for the abuse-rate-limiters added to the
 // mutual/provider routes reachable without first proving ownership of
 // anything (lookup is an email-enumeration oracle; book is open to
-// anonymous guests): mutualRoutes.js' mutualAbuseLimiter (GET /lookup,
-// POST /sessions) and providerRoutes.js' bookLimiter (POST /:id/book).
+// anonymous guests; availability fans out to ~2 Google freebusy.query calls
+// per day in range): mutualRoutes.js' mutualAbuseLimiter (GET /lookup,
+// POST /sessions, GET /sessions/:id/availability) and providerRoutes.js'
+// bookLimiter (POST /:id/book).
 //
 // Both limiters sit in front of the auth/validation that would otherwise
 // reject these requests (401 for no token, 400 for a malformed provider
@@ -19,8 +21,18 @@ const { test } = require('node:test');
 const http = require('node:http');
 const express = require('express');
 
-const mutualRoutes = require('../routes/mutualRoutes');
 const providerRoutes = require('../routes/providerRoutes');
+const mutualRoutesPath = require.resolve('../routes/mutualRoutes');
+
+// mutualAbuseLimiter is a single express-rate-limit instance shared by every
+// route it guards (lookup, sessions, availability) — re-requiring the router
+// fresh per test (busting the module cache) gives each test its own limiter
+// state instead of inheriting a counter already run up by an earlier test
+// in this same process/window.
+function freshMutualRoutes() {
+  delete require.cache[mutualRoutesPath];
+  return require(mutualRoutesPath);
+}
 
 function startApp(routerPath, router) {
   const app = express();
@@ -32,7 +44,7 @@ function startApp(routerPath, router) {
 }
 
 test('mutual /lookup: the 21st request in a minute (no auth) is rate-limited, not just unauthorized', async () => {
-  const { server, base } = startApp('/api/mutual', mutualRoutes);
+  const { server, base } = startApp('/api/mutual', freshMutualRoutes());
   try {
     const statuses = [];
     for (let i = 0; i < 21; i++) {
@@ -42,6 +54,21 @@ test('mutual /lookup: the 21st request in a minute (no auth) is rate-limited, no
     // No Authorization header on any of them, so every request that gets
     // past the limiter is rejected by requireAuth with 401 — the limiter
     // itself fires strictly on request count, before requireAuth ever runs.
+    assert.ok(statuses.slice(0, 20).every(s => s === 401), 'the first 20 requests should all reach requireAuth and get 401');
+    assert.equal(statuses[20], 429, 'the 21st request within the window must be rate-limited');
+  } finally {
+    server.close();
+  }
+});
+
+test('mutual /sessions/:id/availability: the 21st request in a minute (no auth) is rate-limited, not just unauthorized', async () => {
+  const { server, base } = startApp('/api/mutual', freshMutualRoutes());
+  try {
+    const statuses = [];
+    for (let i = 0; i < 21; i++) {
+      const res = await fetch(`${base}/api/mutual/sessions/does-not-exist/availability`);
+      statuses.push(res.status);
+    }
     assert.ok(statuses.slice(0, 20).every(s => s === 401), 'the first 20 requests should all reach requireAuth and get 401');
     assert.equal(statuses[20], 429, 'the 21st request within the window must be rate-limited');
   } finally {
