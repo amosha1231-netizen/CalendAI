@@ -238,6 +238,15 @@ const aiLimiter = rateLimit({
   message: { error: 'Too many requests. Please try again in a minute.' }
 });
 
+// Email/password login and sign-up: stops password guessing from one address.
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many attempts. Please try again in 15 minutes.' }
+});
+
 // ──────────────────────────────────────────────
 // Global Shabbat Middleware — blocks ALL API requests during Shabbat
 // except for: /api/health, /api/shabbat/status, and static files.
@@ -298,6 +307,14 @@ if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET &&
         }
         if (user) {
           user.googleId = profile.id;
+          // Password sign-up never verifies the email, so a stranger could have
+          // registered this address first with a password of their own. Google
+          // has now proven who owns it: drop that password so only the owner
+          // can get in.
+          if (user.password) {
+            console.warn(`Google login cleared the unverified password on account ${user._id}`);
+            user.password = undefined;
+          }
           if (!user.displayName) user.displayName = profile.displayName;
           if (!user.photo) user.photo = profile.photos?.[0]?.value || '';
           await user.save();
@@ -1379,14 +1396,14 @@ app.post('/api/auth/logout', (req, res) => {
  * POST /api/auth/register
  * Register a new user with email and password.
  */
-app.post('/api/auth/register', async (req, res) => {
+app.post('/api/auth/register', authLimiter, async (req, res) => {
   try {
     const { email, password, name } = req.body;
     if (!email || !password) {
       return res.status(400).json({ error: 'Email and password are required.' });
     }
-    if (password.length < 6) {
-      return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+    if (typeof password !== 'string' || password.length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters.' });
     }
 
     // Check if user already exists
@@ -1434,7 +1451,7 @@ app.post('/api/auth/register', async (req, res) => {
  * POST /api/auth/login
  * Login with email and password.
  */
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', authLimiter, async (req, res) => {
   try {
     const { email, password } = req.body;
     if (!email || !password) {
