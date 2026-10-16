@@ -14,9 +14,14 @@ const rateLimit = require('express-rate-limit');
 const User = require('../models/User');
 const ProviderBooking = require('../models/ProviderBooking');
 const { createOAuth2ClientWithRefresh } = require('../services/googleCalendar');
+// Imported as a namespace (not destructured) so computeAvailableSlots' call
+// to getFreeBusyForDay can be stubbed in tests via mock.method on the module
+// object — a destructured reference would keep pointing at the original
+// function after the module is mocked.
+const mutualAvailability = require('../services/mutualAvailability');
 const {
   mergeIntervals, sliceIntoSlots, overlapsAny, isValidIsoDate, getLocationTimeZone, todayIsoInTimeZone
-} = require('../services/mutualAvailability');
+} = mutualAvailability;
 const { google } = require('googleapis');
 
 const VALID_DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -35,6 +40,21 @@ const bookLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'יותר מדי ניסיונות הזמנה. נסה שוב בעוד דקה.' }
+});
+
+// GET /:id/availability is also reachable by anonymous guests, and — now
+// that computeAvailableSlots cross-checks a Google-connected provider's own
+// freebusy — can trigger a live Google Calendar API call per request. Same
+// quota-exhaustion concern mutualRoutes.js' mutualAbuseLimiter documents for
+// GET /sessions/:id/availability; a higher ceiling than bookLimiter since a
+// single legitimate booking session calls this repeatedly while the guest
+// tries different dates/services, not just once.
+const availabilityLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'יותר מדי בדיקות זמינות. נסה שוב בעוד דקה.' }
 });
 
 function currentMinuteOfDay(timeZone) {
@@ -144,7 +164,37 @@ async function computeAvailableSlots(req, provider, service, dateStr) {
     .map(ev => ({ start: timeToMinutes(ev.startTime), end: timeToMinutes(ev.endTime) }))
     .filter(r => r.start !== null && r.end !== null);
 
-  const occupied = [...bookedRanges, ...scheduleRanges];
+  // The provider's local `schedule` only has what CalendAI itself wrote
+  // there (ProviderBookings, mutual meetings, manually-added events) — a
+  // personal appointment that lives only on the provider's own Google
+  // Calendar (never round-tripped into CalendAI) would otherwise still show
+  // as bookable here. mutualAvailability.js's isSlotMutuallyFree/
+  // getMutualFreeSlots already treat this as load-bearing enough to pull
+  // Google freebusy for both parties on every call; a public provider
+  // booking page needs the exact same guard for the one person on it who
+  // actually has calendar conflicts to avoid.
+  let googleBusyRanges = [];
+  if (provider.googleAccessToken) {
+    const toHHMM = min => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+    const windowStartMin = mergedRanges[0].start;
+    const windowEndMin = mergedRanges[mergedRanges.length - 1].end;
+    try {
+      googleBusyRanges = await mutualAvailability.getFreeBusyForDay(
+        provider, dateStr, toHHMM(windowStartMin), toHHMM(windowEndMin), timeZone
+      );
+    } catch (err) {
+      // Fail closed, same as the single-user /api/schedule/free-slots route
+      // on a Google fetch failure (server.js) — showing slots as open when
+      // we couldn't actually check the provider's calendar risks a real
+      // double-booking, which is worse than a temporarily-unavailable page.
+      throw Object.assign(
+        new Error("לא ניתן לבדוק את יומן Google של נותן השירות כעת. נסה שוב."),
+        { status: 502 }
+      );
+    }
+  }
+
+  const occupied = [...bookedRanges, ...scheduleRanges, ...googleBusyRanges];
   const freeSlots = candidates.filter(c => !overlapsAny(c.startMin, c.endMin, occupied));
 
   return {
@@ -403,7 +453,7 @@ router.get('/:id', async (req, res) => {
 // ──────────────────────────────────────────────
 // GET /api/providers/:id/availability?date=YYYY-MM-DD&serviceId=...
 // ──────────────────────────────────────────────
-router.get('/:id/availability', async (req, res) => {
+router.get('/:id/availability', availabilityLimiter, async (req, res) => {
   try {
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
       return res.status(400).json({ error: 'מזהה נותן שירות לא תקין.' });
@@ -442,7 +492,7 @@ router.get('/:id/availability', async (req, res) => {
     });
   } catch (err) {
     console.error('Provider availability error:', err);
-    res.status(500).json({ error: 'שגיאה בטעינת הזמינות.' });
+    res.status(err.status || 500).json({ error: err.message || 'שגיאה בטעינת הזמינות.' });
   }
 });
 
@@ -654,6 +704,7 @@ router.post('/:id/book', bookLimiter, async (req, res) => {
 });
 
 module.exports = router;
-// Exposed for unit testing only (pure function, no I/O) — the router itself
-// stays the module's default export so `app.use('/api/providers', ...)` is unaffected.
+// Exposed for unit testing only — the router itself stays the module's
+// default export so `app.use('/api/providers', ...)` is unaffected.
 module.exports.mapServicesForSave = mapServicesForSave;
+module.exports.computeAvailableSlots = computeAvailableSlots;

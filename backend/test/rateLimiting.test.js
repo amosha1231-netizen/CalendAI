@@ -96,3 +96,20 @@ test('provider /:id/book: the 11th request in a minute is rate-limited, not just
     server.close();
   }
 });
+
+test('provider /:id/availability: the 31st request in a minute is rate-limited, not just a validation error', async () => {
+  const { server, base } = startApp('/api/providers', providerRoutes);
+  try {
+    const statuses = [];
+    for (let i = 0; i < 31; i++) {
+      // A malformed id fails mongoose.Types.ObjectId.isValid() before any
+      // Mongo query or Google Calendar call — exercising the limiter alone.
+      const res = await fetch(`${base}/api/providers/not-a-valid-id/availability?date=2026-12-01&serviceId=x`);
+      statuses.push(res.status);
+    }
+    assert.ok(statuses.slice(0, 30).every(s => s === 400), 'the first 30 requests should all reach the handler and fail validation with 400');
+    assert.equal(statuses[30], 429, 'the 31st request within the window must be rate-limited');
+  } finally {
+    server.close();
+  }
+});
