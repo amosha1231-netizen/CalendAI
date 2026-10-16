@@ -5,7 +5,9 @@
 // anonymous guests; availability fans out to ~2 Google freebusy.query calls
 // per day in range): mutualRoutes.js' mutualAbuseLimiter (GET /lookup,
 // POST /sessions, GET /sessions/:id/availability) and providerRoutes.js'
-// bookLimiter (POST /:id/book).
+// bookLimiter (POST /:id/book) and availabilityLimiter (GET /:id/availability
+// — also able to trigger a live Google freebusy call, once computeAvailableSlots
+// started cross-checking the provider's own Google Calendar).
 //
 // Both limiters sit in front of the auth/validation that would otherwise
 // reject these requests (401 for no token, 400 for a malformed provider
