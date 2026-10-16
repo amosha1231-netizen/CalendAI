@@ -409,6 +409,38 @@ router.post('/sessions/:id/confirm', requireAuth, async (req, res) => {
   }
 });
 
+/**
+ * Atomically transition a mutual session to 'cancelled' and roll back
+ * whichever Google Calendar events/schedule entries it actually holds.
+ * Exported so the race it closes can be exercised directly in tests
+ * (see mutualBooking.test.js) without standing up Google Calendar mocks.
+ *
+ * Deliberately a single atomic findOneAndUpdate rather than a read then a
+ * separate write: /confirm races this in-between, claiming 'active' ->
+ * 'processing' and finishing ('processing' -> 'completed', with both Google
+ * Calendar events already inserted) before a separate write here would run.
+ * Deciding whether to roll back from an earlier, now-stale status read would
+ * let a session that just got confirmed get marked 'cancelled' here without
+ * ever deleting the two just-created Google Calendar events or pulling the
+ * mirrored schedule entries — silently orphaning them on both calendars.
+ * The pre-image this returns (`prior`) reflects whatever the document
+ * actually held the instant this update applied, so the rollback decision
+ * can never be made on stale state.
+ */
+async function cancelMutualSession(sessionId) {
+  const prior = await MutualBooking.findOneAndUpdate(
+    { sessionId, status: { $ne: 'cancelled' } },
+    { $set: { status: 'cancelled' } },
+    { new: false }
+  );
+  if (!prior) return { alreadyCancelled: true };
+
+  if (prior.status === 'completed') {
+    await rollbackCompletedSession(prior);
+  }
+  return { alreadyCancelled: false };
+}
+
 // ──────────────────────────────────────────────
 // POST /api/mutual/sessions/:id/cancel
 // ──────────────────────────────────────────────
@@ -418,11 +450,8 @@ router.post('/sessions/:id/cancel', requireAuth, async (req, res) => {
     if (!session) return;
     if (session.status === 'cancelled') return res.json({ ok: true, alreadyCancelled: true });
 
-    if (session.status === 'completed') {
-      await rollbackCompletedSession(session);
-    }
-    await MutualBooking.updateOne({ sessionId: req.params.id }, { $set: { status: 'cancelled' } });
-    res.json({ ok: true });
+    const { alreadyCancelled } = await cancelMutualSession(req.params.id);
+    res.json({ ok: true, alreadyCancelled });
   } catch (err) {
     console.error('Cancel mutual session error:', err);
     res.status(500).json({ error: 'Failed to cancel session.' });
@@ -430,3 +459,6 @@ router.post('/sessions/:id/cancel', requireAuth, async (req, res) => {
 });
 
 module.exports = router;
+// Exposed for unit testing only — the router itself stays the module's
+// default export so `app.use('/api/mutual', ...)` is unaffected.
+module.exports.cancelMutualSession = cancelMutualSession;

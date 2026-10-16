@@ -8,6 +8,12 @@ const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
 const DAY_LABELS_HE = { Sunday: "ראשון", Monday: "שני", Tuesday: "שלישי", Wednesday: "רביעי", Thursday: "חמישי", Friday: "שישי" };
 const DAY_LABELS_EN = { Sunday: "Sunday", Monday: "Monday", Tuesday: "Tuesday", Wednesday: "Wednesday", Thursday: "Thursday", Friday: "Friday" };
 
+// Mirror backend/routes/providerRoutes.js' MAX_SERVICES/MAX_AVAILABILITY_ROWS
+// so "Add" silently stops instead of letting the user build a list the PUT
+// /api/providers/me save will just reject outright.
+const MAX_SERVICES = 20;
+const MAX_AVAILABILITY_ROWS = 50;
+
 const CATEGORY_OPTIONS = ['general', 'barber', 'trainer', 'consultant', 'therapist'];
 const CATEGORY_LABELS_HE = { general: "⭐ כללי", barber: "💇 מספרה", trainer: "🏋️ מאמן", consultant: "💼 יועץ", therapist: "🧘 מטפל" };
 const CATEGORY_LABELS_EN = { general: "⭐ General", barber: "💇 Barber", trainer: "🏋️ Trainer", consultant: "💼 Consultant", therapist: "🧘 Therapist" };
@@ -115,6 +121,7 @@ export default function ProviderProfileEditor({ lang, user, onClose }) {
   };
 
   const addService = () => {
+    if (services.length >= MAX_SERVICES) return;
     setServices([...services, { name: "", duration: 30, price: 0, active: true }]);
   };
   const updateService = (index, field, value) => {
@@ -125,6 +132,7 @@ export default function ProviderProfileEditor({ lang, user, onClose }) {
   };
 
   const addAvailabilityRow = () => {
+    if (availability.length >= MAX_AVAILABILITY_ROWS) return;
     setAvailability([...availability, { day: "Sunday", startTime: "09:00 AM", endTime: "05:00 PM" }]);
   };
   const updateAvailabilityRow = (index, field, value) => {
@@ -245,7 +253,11 @@ export default function ProviderProfileEditor({ lang, user, onClose }) {
                 <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">
                   {lang === "he" ? "שירותים" : "Services"}
                 </h3>
-                <button onClick={addService} className="text-xs font-medium text-indigo-600 hover:text-indigo-700 flex items-center gap-1">
+                <button
+                  onClick={addService}
+                  disabled={services.length >= MAX_SERVICES}
+                  className="text-xs font-medium text-indigo-600 hover:text-indigo-700 flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
                   <Plus className="w-3.5 h-3.5" /> {lang === "he" ? "הוסף שירות" : "Add service"}
                 </button>
               </div>
@@ -302,7 +314,11 @@ export default function ProviderProfileEditor({ lang, user, onClose }) {
                 <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">
                   {lang === "he" ? "זמינות שבועית" : "Weekly availability"}
                 </h3>
-                <button onClick={addAvailabilityRow} className="text-xs font-medium text-indigo-600 hover:text-indigo-700 flex items-center gap-1">
+                <button
+                  onClick={addAvailabilityRow}
+                  disabled={availability.length >= MAX_AVAILABILITY_ROWS}
+                  className="text-xs font-medium text-indigo-600 hover:text-indigo-700 flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
                   <Plus className="w-3.5 h-3.5" /> {lang === "he" ? "הוסף יום" : "Add day"}
                 </button>
               </div>

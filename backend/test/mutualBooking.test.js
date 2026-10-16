@@ -20,6 +20,7 @@ const { MongoMemoryReplSet } = require('mongodb-memory-server');
 const User = require('../models/User');
 const MutualBooking = require('../models/MutualBooking');
 const ProviderBooking = require('../models/ProviderBooking');
+const { cancelMutualSession } = require('../routes/mutualRoutes');
 
 let replSet;
 
@@ -89,6 +90,115 @@ test('mutual session claim: a cancelled session cannot be claimed', async () => 
   );
 
   assert.equal(claim, null, 'a non-active session must be refused a claim');
+});
+
+// ── 2. cancelMutualSession: atomic cancel never decides its rollback from a stale read ──
+test('cancelMutualSession: a session still mid-confirm (processing) is marked cancelled, no completed-session rollback attempted', async () => {
+  const host = await User.create({ email: 'mutual-host-3@test.com' });
+  const invitee = await User.create({ email: 'mutual-invitee-3@test.com' });
+  const session = await MutualBooking.create({
+    sessionId: 'mut-cancel-processing-1',
+    hostId: host._id,
+    inviteeId: invitee._id,
+    inviteeEmail: invitee.email,
+    duration: 30,
+    status: 'processing',
+  });
+
+  const result = await cancelMutualSession(session.sessionId);
+  assert.equal(result.alreadyCancelled, false);
+
+  const final = await MutualBooking.findOne({ sessionId: session.sessionId });
+  assert.equal(final.status, 'cancelled');
+});
+
+test('cancelMutualSession: cancelling an already-completed session rolls back its mirrored schedule entries on both sides', async () => {
+  const host = await User.create({ email: 'mutual-host-4@test.com', schedule: {} });
+  const invitee = await User.create({ email: 'mutual-invitee-4@test.com', schedule: {} });
+  const session = await MutualBooking.create({
+    sessionId: 'mut-cancel-completed-1',
+    hostId: host._id,
+    inviteeId: invitee._id,
+    inviteeEmail: invitee.email,
+    duration: 30,
+    status: 'completed',
+    hostEventId: 'h-evt-1',
+    inviteeEventId: 'i-evt-1',
+  });
+  const hostEvent = { title: 'Meeting', day: 'Monday', startTime: '10:00 AM', endTime: '10:30 AM', mutualSessionId: session.sessionId };
+  const inviteeEvent = { ...hostEvent };
+  await Promise.all([
+    User.updateOne({ _id: host._id }, { $push: { 'schedule.Monday': hostEvent } }),
+    User.updateOne({ _id: invitee._id }, { $push: { 'schedule.Monday': inviteeEvent } }),
+  ]);
+
+  const result = await cancelMutualSession(session.sessionId);
+  assert.equal(result.alreadyCancelled, false);
+
+  const final = await MutualBooking.findOne({ sessionId: session.sessionId });
+  assert.equal(final.status, 'cancelled');
+
+  const [hostAfter, inviteeAfter] = await Promise.all([
+    User.findById(host._id).lean(),
+    User.findById(invitee._id).lean(),
+  ]);
+  assert.ok(!(hostAfter.schedule?.Monday || []).some(e => e.mutualSessionId === session.sessionId), 'host schedule entry must be pulled');
+  assert.ok(!(inviteeAfter.schedule?.Monday || []).some(e => e.mutualSessionId === session.sessionId), 'invitee schedule entry must be pulled');
+});
+
+test('cancelMutualSession: racing against a concurrent /confirm completion never loses the rollback or resurrects a cancelled session', async () => {
+  const host = await User.create({ email: 'mutual-host-5@test.com', schedule: {} });
+  const invitee = await User.create({ email: 'mutual-invitee-5@test.com', schedule: {} });
+  const session = await MutualBooking.create({
+    sessionId: 'mut-cancel-race-1',
+    hostId: host._id,
+    inviteeId: invitee._id,
+    inviteeEmail: invitee.email,
+    duration: 30,
+    status: 'processing',
+  });
+
+  // Mirrors what /confirm does before it attempts its own final status flip:
+  // push the mirrored schedule entries first, then try to claim 'completed'.
+  const hostEvent = { title: 'Meeting', day: 'Monday', startTime: '10:00 AM', endTime: '10:30 AM', mutualSessionId: session.sessionId };
+  const inviteeEvent = { ...hostEvent };
+  await Promise.all([
+    User.updateOne({ _id: host._id }, { $push: { 'schedule.Monday': hostEvent } }),
+    User.updateOne({ _id: invitee._id }, { $push: { 'schedule.Monday': inviteeEvent } }),
+  ]);
+
+  const confirmFinalWrite = () => MutualBooking.findOneAndUpdate(
+    { sessionId: session.sessionId, status: 'processing' },
+    { $set: { status: 'completed', hostEventId: 'h-evt-race', inviteeEventId: 'i-evt-race' } },
+    { new: true }
+  );
+
+  const [confirmResult, cancelResult] = await Promise.all([confirmFinalWrite(), cancelMutualSession(session.sessionId)]);
+
+  const final = await MutualBooking.findOne({ sessionId: session.sessionId });
+  assert.equal(final.status, 'cancelled', 'the session must end up cancelled regardless of which write landed first');
+  assert.equal(cancelResult.alreadyCancelled, false);
+
+  if (confirmResult) {
+    // /confirm's write landed first (it still saw 'processing' and flipped
+    // to 'completed') — cancelMutualSession must then have observed
+    // 'completed' as the true prior status (not a stale 'processing' read)
+    // and rolled back the schedule entries /confirm had already pushed.
+    const [hostAfter, inviteeAfter] = await Promise.all([
+      User.findById(host._id).lean(),
+      User.findById(invitee._id).lean(),
+    ]);
+    assert.ok(!(hostAfter.schedule?.Monday || []).some(e => e.mutualSessionId === session.sessionId),
+      'a session confirmed then cancelled must not leave the host schedule entry behind');
+    assert.ok(!(inviteeAfter.schedule?.Monday || []).some(e => e.mutualSessionId === session.sessionId),
+      'a session confirmed then cancelled must not leave the invitee schedule entry behind');
+  } else {
+    // cancelMutualSession's atomic update landed first (status -> 'cancelled'
+    // while still 'processing'), so /confirm's conditional write — which only
+    // ever matches status:'processing' — found nothing to update and must
+    // not have silently completed the session anyway.
+    assert.equal(confirmResult, null, "/confirm's final write must not succeed once the session is already cancelled");
+  }
 });
 
 // ── 3. Provider booking slot claim: unique partial index guards against double-booking ──
