@@ -229,6 +229,33 @@ test('isSlotMutuallyFree: rejects a Saturday (Shabbat) slot without even checkin
   assert.deepEqual(result, { free: false, timeZone: 'Asia/Jerusalem' });
 });
 
+// ── isSlotMutuallyFree(): the same "never confirm a slot that already
+// started today" cutoff getMutualFreeSlots() applies when *listing* slots
+// (via currentMinuteOfDay) must also be enforced here, independently, since
+// this is the function the /confirm route's race-guard actually calls for a
+// client-supplied date/time — a stale list or a direct API call could still
+// submit an already-passed slot otherwise. Same proof technique as the
+// Shabbat test above: fake credentials that would blow up if the function
+// ever reached the freebusy.query call instead of short-circuiting first.
+test('isSlotMutuallyFree: rejects a same-day slot that has already started, without checking the calendars', async () => {
+  const host = { _id: 'host-1', googleAccessToken: 'fake' };
+  const invitee = { _id: 'invitee-1', googleAccessToken: 'fake' };
+  // 2026-11-04 is a Wednesday (not Shabbat). Mock "now" to 10:00 Asia/Jerusalem
+  // (08:00Z, Israel is UTC+2 in November) and ask to confirm a 09:00 AM slot.
+  mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-04T08:00:00Z').getTime() });
+  try {
+    const result = await isSlotMutuallyFree(host, invitee, {
+      locationId: 'jerusalem',
+      date: '2026-11-04',
+      startTime: '09:00 AM',
+      endTime: '09:30 AM'
+    });
+    assert.deepEqual(result, { free: false, timeZone: 'Asia/Jerusalem' });
+  } finally {
+    mock.timers.reset();
+  }
+});
+
 test('todayIsoInTimeZone: resolves the calendar day in the given timezone, not the server/UTC day', () => {
   // 2026-11-02T02:30:00Z is already Nov 2 in UTC, but still 21:30 on Nov 1
   // in America/New_York (UTC-5 in November) — a UTC-day check would wrongly
