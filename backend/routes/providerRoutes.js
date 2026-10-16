@@ -29,6 +29,18 @@ const MAX_SERVICES = 20;
 const MAX_AVAILABILITY_ROWS = 50;
 const DEFAULT_LOCATION_ID = 'jerusalem';
 
+/**
+ * Escape regex metacharacters so a search term is matched literally.
+ * GET / below passes the trimmed query straight into a Mongo $regex — without
+ * this, a guest typing something like "(a+)+$" isn't just searching oddly,
+ * they're handing the server's regex engine a classic catastrophic-
+ * backtracking pattern to run against every provider's businessName/bio/
+ * displayName, unauthenticated and with no rate limit of its own before this.
+ */
+function escapeRegex(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 // POST /:id/book is reachable by anonymous guests (no auth required) and
 // writes a DB row + optionally a Google Calendar event per call — without a
 // limiter it's an open door for booking-spam or for sweeping a provider's
@@ -55,6 +67,17 @@ const availabilityLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'יותר מדי בדיקות זמינות. נסה שוב בעוד דקה.' }
+});
+
+// GET / (browse) is also fully public and runs an uncached, unindexed
+// $regex scan over every enabled provider per request — same "no limiter in
+// front of an open, unauthenticated query" shape as the routes above.
+const browseLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'יותר מדי חיפושים. נסה שוב בעוד דקה.' }
 });
 
 function currentMinuteOfDay(timeZone) {
@@ -382,13 +405,13 @@ router.post('/bookings/:id/cancel', async (req, res) => {
 // GET /api/providers — browse public providers
 // Query: ?q=keyword&category=barber
 // ──────────────────────────────────────────────
-router.get('/', async (req, res) => {
+router.get('/', browseLimiter, async (req, res) => {
   try {
     const { q, category } = req.query;
     const filter = { 'providerProfile.enabled': true };
     if (category && category !== 'all') filter['providerProfile.category'] = category;
     if (q && q.trim()) {
-      const safe = q.trim().slice(0, 100);
+      const safe = escapeRegex(q.trim().slice(0, 100));
       filter.$or = [
         { 'providerProfile.businessName': { $regex: safe, $options: 'i' } },
         { 'providerProfile.bio': { $regex: safe, $options: 'i' } },
@@ -708,3 +731,4 @@ module.exports = router;
 // default export so `app.use('/api/providers', ...)` is unaffected.
 module.exports.mapServicesForSave = mapServicesForSave;
 module.exports.computeAvailableSlots = computeAvailableSlots;
+module.exports.escapeRegex = escapeRegex;
