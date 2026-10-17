@@ -16,6 +16,17 @@ try {
 const DEFAULT_LOCATION_ID = 'jerusalem';
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
+// Friday Shabbat-start cutoff (minutes since midnight) — the same 16:00
+// boundary already enforced elsewhere in this app (eventRoutes.js'
+// checkShabbatBlock for Siri-created events, and aiService.js's parsing
+// prompt: "Friday ... From 16:00 onward — Shabbat has started. DO NOT
+// schedule any events starting at or after this time on Friday"). Saturday
+// is already excluded outright everywhere below via shabbatService.isShabbatDay;
+// without this, a Friday meeting/booking could still be offered or confirmed
+// running straight through candle-lighting and into Shabbat, since nothing
+// else in this file treats Friday evening as off-limits.
+const FRIDAY_SHABBAT_CUTOFF_MIN = 16 * 60;
+
 function getLocation(locationId) {
   return LOCATIONS.find(l => l.id === locationId) || LOCATIONS.find(l => l.id === DEFAULT_LOCATION_ID) || null;
 }
@@ -243,6 +254,14 @@ async function isSlotMutuallyFree(host, invitee, { locationId, date, startTime, 
     return { free: false, timeZone };
   }
 
+  // Same hard guard, extended to Friday evening: Saturday is excluded
+  // outright above, but a Friday slot that STARTS before the Shabbat-start
+  // cutoff and RUNS PAST it is just as much a Shabbat violation — hence
+  // checking endMin, not startMin. See FRIDAY_SHABBAT_CUTOFF_MIN above.
+  if (dayName === 'Friday' && endMin > FRIDAY_SHABBAT_CUTOFF_MIN) {
+    return { free: false, timeZone };
+  }
+
   const [busyHost, busyInvitee] = await Promise.all([
     getFreeBusyForDay(host, date, dayStartHHMM, dayEndHHMM, timeZone),
     getFreeBusyForDay(invitee, date, dayStartHHMM, dayEndHHMM, timeZone)
@@ -290,7 +309,12 @@ async function getMutualFreeSlots(host, invitee, { locationId, duration, rangeDa
     const combinedInvitee = [...busyInvitee, ...getLocalScheduleBusy(invitee, isoDate, dayOfWeek)];
 
     const windowStartMin = offset === 0 ? Math.max(dayStartMin, currentMinuteOfDay(timeZone)) : dayStartMin;
-    const free = intersectFree(combinedHost, combinedInvitee, windowStartMin, dayEndMin, duration);
+    // Never list a Friday slot that would run into Shabbat — see
+    // FRIDAY_SHABBAT_CUTOFF_MIN above (isSlotMutuallyFree enforces the same
+    // cutoff server-side, but listing one here just to have /confirm reject
+    // it is a bad experience and relies on that second check always running).
+    const windowEndMin = dayOfWeek === 'Friday' ? Math.min(dayEndMin, FRIDAY_SHABBAT_CUTOFF_MIN) : dayEndMin;
+    const free = intersectFree(combinedHost, combinedInvitee, windowStartMin, windowEndMin, duration);
 
     // Slice each free gap into duration-sized slots (not one giant button per
     // gap) — this is also what confirm's duration-match check now requires.
@@ -318,5 +342,6 @@ module.exports = {
   todayIsoInTimeZone,
   isValidIsoDate,
   getMutualFreeSlots,
-  isSlotMutuallyFree
+  isSlotMutuallyFree,
+  FRIDAY_SHABBAT_CUTOFF_MIN
 };

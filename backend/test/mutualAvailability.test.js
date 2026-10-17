@@ -13,7 +13,7 @@ const assert = require('node:assert/strict');
 const { test, mock } = require('node:test');
 const {
   intersectFree, mergeIntervals, sliceIntoSlots, overlapsAny, getLocalScheduleBusy, getLocationTimeZone, todayIsoInTimeZone, isValidIsoDate,
-  isSlotMutuallyFree
+  isSlotMutuallyFree, FRIDAY_SHABBAT_CUTOFF_MIN
 } = require('../services/mutualAvailability');
 
 // ── intersectFree(): pure interval math ──
@@ -251,6 +251,51 @@ test('isSlotMutuallyFree: rejects a same-day slot that has already started, with
       endTime: '09:30 AM'
     });
     assert.deepEqual(result, { free: false, timeZone: 'Asia/Jerusalem' });
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+// ── isSlotMutuallyFree(): the Saturday guard above would miss a Friday
+// meeting that starts before Shabbat but runs past candle-lighting — this
+// is the same hard guard extended to Friday evening, proven with the same
+// fake-credentials short-circuit technique (a real freebusy.query call
+// would throw/hang on these tokens, so a free:false result with no thrown
+// error proves the check ran before ever reaching Google). ──
+test('isSlotMutuallyFree: rejects a Friday slot that runs past the Shabbat-start cutoff, without even checking the calendars', async () => {
+  const host = { _id: 'host-1', googleAccessToken: 'fake' };
+  const invitee = { _id: 'invitee-1', googleAccessToken: 'fake' };
+  // 2026-11-06 is a Friday. FRIDAY_SHABBAT_CUTOFF_MIN is 16:00 (960 min);
+  // 15:45-16:15 starts before it but ends after, so it must be rejected.
+  const result = await isSlotMutuallyFree(host, invitee, {
+    locationId: 'jerusalem',
+    date: '2026-11-06',
+    startTime: '03:45 PM',
+    endTime: '04:15 PM'
+  });
+  assert.deepEqual(result, { free: false, timeZone: 'Asia/Jerusalem' });
+});
+
+test('isSlotMutuallyFree: a Friday slot that ends exactly at the Shabbat-start cutoff is not rejected by the Friday guard', async () => {
+  assert.equal(FRIDAY_SHABBAT_CUTOFF_MIN, 16 * 60);
+  // Mock "now" well before this slot so the same-day-already-started cutoff
+  // doesn't also reject it — isolating this test to the Friday guard alone.
+  mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-06T06:00:00Z').getTime() }); // 08:00 Asia/Jerusalem
+  try {
+    const host = { _id: 'host-1', googleAccessToken: 'fake' };
+    const invitee = { _id: 'invitee-1', googleAccessToken: 'fake' };
+    // 15:30-16:00 ends exactly at the cutoff — must fall through to the
+    // (here, fake-credentialed) freebusy check rather than being rejected
+    // outright by the Friday guard, which rejects only endMin > cutoff.
+    await assert.rejects(
+      isSlotMutuallyFree(host, invitee, {
+        locationId: 'jerusalem',
+        date: '2026-11-06',
+        startTime: '03:30 PM',
+        endTime: '04:00 PM'
+      }),
+      'fake credentials must make this reach (and fail in) the real freebusy.query call, proving the Friday guard did not short-circuit it'
+    );
   } finally {
     mock.timers.reset();
   }

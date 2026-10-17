@@ -20,7 +20,7 @@ const { createOAuth2ClientWithRefresh } = require('../services/googleCalendar');
 // function after the module is mocked.
 const mutualAvailability = require('../services/mutualAvailability');
 const {
-  mergeIntervals, sliceIntoSlots, overlapsAny, isValidIsoDate, getLocationTimeZone, todayIsoInTimeZone
+  mergeIntervals, sliceIntoSlots, overlapsAny, isValidIsoDate, getLocationTimeZone, todayIsoInTimeZone, FRIDAY_SHABBAT_CUTOFF_MIN
 } = mutualAvailability;
 const { google } = require('googleapis');
 
@@ -155,7 +155,18 @@ async function computeAvailableSlots(req, provider, service, dateStr) {
     .filter(r => r.start !== null && r.end !== null && r.end > r.start);
   const mergedRanges = mergeIntervals(rawRanges);
 
-  let candidates = sliceIntoSlots(mergedRanges, service.duration)
+  // Never offer a Friday slot that would run into Shabbat — same
+  // FRIDAY_SHABBAT_CUTOFF_MIN hard guard mutualAvailability.js's
+  // getMutualFreeSlots/isSlotMutuallyFree enforce for mutual meetings.
+  // Without this, a provider whose weekly availability extends into Friday
+  // evening (nothing stops them from saving e.g. 09:00-18:00) would have
+  // their public booking page keep offering slots through candle-lighting.
+  const slotRanges = dayName === 'Friday'
+    ? mergedRanges.map(r => ({ start: r.start, end: Math.min(r.end, FRIDAY_SHABBAT_CUTOFF_MIN) })).filter(r => r.end > r.start)
+    : mergedRanges;
+  if (dayName === 'Friday' && !slotRanges.length) return { dayName, slots: [] };
+
+  let candidates = sliceIntoSlots(slotRanges, service.duration)
     .map(s => ({ startMin: s.start, endMin: s.end }));
 
   // For today, never offer a slot that has already started (mirrors the

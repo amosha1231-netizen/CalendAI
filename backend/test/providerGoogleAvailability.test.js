@@ -103,3 +103,42 @@ test('computeAvailableSlots: a Google Calendar fetch failure fails closed instea
     (err) => err.status === 502
   );
 });
+
+// ── Friday Shabbat-start cutoff (mutualAvailability.js' FRIDAY_SHABBAT_CUTOFF_MIN,
+// shared with mutual scheduling's isSlotMutuallyFree/getMutualFreeSlots) must
+// also clip a provider's own weekly availability — nothing stops a provider
+// from saving a Friday row that runs well past candle-lighting (e.g. 09:00-18:00),
+// and without this the public booking page would keep offering those slots. ──
+// 2026-11-06 is a Friday, after this suite's "today" (2026-10-16).
+const FRIDAY = '2026-11-06';
+
+test('computeAvailableSlots: a Friday availability row extending past 16:00 is clipped at the Shabbat-start cutoff', async (t) => {
+  stubNoExistingBookings(t);
+  const freeBusyMock = t.mock.method(mutualAvailability, 'getFreeBusyForDay', async () => []);
+
+  const provider = providerWith({
+    providerProfile: {
+      locationId: 'jerusalem',
+      availability: [{ day: 'Friday', startTime: '09:00 AM', endTime: '06:00 PM' }]
+    }
+  });
+  const { slots } = await computeAvailableSlots(fakeReq(), provider, SERVICE_30MIN, FRIDAY);
+
+  assert.ok(slots.every(s => s.startTime !== '04:00 PM' && s.startTime !== '05:00 PM' && s.startTime !== '05:30 PM'),
+    'no slot starting at or after 16:00 must be offered on Friday');
+  assert.deepEqual(slots[slots.length - 1], { startTime: '03:30 PM', endTime: '04:00 PM' },
+    'the last Friday slot must end exactly at the 16:00 Shabbat-start cutoff');
+  assert.equal(freeBusyMock.mock.callCount(), 0, 'provider has no Google Calendar connected in this case');
+});
+
+test('computeAvailableSlots: a Friday availability row that starts after the Shabbat-start cutoff yields no slots at all', async (t) => {
+  stubNoExistingBookings(t);
+  const provider = providerWith({
+    providerProfile: {
+      locationId: 'jerusalem',
+      availability: [{ day: 'Friday', startTime: '04:30 PM', endTime: '06:00 PM' }]
+    }
+  });
+  const { slots } = await computeAvailableSlots(fakeReq(), provider, SERVICE_30MIN, FRIDAY);
+  assert.deepEqual(slots, []);
+});
