@@ -20,6 +20,7 @@ const mongoose = require('mongoose');
 const JWT_SECRET = require('../config/jwtSecret');
 const User = require('../models/User');
 const MutualBooking = require('../models/MutualBooking');
+const mutualAvailability = require('../services/mutualAvailability');
 const mutualRoutesPath = require.resolve('../routes/mutualRoutes');
 
 // mutualAbuseLimiter (POST /sessions) and the module-level JWT/session auth
@@ -325,6 +326,133 @@ test('GET /lookup: a known, Google-connected email resolves found:true, hasGoogl
     assert.equal(res.status, 200);
     assert.deepEqual(data, { found: true, hasGoogle: true, displayName: 'Dana' });
     assert.ok(!JSON.stringify(data).includes('secret-token-value'), 'the access token itself must never be exposed to the client');
+  } finally {
+    server.close();
+  }
+});
+
+// ── GET /api/mutual/sessions/:id/availability ──
+// Nothing else in test/ exercises this route over HTTP: mutualAvailability.test.js
+// only unit-tests getMutualFreeSlots' pure math, and rateLimiting.test.js only
+// drives it unauthenticated (every request there 401s before reaching any of
+// these branches). The session-state/authorization/Google-connection gates and
+// the success response shape are untested without this.
+test('GET /sessions/:id/availability: a non-existent session is a 404', async (t) => {
+  const callerId = new mongoose.Types.ObjectId();
+  t.mock.method(MutualBooking, 'findOne', async () => null);
+  const { server, base } = startApp(freshMutualRoutes());
+  try {
+    const res = await fetch(`${base}/api/mutual/sessions/mut_missing/availability`, { headers: authed(callerId) });
+    assert.equal(res.status, 404);
+  } finally {
+    server.close();
+  }
+});
+
+test('GET /sessions/:id/availability: a user who is neither host nor invitee is refused with 403', async (t) => {
+  const callerId = new mongoose.Types.ObjectId();
+  const session = {
+    sessionId: 'mut_x', status: 'active',
+    hostId: new mongoose.Types.ObjectId(), inviteeId: new mongoose.Types.ObjectId()
+  };
+  t.mock.method(MutualBooking, 'findOne', async () => session);
+  t.mock.method(User, 'findById', () => { throw new Error('must not be reached'); });
+  const { server, base } = startApp(freshMutualRoutes());
+  try {
+    const res = await fetch(`${base}/api/mutual/sessions/mut_x/availability`, { headers: authed(callerId) });
+    assert.equal(res.status, 403);
+  } finally {
+    server.close();
+  }
+});
+
+test('GET /sessions/:id/availability: a session still being confirmed (processing) is a 409, not a stale slot list', async (t) => {
+  const hostId = new mongoose.Types.ObjectId();
+  const session = { sessionId: 'mut_x', status: 'processing', hostId, inviteeId: new mongoose.Types.ObjectId() };
+  t.mock.method(MutualBooking, 'findOne', async () => session);
+  const { server, base } = startApp(freshMutualRoutes());
+  try {
+    const res = await fetch(`${base}/api/mutual/sessions/mut_x/availability`, { headers: authed(hostId) });
+    const data = await res.json();
+    assert.equal(res.status, 409);
+    assert.match(data.error, /being confirmed/);
+  } finally {
+    server.close();
+  }
+});
+
+test('GET /sessions/:id/availability: a completed or cancelled session is a 409', async (t) => {
+  const hostId = new mongoose.Types.ObjectId();
+  const session = { sessionId: 'mut_x', status: 'completed', hostId, inviteeId: new mongoose.Types.ObjectId() };
+  t.mock.method(MutualBooking, 'findOne', async () => session);
+  const { server, base } = startApp(freshMutualRoutes());
+  try {
+    const res = await fetch(`${base}/api/mutual/sessions/mut_x/availability`, { headers: authed(hostId) });
+    const data = await res.json();
+    assert.equal(res.status, 409);
+    assert.match(data.error, /no longer active/);
+  } finally {
+    server.close();
+  }
+});
+
+test('GET /sessions/:id/availability: a missing host or invitee account is a 404', async (t) => {
+  const hostId = new mongoose.Types.ObjectId();
+  const session = { sessionId: 'mut_x', status: 'active', hostId, inviteeId: new mongoose.Types.ObjectId() };
+  t.mock.method(MutualBooking, 'findOne', async () => session);
+  t.mock.method(User, 'findById', async () => null);
+  const { server, base } = startApp(freshMutualRoutes());
+  try {
+    const res = await fetch(`${base}/api/mutual/sessions/mut_x/availability`, { headers: authed(hostId) });
+    assert.equal(res.status, 404);
+  } finally {
+    server.close();
+  }
+});
+
+test('GET /sessions/:id/availability: either side missing Google Calendar is a 409, never a bare slot list', async (t) => {
+  const hostId = new mongoose.Types.ObjectId();
+  const inviteeId = new mongoose.Types.ObjectId();
+  const session = { sessionId: 'mut_x', status: 'active', hostId, inviteeId };
+  t.mock.method(MutualBooking, 'findOne', async () => session);
+  t.mock.method(User, 'findById', async (id) => (
+    String(id) === String(hostId) ? { _id: hostId, googleAccessToken: 'tok-host' } : { _id: inviteeId, googleAccessToken: null }
+  ));
+  const freeSlotsMock = t.mock.method(mutualAvailability, 'getMutualFreeSlots', async () => { throw new Error('must not compute availability without both calendars connected'); });
+  const { server, base } = startApp(freshMutualRoutes());
+  try {
+    const res = await fetch(`${base}/api/mutual/sessions/mut_x/availability`, { headers: authed(hostId) });
+    const data = await res.json();
+    assert.equal(res.status, 409);
+    assert.match(data.error, /must have Google Calendar connected/);
+    assert.equal(freeSlotsMock.mock.callCount(), 0);
+  } finally {
+    server.close();
+  }
+});
+
+test('GET /sessions/:id/availability: a successful lookup returns the computed days, and clamps an out-of-range rangeDays', async (t) => {
+  const hostId = new mongoose.Types.ObjectId();
+  const inviteeId = new mongoose.Types.ObjectId();
+  const session = { sessionId: 'mut_x', status: 'active', hostId, inviteeId, subject: 'Coffee', duration: 30, locationId: 'jerusalem' };
+  t.mock.method(MutualBooking, 'findOne', async () => session);
+  t.mock.method(User, 'findById', async (id) => (
+    String(id) === String(hostId) ? { _id: hostId, googleAccessToken: 'tok-host' } : { _id: inviteeId, googleAccessToken: 'tok-invitee' }
+  ));
+  const fakeDays = [{ date: '2026-12-01', day: 'Tuesday', freeSlots: [{ startTime: '10:00 AM', endTime: '10:30 AM', durationMinutes: 30 }] }];
+  const freeSlotsMock = t.mock.method(mutualAvailability, 'getMutualFreeSlots', async (host, invitee, opts) => {
+    assert.equal(opts.rangeDays, 14, 'rangeDays above the 14-day ceiling must be clamped down');
+    assert.equal(opts.duration, 30);
+    assert.equal(opts.locationId, 'jerusalem');
+    return fakeDays;
+  });
+  const { server, base } = startApp(freshMutualRoutes());
+  try {
+    const res = await fetch(`${base}/api/mutual/sessions/mut_x/availability?rangeDays=999`, { headers: authed(hostId) });
+    const data = await res.json();
+    assert.equal(res.status, 200);
+    assert.deepEqual(data, { ok: true, subject: 'Coffee', duration: 30, days: fakeDays });
+    assert.equal(freeSlotsMock.mock.callCount(), 1);
   } finally {
     server.close();
   }

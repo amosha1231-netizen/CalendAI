@@ -195,6 +195,117 @@ test('PUT /me: a valid payload reaches User.findByIdAndUpdate and round-trips th
   }
 });
 
+// ── GET /api/providers/me ──
+// Nothing else in test/ exercises this route: providerProfile.test.js only
+// unit-tests mapServicesForSave(), and PUT /me above never calls GET /me.
+test('GET /me: unauthenticated request is rejected before any DB lookup', async (t) => {
+  t.mock.method(User, 'findById', () => { throw new Error('must not be reached'); });
+  const { server, base } = startApp(freshProviderRoutes(), { userId: null });
+  try {
+    const res = await fetch(`${base}/api/providers/me`);
+    assert.equal(res.status, 401);
+  } finally {
+    server.close();
+  }
+});
+
+test('GET /me: an account that no longer exists is a 404', async (t) => {
+  const userId = new mongoose.Types.ObjectId();
+  t.mock.method(User, 'findById', () => ({ select: () => ({ lean: async () => null }) }));
+  const { server, base } = startApp(freshProviderRoutes(), { userId });
+  try {
+    const res = await fetch(`${base}/api/providers/me`);
+    assert.equal(res.status, 404);
+  } finally {
+    server.close();
+  }
+});
+
+test('GET /me: a signed-in user with no provider profile yet gets null, not a 500', async (t) => {
+  const userId = new mongoose.Types.ObjectId();
+  t.mock.method(User, 'findById', () => ({ select: () => ({ lean: async () => ({ _id: userId }) }) }));
+  const { server, base } = startApp(freshProviderRoutes(), { userId });
+  try {
+    const res = await fetch(`${base}/api/providers/me`);
+    const data = await res.json();
+    assert.equal(res.status, 200);
+    assert.deepEqual(data, { ok: true, providerProfile: null });
+  } finally {
+    server.close();
+  }
+});
+
+test('GET /me: an existing profile round-trips as-is', async (t) => {
+  const userId = new mongoose.Types.ObjectId();
+  const providerProfile = { enabled: true, businessName: 'Dana\'s Studio', services: [] };
+  t.mock.method(User, 'findById', () => ({ select: () => ({ lean: async () => ({ _id: userId, providerProfile }) }) }));
+  const { server, base } = startApp(freshProviderRoutes(), { userId });
+  try {
+    const res = await fetch(`${base}/api/providers/me`);
+    const data = await res.json();
+    assert.equal(res.status, 200);
+    assert.deepEqual(data.providerProfile, providerProfile);
+  } finally {
+    server.close();
+  }
+});
+
+// ── GET /api/providers/:id ──
+// providerSearch.test.js only covers the browse list (GET /); the single
+// public-profile route (used by ProviderBookingView.jsx to load a provider
+// before showing its services) has no coverage anywhere else.
+test('GET /:id: a malformed provider id is rejected before any DB lookup', async (t) => {
+  t.mock.method(User, 'findOne', () => { throw new Error('must not be reached'); });
+  const { server, base } = startApp(freshProviderRoutes());
+  try {
+    const res = await fetch(`${base}/api/providers/not-a-valid-id`);
+    assert.equal(res.status, 400);
+  } finally {
+    server.close();
+  }
+});
+
+test('GET /:id: an unknown or disabled provider is a 404', async (t) => {
+  t.mock.method(User, 'findOne', () => ({ select: () => ({ lean: async () => null }) }));
+  const { server, base } = startApp(freshProviderRoutes());
+  try {
+    const res = await fetch(`${base}/api/providers/${new mongoose.Types.ObjectId()}`);
+    assert.equal(res.status, 404);
+  } finally {
+    server.close();
+  }
+});
+
+test('GET /:id: an enabled provider\'s inactive services are filtered out of the public response', async (t) => {
+  const activeId = new mongoose.Types.ObjectId();
+  const inactiveId = new mongoose.Types.ObjectId();
+  t.mock.method(User, 'findOne', () => ({
+    select: () => ({
+      lean: async () => ({
+        _id: new mongoose.Types.ObjectId(),
+        displayName: 'Dana',
+        providerProfile: {
+          businessName: 'Dana\'s Studio', bio: 'Haircuts', category: 'barber', locationId: 'jerusalem',
+          services: [
+            { _id: activeId, name: 'Haircut', duration: 30, price: 50, active: true },
+            { _id: inactiveId, name: 'Retired service', duration: 30, price: 50, active: false }
+          ]
+        }
+      })
+    })
+  }));
+  const { server, base } = startApp(freshProviderRoutes());
+  try {
+    const res = await fetch(`${base}/api/providers/${new mongoose.Types.ObjectId()}`);
+    const data = await res.json();
+    assert.equal(res.status, 200);
+    assert.equal(data.provider.services.length, 1);
+    assert.equal(data.provider.services[0]._id, activeId.toString());
+  } finally {
+    server.close();
+  }
+});
+
 // ── GET /api/providers/:id/availability ──
 test('GET /:id/availability: a malformed provider id is rejected before any DB lookup', async (t) => {
   t.mock.method(User, 'findOne', () => { throw new Error('must not be reached'); });
