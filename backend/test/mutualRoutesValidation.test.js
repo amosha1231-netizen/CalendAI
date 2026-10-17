@@ -262,3 +262,151 @@ test('POST /sessions/:id/confirm: already-claimed (active -> processing lost the
     server.close();
   }
 });
+
+// ── GET /api/mutual/lookup ──
+// No test file touches this route directly today: rateLimiting.test.js only
+// exercises its abuse limiter (unauthenticated, so every request it sends
+// gets a 401 before `lookup`'s own found/hasGoogle branches ever run), and
+// mutualBooking.test.js never calls the HTTP route at all. The actual
+// found/not-found/hasGoogle response shape is this route's whole job (it's
+// the account-enumeration-oracle surface the mutualAbuseLimiter comment in
+// mutualRoutes.js is about), so it deserves its own coverage.
+test('GET /lookup: a missing email is rejected before any DB lookup', async (t) => {
+  const callerId = new mongoose.Types.ObjectId();
+  t.mock.method(User, 'findOne', () => { throw new Error('must not be reached'); });
+  const { server, base } = startApp(freshMutualRoutes());
+  try {
+    const res = await fetch(`${base}/api/mutual/lookup?email=`, { headers: authed(callerId) });
+    assert.equal(res.status, 400);
+  } finally {
+    server.close();
+  }
+});
+
+test('GET /lookup: an unknown email resolves found:false without leaking anything else', async (t) => {
+  const callerId = new mongoose.Types.ObjectId();
+  t.mock.method(User, 'findOne', () => ({ select: () => ({ lean: async () => null }) }));
+  const { server, base } = startApp(freshMutualRoutes());
+  try {
+    const res = await fetch(`${base}/api/mutual/lookup?email=nobody@example.com`, { headers: authed(callerId) });
+    const data = await res.json();
+    assert.equal(res.status, 200);
+    assert.deepEqual(data, { found: false, hasGoogle: false });
+  } finally {
+    server.close();
+  }
+});
+
+test('GET /lookup: a known email with no Google Calendar connected resolves found:true, hasGoogle:false', async (t) => {
+  const callerId = new mongoose.Types.ObjectId();
+  t.mock.method(User, 'findOne', () => ({
+    select: () => ({ lean: async () => ({ displayName: 'Dana', email: 'dana@example.com', googleAccessToken: null }) })
+  }));
+  const { server, base } = startApp(freshMutualRoutes());
+  try {
+    const res = await fetch(`${base}/api/mutual/lookup?email=dana@example.com`, { headers: authed(callerId) });
+    const data = await res.json();
+    assert.equal(res.status, 200);
+    assert.deepEqual(data, { found: true, hasGoogle: false, displayName: 'Dana' });
+  } finally {
+    server.close();
+  }
+});
+
+test('GET /lookup: a known, Google-connected email resolves found:true, hasGoogle:true — never the raw token', async (t) => {
+  const callerId = new mongoose.Types.ObjectId();
+  t.mock.method(User, 'findOne', () => ({
+    select: () => ({ lean: async () => ({ displayName: 'Dana', email: 'dana@example.com', googleAccessToken: 'secret-token-value' }) })
+  }));
+  const { server, base } = startApp(freshMutualRoutes());
+  try {
+    const res = await fetch(`${base}/api/mutual/lookup?email=dana@example.com`, { headers: authed(callerId) });
+    const data = await res.json();
+    assert.equal(res.status, 200);
+    assert.deepEqual(data, { found: true, hasGoogle: true, displayName: 'Dana' });
+    assert.ok(!JSON.stringify(data).includes('secret-token-value'), 'the access token itself must never be exposed to the client');
+  } finally {
+    server.close();
+  }
+});
+
+// ── POST /api/mutual/sessions/:id/cancel ──
+// mutualBooking.test.js exercises cancelMutualSession() (the exported helper)
+// directly against a real DB; it never calls the route itself, so the
+// route's own auth/authorization layer (requireAuth + loadAuthorizedSession)
+// in front of that helper has no coverage anywhere else.
+test('POST /sessions/:id/cancel: unauthenticated request is rejected before any DB lookup', async (t) => {
+  t.mock.method(MutualBooking, 'findOne', () => { throw new Error('must not be reached'); });
+  const { server, base } = startApp(freshMutualRoutes());
+  try {
+    const res = await fetch(`${base}/api/mutual/sessions/mut_x/cancel`, { method: 'POST' });
+    assert.equal(res.status, 401);
+  } finally {
+    server.close();
+  }
+});
+
+test('POST /sessions/:id/cancel: a non-existent session is a 404', async (t) => {
+  const callerId = new mongoose.Types.ObjectId();
+  t.mock.method(MutualBooking, 'findOne', async () => null);
+  const { server, base } = startApp(freshMutualRoutes());
+  try {
+    const res = await fetch(`${base}/api/mutual/sessions/mut_missing/cancel`, { method: 'POST', headers: authed(callerId) });
+    assert.equal(res.status, 404);
+  } finally {
+    server.close();
+  }
+});
+
+test('POST /sessions/:id/cancel: a user who is neither host nor invitee is refused with 403, and the session is left untouched', async (t) => {
+  const callerId = new mongoose.Types.ObjectId();
+  const session = {
+    sessionId: 'mut_x', status: 'active',
+    hostId: new mongoose.Types.ObjectId(), inviteeId: new mongoose.Types.ObjectId()
+  };
+  t.mock.method(MutualBooking, 'findOne', async () => session);
+  const updateMock = t.mock.method(MutualBooking, 'findOneAndUpdate', () => { throw new Error('must not be reached'); });
+  const { server, base } = startApp(freshMutualRoutes());
+  try {
+    const res = await fetch(`${base}/api/mutual/sessions/mut_x/cancel`, { method: 'POST', headers: authed(callerId) });
+    assert.equal(res.status, 403);
+    assert.equal(updateMock.mock.callCount(), 0);
+  } finally {
+    server.close();
+  }
+});
+
+test('POST /sessions/:id/cancel: cancelling an already-cancelled session is idempotent, not an error', async (t) => {
+  const hostId = new mongoose.Types.ObjectId();
+  const session = { sessionId: 'mut_x', status: 'cancelled', hostId, inviteeId: new mongoose.Types.ObjectId() };
+  t.mock.method(MutualBooking, 'findOne', async () => session);
+  const updateMock = t.mock.method(MutualBooking, 'findOneAndUpdate', () => { throw new Error('must not reach the atomic cancel update again'); });
+  const { server, base } = startApp(freshMutualRoutes());
+  try {
+    const res = await fetch(`${base}/api/mutual/sessions/mut_x/cancel`, { method: 'POST', headers: authed(hostId) });
+    const data = await res.json();
+    assert.equal(res.status, 200);
+    assert.deepEqual(data, { ok: true, alreadyCancelled: true });
+    assert.equal(updateMock.mock.callCount(), 0, 'an already-cancelled session must short-circuit before the atomic update');
+  } finally {
+    server.close();
+  }
+});
+
+test('POST /sessions/:id/cancel: the invitee (not just the host) is authorized to cancel an active session', async (t) => {
+  const hostId = new mongoose.Types.ObjectId();
+  const inviteeId = new mongoose.Types.ObjectId();
+  const session = { sessionId: 'mut_x', status: 'active', hostId, inviteeId };
+  t.mock.method(MutualBooking, 'findOne', async () => session);
+  t.mock.method(MutualBooking, 'findOneAndUpdate', async () => ({ ...session, status: 'cancelled' }));
+  const { server, base } = startApp(freshMutualRoutes());
+  try {
+    const res = await fetch(`${base}/api/mutual/sessions/mut_x/cancel`, { method: 'POST', headers: authed(inviteeId) });
+    const data = await res.json();
+    assert.equal(res.status, 200);
+    assert.equal(data.ok, true);
+    assert.equal(data.alreadyCancelled, false);
+  } finally {
+    server.close();
+  }
+});
