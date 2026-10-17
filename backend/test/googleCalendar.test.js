@@ -9,7 +9,7 @@
 // ──────────────────────────────────────────────
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
-const { formatDateTimeWithTimezone, zonedDateTime } = require('../services/googleCalendar');
+const { formatDateTimeWithTimezone, zonedDateTime, buildGcalEventBody } = require('../services/googleCalendar');
 
 // ── formatDateTimeWithTimezone(): must keep the caller's calendar day ──
 // Every caller builds `date` from literal Y/M/D components (new Date(y, m-1, d),
@@ -59,4 +59,43 @@ test('zonedDateTime: resolves a timezone ahead of UTC to the correct absolute in
 
 test('zonedDateTime: accounts for daylight saving (BST) rather than using the standard-time offset', () => {
   assert.equal(zonedDateTime('2026-07-15', '06:00', 'Europe/London').toISOString(), '2026-07-15T05:00:00.000Z');
+});
+
+// ── buildGcalEventBody(): shared event-body builder for mutualRoutes.js
+// (dual-insert) and the legacy single-user sync path — untested until now
+// even though formatDateTimeWithTimezone/zonedDateTime (what it calls) were. ──
+test('buildGcalEventBody: builds start/end with the given timezone and falls back to a default title', () => {
+  const eventDate = new Date(2026, 10, 15);
+  const body = buildGcalEventBody({
+    title: '', eventDate, startHour: 9, startMinute: 0, endHour: 9, endMinute: 30, timeZone: 'Asia/Jerusalem'
+  });
+  assert.equal(body.summary, 'CalendAI Event');
+  assert.deepEqual(body.start, { dateTime: '2026-11-15T09:00:00+02:00', timeZone: 'Asia/Jerusalem' });
+  assert.deepEqual(body.end, { dateTime: '2026-11-15T09:30:00+02:00', timeZone: 'Asia/Jerusalem' });
+  assert.equal('description' in body, false, 'no description field when none is given');
+  assert.equal('recurrence' in body, false, 'no recurrence field when none is given');
+  assert.equal('attendees' in body, false, 'no attendees field when none is given');
+});
+
+test('buildGcalEventBody: optional fields (description, reminders, recurrence, attendees) are only included when provided', () => {
+  const eventDate = new Date(2026, 10, 15);
+  const body = buildGcalEventBody({
+    title: 'Mutual meeting', description: 'with Jane', eventDate,
+    startHour: 14, startMinute: 0, endHour: 14, endMinute: 30, timeZone: 'UTC',
+    reminders: { useDefault: false }, recurrenceRule: 'RRULE:FREQ=WEEKLY', attendees: [{ email: 'a@test.com' }]
+  });
+  assert.equal(body.summary, 'Mutual meeting');
+  assert.equal(body.description, 'with Jane');
+  assert.deepEqual(body.reminders, { useDefault: false });
+  assert.deepEqual(body.recurrence, ['RRULE:FREQ=WEEKLY']);
+  assert.deepEqual(body.attendees, [{ email: 'a@test.com' }]);
+});
+
+test('buildGcalEventBody: an empty attendees array is omitted, not sent as an empty list', () => {
+  const eventDate = new Date(2026, 10, 15);
+  const body = buildGcalEventBody({
+    title: 'Meeting', eventDate, startHour: 9, startMinute: 0, endHour: 9, endMinute: 30,
+    timeZone: 'UTC', attendees: []
+  });
+  assert.equal('attendees' in body, false);
 });
