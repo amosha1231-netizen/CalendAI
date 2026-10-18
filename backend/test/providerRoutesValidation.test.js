@@ -29,6 +29,7 @@ const mongoose = require('mongoose');
 const providerRoutesPath = require.resolve('../routes/providerRoutes');
 const User = require('../models/User');
 const ProviderBooking = require('../models/ProviderBooking');
+const { selfLosesOverlapRace } = require('../routes/providerRoutes');
 
 function freshProviderRoutes() {
   delete require.cache[providerRoutesPath];
@@ -485,6 +486,97 @@ test('POST /:id/book: a slot that is no longer available is a 409, not a silent 
     });
     assert.equal(res.status, 409);
     assert.equal(createMock.mock.callCount(), 0);
+  } finally {
+    server.close();
+  }
+});
+
+// ── selfLosesOverlapRace: deterministic tiebreak for the post-insert overlap recheck ──
+// Two different-duration services can slice to different startTimes, so the
+// unique providerId+date+startTime index alone can't stop two concurrent
+// bookings from overlapping. Without a deterministic tiebreak, two requests
+// that both insert before either runs its recheck would each see only the
+// other as "the" conflict and both self-delete, losing the slot entirely
+// instead of leaving exactly one booking standing.
+test('selfLosesOverlapRace: a booking with a later createdAt than its overlapping conflict loses', () => {
+  const selfId = new mongoose.Types.ObjectId();
+  const otherId = new mongoose.Types.ObjectId();
+  const loses = selfLosesOverlapRace(
+    { _id: selfId, createdAt: new Date('2026-01-01T00:00:01.000Z') },
+    [{ _id: otherId, createdAt: new Date('2026-01-01T00:00:00.000Z') }]
+  );
+  assert.equal(loses, true, 'the booking created after its conflict must be the one that self-deletes');
+});
+
+test('selfLosesOverlapRace: a booking with an earlier createdAt than its overlapping conflict wins (survives)', () => {
+  const selfId = new mongoose.Types.ObjectId();
+  const otherId = new mongoose.Types.ObjectId();
+  const loses = selfLosesOverlapRace(
+    { _id: selfId, createdAt: new Date('2026-01-01T00:00:00.000Z') },
+    [{ _id: otherId, createdAt: new Date('2026-01-01T00:00:01.000Z') }]
+  );
+  assert.equal(loses, false, 'the booking created before its conflict must not self-delete');
+});
+
+test('selfLosesOverlapRace: a tie on createdAt is broken by _id, and both sides of the comparison agree', () => {
+  const idA = new mongoose.Types.ObjectId('000000000000000000000001');
+  const idB = new mongoose.Types.ObjectId('000000000000000000000002');
+  const sameInstant = new Date('2026-01-01T00:00:00.000Z');
+
+  const aLoses = selfLosesOverlapRace({ _id: idA, createdAt: sameInstant }, [{ _id: idB, createdAt: sameInstant }]);
+  const bLoses = selfLosesOverlapRace({ _id: idB, createdAt: sameInstant }, [{ _id: idA, createdAt: sameInstant }]);
+
+  assert.notEqual(aLoses, bLoses, 'exactly one side of a tied race must lose so exactly one booking survives');
+  assert.equal(bLoses, true, 'the larger _id loses the tiebreak (smaller _id wins)');
+});
+
+test('POST /:id/book: a booking that slips in between the availability read and this request\'s own insert — the later-created one self-deletes with a 409', async (t) => {
+  const serviceId = new mongoose.Types.ObjectId();
+  const providerId = new mongoose.Types.ObjectId();
+  t.mock.method(User, 'findOne', () => Promise.resolve({
+    _id: providerId,
+    googleAccessToken: null,
+    schedule: {},
+    providerProfile: {
+      locationId: 'jerusalem',
+      services: [{ _id: serviceId, name: 'Massage', duration: 45, active: true }],
+      availability: [{ day: 'Monday', startTime: '09:00 AM', endTime: '11:00 AM' }]
+    }
+  }));
+  // A conflicting booking that overlaps the requested 09:00-09:45 AM slot but
+  // wasn't there yet when computeAvailableSlots read the DB (1st find() call
+  // below returns nothing, so 09:00 AM is offered as free) — only landing by
+  // the time the post-insert recheck runs (2nd find() call). Different
+  // startTime/duration than this request, so the unique index never caught it.
+  const conflictingOther = {
+    _id: new mongoose.Types.ObjectId(),
+    startTime: '09:15 AM',
+    endTime: '09:45 AM',
+    createdAt: new Date('2026-12-07T09:00:00.000Z')
+  };
+  let findCallCount = 0;
+  t.mock.method(ProviderBooking, 'find', () => {
+    findCallCount += 1;
+    const rows = findCallCount === 1 ? [] : [conflictingOther];
+    return { select: () => ({ lean: async () => rows }) };
+  });
+  const createdBooking = {
+    _id: new mongoose.Types.ObjectId(),
+    createdAt: new Date('2026-12-07T09:00:01.000Z'), // after the conflict above
+  };
+  t.mock.method(ProviderBooking, 'create', () => Promise.resolve(createdBooking));
+  const deleteMock = t.mock.method(ProviderBooking, 'deleteOne', () => Promise.resolve({ deletedCount: 1 }));
+
+  const { server, base } = startApp(freshProviderRoutes());
+  try {
+    const res = await fetch(`${base}/api/providers/${providerId}/book`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ serviceId: serviceId.toString(), date: '2026-12-07', startTime: '09:00 AM', guestName: 'Guest' })
+    });
+    assert.equal(res.status, 409);
+    assert.equal(findCallCount, 2, 'expected one find() for availability and one for the post-insert overlap recheck');
+    assert.equal(deleteMock.mock.callCount(), 1, 'the losing (later-created) booking must delete itself');
+    assert.equal(deleteMock.mock.calls[0].arguments[0]._id, createdBooking._id, 'it must delete its own document, not the conflicting one');
   } finally {
     server.close();
   }

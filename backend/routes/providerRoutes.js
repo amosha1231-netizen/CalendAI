@@ -41,6 +41,27 @@ function escapeRegex(str) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/**
+ * Deterministic tiebreak for a booking whose time range overlaps one or more
+ * other non-cancelled bookings discovered by the post-insert recheck below
+ * (the unique index only catches an exact-startTime collision). The earlier
+ * createdAt wins; ties (same millisecond) are broken by _id. Pure and
+ * symmetric, so whichever of two concurrently-created, mutually-overlapping
+ * bookings runs this check, both land on the same single winner — without
+ * it, two requests that both insert before either runs its recheck would
+ * each see only the other as "the" conflict and both self-delete, leaving
+ * the slot with zero bookings instead of one.
+ */
+function selfLosesOverlapRace(self, overlappingOthers) {
+  const selfCreatedAt = self.createdAt.getTime();
+  const selfId = self._id.toString();
+  return overlappingOthers.some(other => {
+    const otherCreatedAt = other.createdAt.getTime();
+    if (otherCreatedAt !== selfCreatedAt) return otherCreatedAt < selfCreatedAt;
+    return other._id.toString() < selfId;
+  });
+}
+
 // POST /:id/book is reachable by anonymous guests (no auth required) and
 // writes a DB row + optionally a Google Calendar event per call — without a
 // limiter it's an open door for booking-spam or for sweeping a provider's
@@ -637,11 +658,12 @@ router.post('/:id/book', bookLimiter, async (req, res) => {
       date,
       status: { $ne: 'cancelled' },
       _id: { $ne: createdBooking._id }
-    }).select('startTime endTime').lean();
+    }).select('startTime endTime createdAt').lean();
     const otherRanges = otherBookings
-      .map(b => ({ start: timeToMinutes(b.startTime), end: timeToMinutes(b.endTime) }))
+      .map(b => ({ _id: b._id, createdAt: b.createdAt, start: timeToMinutes(b.startTime), end: timeToMinutes(b.endTime) }))
       .filter(r => r.start !== null && r.end !== null);
-    if (overlapsAny(claimedStartMin, claimedEndMin, otherRanges)) {
+    const overlappingOthers = otherRanges.filter(r => overlapsAny(claimedStartMin, claimedEndMin, [r]));
+    if (overlappingOthers.length > 0 && selfLosesOverlapRace(createdBooking, overlappingOthers)) {
       await ProviderBooking.deleteOne({ _id: createdBooking._id }).catch(() => {});
       return res.status(409).json({ error: 'השעה שנבחרה הוזמנה הרגע על ידי מישהו אחר. בחר שעה אחרת.' });
     }
@@ -754,3 +776,4 @@ module.exports = router;
 module.exports.mapServicesForSave = mapServicesForSave;
 module.exports.computeAvailableSlots = computeAvailableSlots;
 module.exports.escapeRegex = escapeRegex;
+module.exports.selfLosesOverlapRace = selfLosesOverlapRace;
