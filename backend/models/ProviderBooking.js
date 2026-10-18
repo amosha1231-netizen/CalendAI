@@ -19,9 +19,9 @@ const providerBookingSchema = new mongoose.Schema({
   endTime: { type: String, required: true },
   bookedByUserId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   guestName: { type: String, required: true },
-  guestEmail: String,
-  guestPhone: String,
-  guestNotes: String,
+  guestEmail: { type: String, maxlength: 200 },
+  guestPhone: { type: String, maxlength: 50 },
+  guestNotes: { type: String, maxlength: 2000 },
   status: { type: String, enum: ['processing', 'confirmed', 'cancelled'], default: 'processing', index: true },
   confirmedAt: Date,
   googleEventId: String

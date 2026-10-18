@@ -406,6 +406,45 @@ test('POST /:id/book: a missing guestName is rejected before any DB lookup', asy
   }
 });
 
+test('POST /:id/book: an over-length guestNotes is rejected before any DB lookup', async (t) => {
+  t.mock.method(User, 'findOne', () => { throw new Error('must not be reached'); });
+  const { server, base } = startApp(freshProviderRoutes());
+  try {
+    const id = new mongoose.Types.ObjectId();
+    const res = await fetch(`${base}/api/providers/${id}/book`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        serviceId: new mongoose.Types.ObjectId().toString(), date: '2026-12-01', startTime: '10:00 AM',
+        guestName: 'Guest', guestNotes: 'x'.repeat(2001)
+      })
+    });
+    assert.equal(res.status, 400);
+  } finally {
+    server.close();
+  }
+});
+
+test('POST /:id/book: an over-length guestEmail or guestPhone is rejected before any DB lookup', async (t) => {
+  t.mock.method(User, 'findOne', () => { throw new Error('must not be reached'); });
+  const { server, base } = startApp(freshProviderRoutes());
+  try {
+    const id = new mongoose.Types.ObjectId();
+    const base_body = { serviceId: new mongoose.Types.ObjectId().toString(), date: '2026-12-01', startTime: '10:00 AM', guestName: 'Guest' };
+    const resEmail = await fetch(`${base}/api/providers/${id}/book`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...base_body, guestEmail: 'x'.repeat(201) })
+    });
+    assert.equal(resEmail.status, 400);
+    const resPhone = await fetch(`${base}/api/providers/${id}/book`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...base_body, guestPhone: 'x'.repeat(51) })
+    });
+    assert.equal(resPhone.status, 400);
+  } finally {
+    server.close();
+  }
+});
+
 test('POST /:id/book: an unknown/disabled provider is a 404', async (t) => {
   t.mock.method(User, 'findOne', () => Promise.resolve(null));
   const { server, base } = startApp(freshProviderRoutes());

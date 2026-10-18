@@ -547,6 +547,19 @@ router.post('/:id/book', bookLimiter, async (req, res) => {
     if (typeof guestName !== 'string' || !guestName.trim() || guestName.length > 200) {
       return res.status(400).json({ error: 'נדרש שם.' });
     }
+    // This route is reachable by anonymous guests with no account to rate-limit
+    // by, only bookLimiter's per-IP window — cap the free-text fields the same
+    // way guestName already is, so a single request can't write an arbitrarily
+    // large document (unlike guestName, these are optional, so empty is fine).
+    if (guestEmail !== undefined && guestEmail !== null && (typeof guestEmail !== 'string' || guestEmail.length > 200)) {
+      return res.status(400).json({ error: 'כתובת אימייל לא תקינה.' });
+    }
+    if (guestPhone !== undefined && guestPhone !== null && (typeof guestPhone !== 'string' || guestPhone.length > 50)) {
+      return res.status(400).json({ error: 'מספר טלפון לא תקין.' });
+    }
+    if (guestNotes !== undefined && guestNotes !== null && (typeof guestNotes !== 'string' || guestNotes.length > 2000)) {
+      return res.status(400).json({ error: 'ההערות ארוכות מהמותר.' });
+    }
     if (!isValidIsoDate(date)) {
       return res.status(400).json({ error: 'נדרש תאריך תקין (YYYY-MM-DD).' });
     }
