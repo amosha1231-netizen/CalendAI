@@ -60,6 +60,19 @@ function isJwtExpired(token) {
 // ── Module-level declarations (using var/function to avoid TDZ) ──
 var API_BASE = import.meta.env.VITE_API_URL || "";
 
+// JWT auth header for raw fetch() calls below — withCredentials cookies alone
+// aren't reliable (e.g. iOS Safari drops third-party session cookies), and the
+// backend's auth check looks for this Bearer token first. Without it, requests
+// from a logged-in user silently fall back to an anonymous/guest bucket.
+function getAuthHeaders() {
+  try {
+    const token = safeStorage.getItem('token') || safeStorage.getItem('calendai-jwt');
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  } catch (e) {
+    return {};
+  }
+}
+
 function RECURRENCE_OPTIONS(lang) {
   return [
     { value: "once", label: translations[lang].recurrenceOnce },
@@ -436,7 +449,7 @@ function AppRoutes() {
         if (entry.type === 'parse' && entry.data?.text) {
           await fetch(`${API_BASE}/api/parse-schedule`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", ...getAuthHeaders() },
             body: JSON.stringify({
               text: entry.data.text,
               recurrence: entry.data.recurrence || 'weekly',
@@ -646,7 +659,7 @@ function AppRoutes() {
 
   const fetchSchedule = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/schedule`, { credentials: "include" });
+      const res = await fetch(`${API_BASE}/api/schedule`, { credentials: "include", headers: getAuthHeaders() });
       if (res.ok) {
         const data = await res.json();
         if (data.schedule) setSchedule(data.schedule);
@@ -730,7 +743,7 @@ function AppRoutes() {
         if (user) {
           const res = await fetch(`${API_BASE}/api/schedule/add-to-free-slot`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", ...getAuthHeaders() },
             body: JSON.stringify({
               day: day,
               startTime,
@@ -929,7 +942,7 @@ function AppRoutes() {
     try {
       await fetch(`${API_BASE}/api/schedule`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ schedule: previousSchedule }),
         credentials: "include"
       });
@@ -1041,7 +1054,7 @@ function AppRoutes() {
     try {
       const res = await fetch(`${API_BASE}/api/parse-schedule`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ text: inputText, recurrence: DEFAULT_RECURRENCE, location: selectedLocation, eventType: DEFAULT_EVENT_TYPE, duration: DEFAULT_DURATION }),
         credentials: "include"
       });
@@ -1118,7 +1131,7 @@ function AppRoutes() {
     try {
       await fetch(`${API_BASE}/api/schedule/event`, {
         method: "DELETE",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ day, index }),
         credentials: "include"
       });
@@ -1146,7 +1159,7 @@ function AppRoutes() {
     setRescheduleLoading(true);
     setRescheduleError("");
     try {
-      const gapsRes = await fetch(`${API_BASE}/api/reschedule/gaps`, { credentials: "include" });
+      const gapsRes = await fetch(`${API_BASE}/api/reschedule/gaps`, { credentials: "include", headers: getAuthHeaders() });
       const gapsData = await gapsRes.json();
       setGapsResult(gapsData);
       setRescheduleStep("choose");
@@ -1160,7 +1173,7 @@ function AppRoutes() {
     setRescheduleError("");
     try {
       const res = await fetch(`${API_BASE}/api/reschedule/merge-gaps`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include"
+        method: "POST", headers: { "Content-Type": "application/json", ...getAuthHeaders() }, credentials: "include"
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Merge failed");
@@ -1176,7 +1189,7 @@ function AppRoutes() {
     setRescheduleError("");
     try {
       const res = await fetch(`${API_BASE}/api/reschedule/shift`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
+        method: "POST", headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ delayMinutes: rescheduleDelay }), credentials: "include"
       });
       const data = await res.json();
@@ -1192,7 +1205,7 @@ function AppRoutes() {
     setRescheduleError("");
     try {
       const res = await fetch(`${API_BASE}/api/reschedule`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
+        method: "POST", headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ reason }), credentials: "include"
       });
       if (!res.ok) { const e = await res.json(); throw new Error(e.error || "AI failed"); }
@@ -1226,7 +1239,7 @@ function AppRoutes() {
       const dayMapEn = { 'Sunday': 'Sunday', 'Monday': 'Monday', 'Tuesday': 'Tuesday', 'Wednesday': 'Wednesday', 'Thursday': 'Thursday', 'Friday': 'Friday', 'Saturday': 'Saturday' };
       const dayMapHe = { 'ראשון': 'Sunday', 'שני': 'Monday', 'שלישי': 'Tuesday', 'רביעי': 'Wednesday', 'חמישי': 'Thursday', 'שישי': 'Friday', 'שבת': 'Saturday', 'היום': 'Today' };
       const actualDay = dayMapEn[day] || dayMapHe[day] || day || 'Today';
-      const res = await fetch(`${API_BASE}/api/schedule/free-slots?day=${actualDay}&duration=${durationMinutes}&location=${selectedLocation}`, { credentials: "include" });
+      const res = await fetch(`${API_BASE}/api/schedule/free-slots?day=${actualDay}&duration=${durationMinutes}&location=${selectedLocation}`, { credentials: "include", headers: getAuthHeaders() });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed");
       setFreeSlotsData(data);
@@ -1240,7 +1253,7 @@ function AppRoutes() {
     setFreeSlotsLoading(true);
     try {
       const res = await fetch(`${API_BASE}/api/schedule/add-to-free-slot`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
+        method: "POST", headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ day: freeSlotsData.day, startTime: slot.startTime, endTime: slot.endTime, title, recurrence: DEFAULT_RECURRENCE, location: selectedLocation }),
         credentials: "include"
       });
@@ -1266,7 +1279,7 @@ function AppRoutes() {
     setEditLoading(true);
     try {
       const res = await fetch(`${API_BASE}/api/schedule/event`, {
-        method: "PUT", headers: { "Content-Type": "application/json" },
+        method: "PUT", headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ day: editModalData.day, index: editModalData.index, updates: editModalData.event }),
         credentials: "include"
       });
@@ -2162,7 +2175,7 @@ function AppRoutes() {
                       setRescheduleQuickActionLoading(true);
                       try {
                         const res = await fetch(`${API_BASE}/api/reschedule/merge-gaps`, {
-                          method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include"
+                          method: "POST", headers: { "Content-Type": "application/json", ...getAuthHeaders() }, credentials: "include"
                         });
                         const data = await res.json();
                         if (res.ok) {
@@ -2528,6 +2541,7 @@ function AppRoutes() {
 
       {/* Email/Password Auth Modal */}
       {emailAuthModal}
+
       {/* Manual Event Form Modal */}
       {showManualEvent && (
         <ManualEventForm
