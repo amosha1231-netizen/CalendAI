@@ -414,6 +414,16 @@ export default function MeetingWizard({ schedule, lang, t, hostName = 'Host', lo
                         data-hour={hour}
                         data-minute={minute}
                         onPointerDown={(e) => handleSlotPointerDown(e, hour, minute, busy)}
+                        onKeyDown={(e) => {
+                          // Keyboard activation (Enter/Space) never fires the
+                          // pointer events the drag-to-paint logic relies on —
+                          // toggle directly so keyboard users can still select a slot.
+                          if (busy) return;
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            toggleSlot(hour, minute);
+                          }
+                        }}
                         className={`flex items-center justify-center px-2 py-2.5 rounded-lg text-xs font-medium border transition select-none ${
                           busy
                             ? 'bg-red-50 border-red-200 text-red-400 cursor-not-allowed'

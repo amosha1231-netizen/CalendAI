@@ -87,8 +87,13 @@ function formatTime12(h, m) {
   return `${String(h12).padStart(2, '0')}:${String(m).padStart(2, '0')} ${ampm}`;
 }
 
-function getTodayDayName() {
-  return DAY_NAMES[new Date().getDay()];
+// Resolve "today"'s day name as observed in the given IANA timezone, not
+// server-local/UTC — otherwise a location behind/ahead of the server's clock
+// can have its newly-confirmed event mirrored into the wrong day (missing
+// from schedule.Today near midnight, or pushed into Today a day early).
+function getTodayDayName(timeZone) {
+  const weekday = new Intl.DateTimeFormat('en-US', { timeZone, weekday: 'long' }).format(new Date());
+  return DAY_NAMES.includes(weekday) ? weekday : DAY_NAMES[new Date().getDay()];
 }
 
 async function loadAuthorizedSession(req, res) {
@@ -144,9 +149,9 @@ async function rollbackCompletedSession(session) {
   ]);
 }
 
-async function pushToSchedule(userDoc, dayName, eventObj) {
+async function pushToSchedule(userDoc, dayName, eventObj, timeZone) {
   const update = { $push: { [`schedule.${dayName}`]: eventObj }, $inc: { scheduleRevision: 1 } };
-  if (dayName === getTodayDayName()) update.$push['schedule.Today'] = eventObj;
+  if (dayName === getTodayDayName(timeZone)) update.$push['schedule.Today'] = eventObj;
   const observedRevision = Number(userDoc.scheduleRevision || 0);
   const result = await User.updateOne({
     _id: userDoc._id,
@@ -363,10 +368,10 @@ router.post('/sessions/:id/confirm', requireAuth, async (req, res) => {
       title: `${subject} — ${host.displayName || host.email}`
     };
 
-    const hostPersisted = await pushToSchedule(host, dayOfWeek, hostEvent);
+    const hostPersisted = await pushToSchedule(host, dayOfWeek, hostEvent, timeZone);
     if (!hostPersisted) throw Object.assign(new Error('The host schedule changed during confirmation. Please try again.'), { status: 409 });
 
-    const inviteePersisted = await pushToSchedule(invitee, dayOfWeek, inviteeEvent);
+    const inviteePersisted = await pushToSchedule(invitee, dayOfWeek, inviteeEvent, timeZone);
     if (!inviteePersisted) throw Object.assign(new Error('The invitee schedule changed during confirmation. Please try again.'), { status: 409 });
 
     const completed = await MutualBooking.findOneAndUpdate(

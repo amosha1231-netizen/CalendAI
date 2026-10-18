@@ -133,11 +133,16 @@ export function AuthProvider({ children }) {
 
       for (const entry of guestData) {
         if (entry.type === 'parse' && entry.data?.text) {
-          await api.post('/api/parse-schedule', {
-            text: entry.data.text,
-            recurrence: entry.data.recurrence || 'weekly',
-            location: entry.data.location || 'jerusalem'
-          });
+          try {
+            await api.post('/api/parse-schedule', {
+              text: entry.data.text,
+              recurrence: entry.data.recurrence || 'weekly',
+              location: entry.data.location || 'jerusalem'
+            });
+          } catch (entryErr) {
+            // Don't let one bad/failed entry abort the rest of the sync.
+            console.error('Failed to sync one guest entry:', entryErr);
+          }
         }
       }
 
