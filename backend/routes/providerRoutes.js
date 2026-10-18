@@ -635,7 +635,6 @@ router.post('/:id/book', bookLimiter, async (req, res) => {
 
     const DEFAULT_LOCATION_ID = req.app.get('DEFAULT_LOCATION_ID');
     const getTodayDayName = req.app.get('getTodayDayName');
-    const getDefaultSchedule = req.app.get('getDefaultSchedule');
     const syncEventToGoogleCalendar = req.app.get('syncEventToGoogleCalendar');
 
     const eventToPersist = {
@@ -653,7 +652,6 @@ router.post('/:id/book', bookLimiter, async (req, res) => {
       targetDate: date
     };
 
-    const schedule = provider.schedule && typeof provider.schedule === 'object' ? provider.schedule : getDefaultSchedule();
     const observedRevision = Number(provider.scheduleRevision || 0);
     const schedulePath = `schedule.${dayName}`;
     const scheduleUpdate = { $push: { [schedulePath]: eventToPersist } };
