@@ -16,11 +16,13 @@ const { test } = require('node:test');
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
+const { google } = require('googleapis');
 
 const JWT_SECRET = require('../config/jwtSecret');
 const User = require('../models/User');
 const MutualBooking = require('../models/MutualBooking');
 const mutualAvailability = require('../services/mutualAvailability');
+const googleCalendarService = require('../services/googleCalendar');
 const mutualRoutesPath = require.resolve('../routes/mutualRoutes');
 
 // mutualAbuseLimiter (POST /sessions) and the module-level JWT/session auth
@@ -259,6 +261,68 @@ test('POST /sessions/:id/confirm: already-claimed (active -> processing lost the
     const data = await res.json();
     assert.equal(res.status, 409);
     assert.match(data.error, /already been claimed or cancelled/);
+  } finally {
+    server.close();
+  }
+});
+
+// No other test file drives POST /sessions/:id/confirm all the way through to
+// a 200 — mutualBooking.test.js only exercises the atomic claim/cancel races
+// directly against MutualBooking, never the full route (which also calls
+// isSlotMutuallyFree, inserts two Google Calendar events, and pushes both
+// users' local schedules). createOAuth2ClientWithRefresh and isSlotMutuallyFree
+// are destructured by mutualRoutes.js at require time, so they're mocked on
+// their source modules *before* freshMutualRoutes() forces a re-require (the
+// same ordering mutualRoutes.js' own destructuring of mutualAvailability
+// relies on elsewhere in this file); google.calendar is mutated on the shared
+// googleapis singleton instead, which needs no re-require since mutualRoutes.js
+// holds a reference to that same object, not a copy of the function.
+test('POST /sessions/:id/confirm: a fully successful confirmation inserts both calendar events, pushes both schedules, and completes the session', async (t) => {
+  const hostId = new mongoose.Types.ObjectId();
+  const inviteeId = new mongoose.Types.ObjectId();
+  const existing = { sessionId: 'mut_x', duration: 30, locationId: 'jerusalem', hostId, inviteeId, subject: 'Sync' };
+  const claimedSession = { ...existing, status: 'processing' };
+
+  t.mock.method(MutualBooking, 'findOne', async () => existing);
+  t.mock.method(MutualBooking, 'findOneAndUpdate', async (filter, update) => {
+    if (filter.status === 'active') return claimedSession;
+    if (filter.status === 'processing') {
+      return { ...claimedSession, status: 'completed', hostEventId: update.$set.hostEventId, inviteeEventId: update.$set.inviteeEventId, confirmedAt: update.$set.confirmedAt, lockedSlot: update.$set.lockedSlot };
+    }
+    throw new Error('unexpected findOneAndUpdate filter: ' + JSON.stringify(filter));
+  });
+
+  const hostUser = { _id: hostId, email: 'host@test.com', displayName: 'Host', googleAccessToken: 'tok-host', scheduleRevision: 0 };
+  const inviteeUser = { _id: inviteeId, email: 'invitee@test.com', displayName: 'Invitee', googleAccessToken: 'tok-invitee', scheduleRevision: 0 };
+  t.mock.method(User, 'findById', async (id) => (String(id) === String(hostId) ? hostUser : inviteeUser));
+  const updateOneMock = t.mock.method(User, 'updateOne', async () => ({ matchedCount: 1 }));
+
+  t.mock.method(mutualAvailability, 'isSlotMutuallyFree', async () => ({ free: true, timeZone: 'Asia/Jerusalem' }));
+  t.mock.method(googleCalendarService, 'createOAuth2ClientWithRefresh', async () => ({}));
+
+  const insertedEventIds = [];
+  t.mock.method(google, 'calendar', () => ({
+    events: {
+      insert: async () => {
+        const id = `evt-${insertedEventIds.length + 1}`;
+        insertedEventIds.push(id);
+        return { data: { id } };
+      }
+    }
+  }));
+
+  const { server, base } = startApp(freshMutualRoutes());
+  try {
+    const res = await fetch(`${base}/api/mutual/sessions/mut_x/confirm`, {
+      method: 'POST', headers: authed(hostId),
+      body: JSON.stringify({ date: '2099-12-01', startTime: '10:00 AM', endTime: '10:30 AM' })
+    });
+    const data = await res.json();
+    assert.equal(res.status, 200);
+    assert.equal(data.ok, true);
+    assert.equal(data.session.status, 'completed');
+    assert.equal(insertedEventIds.length, 2, 'both the host and invitee calendar events must be inserted');
+    assert.equal(updateOneMock.mock.callCount(), 2, 'both the host and invitee schedules must be pushed');
   } finally {
     server.close();
   }
