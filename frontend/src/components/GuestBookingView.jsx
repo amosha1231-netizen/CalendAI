@@ -223,7 +223,7 @@ export default function GuestBookingView({ bookingId, lang, t, onClose }) {
               </div>
               <p className="text-xs text-indigo-600 mb-3">{t.referralBannerDesc || 'Join CalendAI and start getting the most out of your time!'}</p>
               <a
-                href="https://calendai-q59p.onrender.com"
+                href="https://calendai.org"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition shadow-md"
@@ -444,7 +444,7 @@ export default function GuestBookingView({ bookingId, lang, t, onClose }) {
             </div>
             <p className="text-xs text-indigo-600 mb-3">{t.referralBannerDesc || 'Join CalendAI and start getting the most out of your time!'}</p>
             <a
-              href="https://calendai-q59p.onrender.com"
+              href="https://calendai.org"
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition shadow-md"
