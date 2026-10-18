@@ -234,10 +234,10 @@ function AppRoutes() {
     if (intentRef.current.wantsBooking) return 'booking';
     try {
       // Check if we have a valid (non-expired) JWT token stored
-      const token = localStorage.getItem('calendai-jwt') || localStorage.getItem('token');
+      const token = safeStorage.getItem('calendai-jwt') || safeStorage.getItem('token');
       if (token && !isJwtExpired(token)) return 'dashboard';
       // Fallback to isLoggedIn flag for backward compatibility
-      const isLoggedIn = localStorage.getItem('calendai-isLoggedIn') === 'true';
+      const isLoggedIn = safeStorage.getItem('calendai-isLoggedIn') === 'true';
       if (isLoggedIn) return 'dashboard';
       return 'landing';
     } catch { return 'landing'; }
@@ -279,7 +279,7 @@ function AppRoutes() {
       if (!document.hidden && !isAuthenticated) {
         // Check if we have a valid token that wasn't picked up yet
         try {
-          const token = localStorage.getItem('calendai-jwt') || localStorage.getItem('token');
+          const token = safeStorage.getItem('calendai-jwt') || safeStorage.getItem('token');
           if (token && !isJwtExpired(token)) {
             setCurrentView('dashboard');
           }
