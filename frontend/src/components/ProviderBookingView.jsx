@@ -97,8 +97,13 @@ export default function ProviderBookingView({ providerId, lang, user, onClose })
     return () => { cancelled = true; };
   }, [providerId]);
 
+  // Bumped on every call so a late-arriving response from a superseded
+  // request can tell it's stale and skip applying its (now-wrong-date) slots.
+  const slotsRequestRef = useRef(0);
+
   const fetchSlots = useCallback(async (serviceId, date) => {
     if (!serviceId || !date) return;
+    const requestId = ++slotsRequestRef.current;
     setSlotsLoading(true);
     setSlotsError("");
     setSelectedSlot(null);
@@ -106,13 +111,15 @@ export default function ProviderBookingView({ providerId, lang, user, onClose })
       const params = new URLSearchParams({ date, serviceId });
       const res = await fetch(`${API_BASE}/api/providers/${providerId}/availability?${params.toString()}`);
       const data = await res.json();
+      if (requestId !== slotsRequestRef.current) return;
       if (!res.ok) throw new Error(data.error || "Failed to load availability");
       setSlots(data.slots || []);
     } catch (err) {
+      if (requestId !== slotsRequestRef.current) return;
       setSlotsError(err.message);
       setSlots([]);
     } finally {
-      setSlotsLoading(false);
+      if (requestId === slotsRequestRef.current) setSlotsLoading(false);
     }
   }, [providerId]);
 
@@ -143,7 +150,13 @@ export default function ProviderBookingView({ providerId, lang, user, onClose })
         })
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Booking failed");
+      if (!res.ok) {
+        // The slot may have just been taken by someone else — refresh and
+        // go back to picking, same as MutualScheduler's handleConfirm.
+        setConfirmError(data.error || "Booking failed");
+        if (res.status === 409) fetchSlots(selectedServiceId, selectedDate);
+        return;
+      }
       setConfirmedBooking(data.booking);
       // Refresh slots so the just-taken one disappears if the user books again.
       fetchSlots(selectedServiceId, selectedDate);
