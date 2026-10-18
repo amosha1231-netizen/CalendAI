@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { X, Search, RotateCcw, Clock, Check, Loader2, AlertCircle, FileText, Trash2 } from "lucide-react";
-
-const API_BASE = import.meta.env.VITE_API_URL || "";
+import api from "../api/axios";
 
 export default function HistoryModal({ isOpen, onClose, t, lang, onUndoSuccess }) {
   const [history, setHistory] = useState([]);
@@ -17,21 +16,19 @@ export default function HistoryModal({ isOpen, onClose, t, lang, onUndoSuccess }
       const params = new URLSearchParams();
       if (search && search.trim()) params.set("search", search.trim());
       const queryString = params.toString();
-      const url = `${API_BASE}/api/action-history${queryString ? `?${queryString}` : ""}`;
-      const res = await fetch(url, { credentials: "include" });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "Failed to fetch history");
-      }
-      const data = await res.json();
-      setHistory(data.history || []);
+      const url = `/api/action-history${queryString ? `?${queryString}` : ""}`;
+      const res = await api.get(url);
+      setHistory(res.data.history || []);
     } catch (err) {
       console.error("Fetch history error:", err);
-      setError(err.message);
+      setError(
+        err.response?.data?.error ||
+          (lang === "he" ? "שגיאה בטעינת ההיסטוריה" : "Failed to load history")
+      );
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [lang]);
 
   useEffect(() => {
     if (isOpen) {
@@ -54,15 +51,7 @@ export default function HistoryModal({ isOpen, onClose, t, lang, onUndoSuccess }
     setUndoingId(id);
     setError("");
     try {
-      const res = await fetch(`${API_BASE}/api/action-history/${id}/undo`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "Failed to undo action");
-      }
+      await api.post(`/api/action-history/${id}/undo`);
       // Remove from local state
       setHistory((prev) =>
         prev.map((item) =>
@@ -72,7 +61,10 @@ export default function HistoryModal({ isOpen, onClose, t, lang, onUndoSuccess }
       if (onUndoSuccess) onUndoSuccess();
     } catch (err) {
       console.error("Undo error:", err);
-      setError(err.message);
+      setError(
+        err.response?.data?.error ||
+          (lang === "he" ? "שגיאה בביטול הפעולה" : "Failed to undo action")
+      );
     } finally {
       setUndoingId(null);
     }
