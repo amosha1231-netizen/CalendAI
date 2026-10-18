@@ -11,9 +11,10 @@
 // ──────────────────────────────────────────────
 const assert = require('node:assert/strict');
 const { test, mock } = require('node:test');
+const { google } = require('googleapis');
 const {
   intersectFree, mergeIntervals, sliceIntoSlots, overlapsAny, getLocalScheduleBusy, getLocationTimeZone, todayIsoInTimeZone, isValidIsoDate,
-  isSlotMutuallyFree, FRIDAY_SHABBAT_CUTOFF_MIN
+  isSlotMutuallyFree, getMutualFreeSlots, FRIDAY_SHABBAT_CUTOFF_MIN
 } = require('../services/mutualAvailability');
 
 // ── intersectFree(): pure interval math ──
@@ -311,5 +312,34 @@ test('todayIsoInTimeZone: resolves the calendar day in the given timezone, not t
     assert.equal(todayIsoInTimeZone('America/New_York'), '2026-11-01');
   } finally {
     mock.timers.reset();
+  }
+});
+
+// ── getMutualFreeSlots(): the same-day "already started" cutoff (windowStartMin) ──
+test('getMutualFreeSlots: clips today\'s window to the current time but leaves later days untouched', async () => {
+  // 2026-01-05T08:00:00Z is 10:00 AM in Asia/Jerusalem, a Monday (no Shabbat
+  // guard involved), so offset 0 is today (2026-01-05) and offset 1 is
+  // tomorrow (2026-01-06, Tuesday).
+  mock.timers.enable({ apis: ['Date'], now: new Date('2026-01-05T08:00:00Z').getTime() });
+  const calendarMock = mock.method(google, 'calendar', () => ({
+    freebusy: { query: async () => ({ data: { calendars: { primary: { busy: [] } } } }) }
+  }));
+  try {
+    const host = { _id: 'host-1', googleAccessToken: 'fake', googleRefreshToken: 'fake', schedule: {} };
+    const invitee = { _id: 'invitee-1', googleAccessToken: 'fake', googleRefreshToken: 'fake', schedule: {} };
+
+    const results = await getMutualFreeSlots(host, invitee, { locationId: 'jerusalem', duration: 30, rangeDays: 2 });
+
+    const today = results.find(r => r.date === '2026-01-05');
+    const tomorrow = results.find(r => r.date === '2026-01-06');
+
+    assert.ok(today && today.freeSlots.length, 'today should still have free slots after the current time');
+    assert.equal(today.freeSlots[0].startTime, '10:00 AM', 'today\'s first slot must not start before "now" (10:00), even though the location day starts at 06:00');
+
+    assert.ok(tomorrow && tomorrow.freeSlots.length, 'tomorrow should have free slots');
+    assert.equal(tomorrow.freeSlots[0].startTime, '06:00 AM', 'tomorrow is unaffected by today\'s current-time cutoff and starts at the location\'s normal day start');
+  } finally {
+    mock.timers.reset();
+    calendarMock.mock.restore();
   }
 });
