@@ -314,6 +314,7 @@ export default function ProviderBookingView({ providerId, lang, user, onClose })
                     value={guestName}
                     onChange={(e) => setGuestName(e.target.value)}
                     placeholder={lang === "he" ? "שם מלא" : "Full name"}
+                    maxLength={200}
                     className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-xl text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   />
                   <div className="relative">
@@ -324,6 +325,7 @@ export default function ProviderBookingView({ providerId, lang, user, onClose })
                       onChange={(e) => setGuestEmail(e.target.value)}
                       placeholder={lang === "he" ? "אימייל" : "Email"}
                       dir="ltr"
+                      maxLength={200}
                       className="w-full pl-10 pr-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-xl text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                     />
                   </div>
@@ -335,6 +337,7 @@ export default function ProviderBookingView({ providerId, lang, user, onClose })
                       onChange={(e) => setGuestPhone(e.target.value)}
                       placeholder={lang === "he" ? "טלפון" : "Phone"}
                       dir="ltr"
+                      maxLength={50}
                       className="w-full pl-10 pr-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-xl text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                     />
                   </div>
@@ -345,6 +348,7 @@ export default function ProviderBookingView({ providerId, lang, user, onClose })
                       onChange={(e) => setGuestNotes(e.target.value)}
                       placeholder={lang === "he" ? "הערות (אופציונלי)" : "Notes (optional)"}
                       rows={2}
+                      maxLength={2000}
                       className="w-full pl-10 pr-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-xl text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
                     />
                   </div>
