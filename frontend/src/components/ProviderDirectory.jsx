@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Search, X, Loader2, Filter, Briefcase, Calendar } from "lucide-react";
 import safeStorage from "../utils/safeStorage";
 
@@ -40,7 +40,12 @@ export default function ProviderDirectory({ lang, user, onClose, onSelectProvide
     }
   };
 
+  // Bumped on every call so a late-arriving response from a superseded
+  // search/category change can't overwrite the list with stale results.
+  const requestRef = useRef(0);
+
   const fetchProviders = useCallback(async (query, category) => {
+    const requestId = ++requestRef.current;
     setLoading(true);
     setError("");
     try {
@@ -52,13 +57,15 @@ export default function ProviderDirectory({ lang, user, onClose, onSelectProvide
       const res = await fetch(`${API_BASE}/api/providers${params.toString() ? `?${params.toString()}` : ""}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {}
       });
+      if (requestId !== requestRef.current) return;
       if (!res.ok) throw new Error("Failed to fetch providers");
       const data = await res.json();
+      if (requestId !== requestRef.current) return;
       setProviders(data.providers || []);
     } catch (err) {
-      setError(err.message);
+      if (requestId === requestRef.current) setError(err.message);
     } finally {
-      setLoading(false);
+      if (requestId === requestRef.current) setLoading(false);
     }
   }, []);
 
