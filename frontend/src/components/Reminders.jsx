@@ -17,7 +17,7 @@ const STRINGS = {
     what: 'על מה להזכיר', whatPh: 'למשל: לקחת כדור', at: 'בשעה', repeat: 'חזרה',
     once: 'פעם אחת', daily: 'כל יום', weekly: 'ימים קבועים', monthly: 'כל חודש',
     onDate: 'בתאריך', whichDays: 'באילו ימים', dayOfMonth: 'ביום', ofMonth: 'בחודש',
-    skipShabbat: 'בלי פינג בשבת', skipShabbatSub: 'תזכורות שנופלות בשבת ידלגו לפעם הבאה',
+    skipShabbat: 'אין פינגים בשבת', skipShabbatSub: 'תזכורות שנופלות בשבת ידלגו לפעם הבאה',
     everyDayAt: 'כל יום ב-', everyMonthOn: 'כל חודש ב-', onceOn: 'פעם אחת,', at2: 'ב-',
     next: 'הפינג הבא', today: 'היום', tomorrow: 'מחר', paused: 'מושהית', done: 'הסתיימה',
     pause: 'השהה', resume: 'הפעל', confirmDelete: 'למחוק את התזכורת?',
@@ -367,13 +367,13 @@ function ReminderEditor({ s, lang, isRtl, initial, onCancel, onSaved }) {
             </label>
           )}
           {draft.frequency !== 'once' && (
-            <label className="flex items-center gap-3 cursor-pointer">
-              <input type="checkbox" checked={draft.skipShabbat} onChange={e => set('skipShabbat', e.target.checked)} className="w-5 h-5 accent-indigo-600" />
+            <div className="flex items-center gap-3">
+              <span className="text-xl" aria-hidden="true">🕯️</span>
               <span className="flex-1 min-w-0">
                 <span className="block text-sm font-medium text-slate-700">{s.skipShabbat}</span>
                 <span className="block text-xs text-slate-500">{s.skipShabbatSub}</span>
               </span>
-            </label>
+            </div>
           )}
           {error && <p className="text-sm text-rose-600" role="alert">{error}</p>}
           <div className="flex gap-2 pt-1">
