@@ -24,8 +24,18 @@ const providerBookingSchema = new mongoose.Schema({
   guestNotes: { type: String, maxlength: 2000 },
   status: { type: String, enum: ['processing', 'confirmed', 'cancelled'], default: 'processing', index: true },
   confirmedAt: Date,
-  googleEventId: String
+  googleEventId: String,
+  // Mirrors `status !== 'cancelled'`, kept in sync below. MongoDB's
+  // partialFilterExpression only supports equality-style operators
+  // ($eq/$exists/$gt/$gte/$lt/$lte/$type/$and) — $ne is rejected at index
+  // creation time — so the unique index below partials on this instead.
+  activeSlot: { type: Boolean, default: true }
 }, { timestamps: true });
+
+providerBookingSchema.pre('save', function setActiveSlot(next) {
+  this.activeSlot = this.status !== 'cancelled';
+  next();
+});
 
 // Atomic double-booking guard: only one non-cancelled reservation may hold
 // a given provider+date+startTime. A duplicate insert attempt fails with a
@@ -37,7 +47,7 @@ const providerBookingSchema = new mongoose.Schema({
 // that gap (see the comment there); it is not a full fix (no transaction/lock).
 providerBookingSchema.index(
   { providerId: 1, date: 1, startTime: 1 },
-  { unique: true, partialFilterExpression: { status: { $ne: 'cancelled' } } }
+  { unique: true, partialFilterExpression: { activeSlot: true } }
 );
 
 module.exports = mongoose.models.ProviderBooking || mongoose.model('ProviderBooking', providerBookingSchema);
