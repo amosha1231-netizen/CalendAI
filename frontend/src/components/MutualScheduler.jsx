@@ -224,6 +224,7 @@ export default function MutualScheduler({ lang, t, onClose, onFallbackToShareLin
             type="email"
             value={inviteeEmail}
             onChange={e => setInviteeEmail(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && inviteeEmail.trim() && !lookupLoading) handleFindMutualTime(); }}
             placeholder={t.mutualInviteeEmailPlaceholder || 'friend@example.com'}
             className="booking-input"
             dir="ltr"
