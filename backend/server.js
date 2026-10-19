@@ -1328,7 +1328,7 @@ app.get('/api/auth/me', async (req, res) => {
     // JWT token-based authentication
     const token = authHeader.split(' ')[1];
     try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'calendai_secret');
+      const decoded = jwt.verify(token, JWT_SECRET);
       userId = decoded.id;
     } catch (err) {
       // Return 401 Unauthorized for invalid/expired tokens so the frontend
