@@ -403,11 +403,13 @@ router.post('/bookings/:id/cancel', async (req, res) => {
         }
       }
       if (provider) {
-        const pull = { [`schedule.${booking.day}`]: { providerBookingId: booking._id.toString() } };
-        const getTodayDayName = req.app.get('getTodayDayName');
-        if (getTodayDayName && booking.day === getTodayDayName()) {
-          pull['schedule.Today'] = { providerBookingId: booking._id.toString() };
-        }
+        // Pull from both the day bucket and Today unconditionally — pulling
+        // by providerBookingId is a precise, harmless no-op on whichever
+        // bucket the push didn't actually reach.
+        const pull = {
+          [`schedule.${booking.day}`]: { providerBookingId: booking._id.toString() },
+          'schedule.Today': { providerBookingId: booking._id.toString() }
+        };
         await User.updateOne({ _id: provider._id }, { $pull: pull }).catch(() => {});
       }
     }
@@ -560,7 +562,13 @@ router.post('/:id/book', bookLimiter, async (req, res) => {
     // by, only bookLimiter's per-IP window — cap the free-text fields the same
     // way guestName already is, so a single request can't write an arbitrarily
     // large document (unlike guestName, these are optional, so empty is fine).
-    if (guestEmail !== undefined && guestEmail !== null && (typeof guestEmail !== 'string' || guestEmail.length > 200)) {
+    // Beyond the length cap, actually validate the format when non-empty —
+    // guestEmail is forwarded as a Google Calendar attendee address below
+    // when the provider has Google connected, and an unvalidated malformed
+    // value makes calendar.events.insert() reject the whole booking (502),
+    // triggering a full rollback for what should have been a valid request.
+    if (guestEmail !== undefined && guestEmail !== null && guestEmail !== '' &&
+        (typeof guestEmail !== 'string' || guestEmail.length > 200 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(guestEmail.trim()))) {
       return res.status(400).json({ error: 'כתובת אימייל לא תקינה.' });
     }
     if (guestPhone !== undefined && guestPhone !== null && (typeof guestPhone !== 'string' || guestPhone.length > 50)) {
@@ -657,7 +665,6 @@ router.post('/:id/book', bookLimiter, async (req, res) => {
     }
 
     const DEFAULT_LOCATION_ID = req.app.get('DEFAULT_LOCATION_ID');
-    const getTodayDayName = req.app.get('getTodayDayName');
     const syncEventToGoogleCalendar = req.app.get('syncEventToGoogleCalendar');
 
     const eventToPersist = {
@@ -678,7 +685,14 @@ router.post('/:id/book', bookLimiter, async (req, res) => {
     const observedRevision = Number(provider.scheduleRevision || 0);
     const schedulePath = `schedule.${dayName}`;
     const scheduleUpdate = { $push: { [schedulePath]: eventToPersist } };
-    if (dayName === getTodayDayName()) scheduleUpdate.$push['schedule.Today'] = eventToPersist;
+    // Compare the booking's actual date (not just its weekday name) against
+    // "today" in the provider's own location timezone — matching on weekday
+    // alone would also mirror a booking made for next week into Today
+    // whenever that date happens to share today's weekday, and using the
+    // server/request timezone instead of the provider's own would disagree
+    // with the past-date cutoff check above for providers outside it.
+    const isBookingToday = date === todayIsoInTimeZone(getLocationTimeZone(provider.providerProfile?.locationId));
+    if (isBookingToday) scheduleUpdate.$push['schedule.Today'] = eventToPersist;
 
     const saveResult = await User.updateOne({
       _id: provider._id,
@@ -715,7 +729,7 @@ router.post('/:id/book', bookLimiter, async (req, res) => {
       if (cached) {
         if (!cached[dayName]) cached[dayName] = [];
         cached[dayName].push(eventToPersist);
-        if (dayName === getTodayDayName()) {
+        if (isBookingToday) {
           if (!cached.Today) cached.Today = [];
           cached.Today.push(eventToPersist);
         }
@@ -735,9 +749,14 @@ router.post('/:id/book', bookLimiter, async (req, res) => {
     if (pushedScheduleEvent && provider && createdBooking) {
       try {
         const dayName = createdBooking.day;
-        const pull = { [`schedule.${dayName}`]: { providerBookingId: createdBooking._id.toString() } };
-        const getTodayDayName = req.app.get('getTodayDayName');
-        if (getTodayDayName && dayName === getTodayDayName()) pull['schedule.Today'] = { providerBookingId: createdBooking._id.toString() };
+        // Pull from both the day bucket and Today unconditionally — pulling
+        // by providerBookingId is a precise, harmless no-op on whichever
+        // bucket the push didn't actually reach, and avoids having to
+        // re-derive whether the push had mirrored into Today.
+        const pull = {
+          [`schedule.${dayName}`]: { providerBookingId: createdBooking._id.toString() },
+          'schedule.Today': { providerBookingId: createdBooking._id.toString() }
+        };
         await User.updateOne({ _id: provider._id }, { $pull: pull });
       } catch (rollbackErr) {
         console.error('Failed to roll back provider schedule push:', rollbackErr.message);

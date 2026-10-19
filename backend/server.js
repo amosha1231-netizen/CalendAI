@@ -529,7 +529,13 @@ function getUserId(req) {
     }
     return req.session.guestId;
   }
-  return 'anonymous';
+  // req.session should always be present (the session middleware is mounted
+  // globally ahead of every route), but if it's ever missing, fall back to a
+  // fresh random id rather than the old shared literal 'anonymous' — a
+  // static shared key here would reintroduce the exact cross-guest
+  // collision this function exists to prevent, even though it won't persist
+  // across requests without a session to store it in.
+  return `guest_${crypto.randomBytes(16).toString('hex')}`;
 }
 
 // ── Semantic Router (fast vs smart track classification)

@@ -87,15 +87,6 @@ function formatTime12(h, m) {
   return `${String(h12).padStart(2, '0')}:${String(m).padStart(2, '0')} ${ampm}`;
 }
 
-// Resolve "today"'s day name as observed in the given IANA timezone, not
-// server-local/UTC — otherwise a location behind/ahead of the server's clock
-// can have its newly-confirmed event mirrored into the wrong day (missing
-// from schedule.Today near midnight, or pushed into Today a day early).
-function getTodayDayName(timeZone) {
-  const weekday = new Intl.DateTimeFormat('en-US', { timeZone, weekday: 'long' }).format(new Date());
-  return DAY_NAMES.includes(weekday) ? weekday : DAY_NAMES[new Date().getDay()];
-}
-
 async function loadAuthorizedSession(req, res) {
   const session = await MutualBooking.findOne({ sessionId: req.params.id });
   if (!session) {
@@ -151,7 +142,11 @@ async function rollbackCompletedSession(session) {
 
 async function pushToSchedule(userDoc, dayName, eventObj, timeZone) {
   const update = { $push: { [`schedule.${dayName}`]: eventObj }, $inc: { scheduleRevision: 1 } };
-  if (dayName === getTodayDayName(timeZone)) update.$push['schedule.Today'] = eventObj;
+  // Compare the event's actual target date (not just its weekday name) to
+  // today in the given timezone — matching on weekday alone would also
+  // mirror a meeting booked for next week into Today whenever that date
+  // happens to land on today's weekday.
+  if (eventObj.targetDate === todayIsoInTimeZone(timeZone)) update.$push['schedule.Today'] = eventObj;
   const observedRevision = Number(userDoc.scheduleRevision || 0);
   const result = await User.updateOne({
     _id: userDoc._id,
