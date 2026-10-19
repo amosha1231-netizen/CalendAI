@@ -14,7 +14,7 @@ const { test, mock } = require('node:test');
 const { google } = require('googleapis');
 const {
   intersectFree, mergeIntervals, sliceIntoSlots, overlapsAny, getLocalScheduleBusy, getLocationTimeZone, todayIsoInTimeZone, isValidIsoDate,
-  isSlotMutuallyFree, getMutualFreeSlots, FRIDAY_SHABBAT_CUTOFF_MIN
+  isSlotMutuallyFree, getMutualFreeSlots, getFreeBusyForDay, FRIDAY_SHABBAT_CUTOFF_MIN
 } = require('../services/mutualAvailability');
 
 // ── intersectFree(): pure interval math ──
@@ -340,6 +340,116 @@ test('getMutualFreeSlots: clips today\'s window to the current time but leaves l
     assert.equal(tomorrow.freeSlots[0].startTime, '06:00 AM', 'tomorrow is unaffected by today\'s current-time cutoff and starts at the location\'s normal day start');
   } finally {
     mock.timers.reset();
+    calendarMock.mock.restore();
+  }
+});
+
+// ── getFreeBusyForDay(): the actual Google freebusy.query integration —
+// every other test file (providerGoogleAvailability.test.js,
+// getMutualFreeSlots' own test above) stubs this function out entirely, so
+// its own clipping/clock-minute-conversion logic has never been exercised
+// directly against a (mocked) freebusy.query response. ──
+const user = { _id: 'u1', googleAccessToken: 'fake', googleRefreshToken: 'fake' };
+
+test('getFreeBusyForDay: a busy block fully inside the window is returned in clock-minutes-of-day, as-is', async (t) => {
+  // Query window 06:00-23:00 Asia/Jerusalem on 2026-11-02 (a Monday, UTC+2).
+  // Busy 09:00-10:00 is fully inside it.
+  const calendarMock = t.mock.method(google, 'calendar', () => ({
+    freebusy: {
+      query: async () => ({
+        data: { calendars: { primary: { busy: [{ start: '2026-11-02T07:00:00Z', end: '2026-11-02T08:00:00Z' }] } } }
+      })
+    }
+  }));
+  try {
+    const busy = await getFreeBusyForDay(user, '2026-11-02', '06:00', '23:00', 'Asia/Jerusalem');
+    assert.deepEqual(busy, [{ start: 540, end: 600 }]); // 09:00-10:00
+    assert.equal(calendarMock.mock.callCount(), 1);
+  } finally {
+    calendarMock.mock.restore();
+  }
+});
+
+test('getFreeBusyForDay: a busy block that starts before the window is clipped to the window start', async (t) => {
+  // Busy 04:00-07:00 Asia/Jerusalem; window starts at 06:00 — must clip to 06:00-07:00.
+  const calendarMock = t.mock.method(google, 'calendar', () => ({
+    freebusy: {
+      query: async () => ({
+        data: { calendars: { primary: { busy: [{ start: '2026-11-02T02:00:00Z', end: '2026-11-02T05:00:00Z' }] } } }
+      })
+    }
+  }));
+  try {
+    const busy = await getFreeBusyForDay(user, '2026-11-02', '06:00', '23:00', 'Asia/Jerusalem');
+    assert.deepEqual(busy, [{ start: 360, end: 420 }]); // 06:00-07:00
+  } finally {
+    calendarMock.mock.restore();
+  }
+});
+
+test('getFreeBusyForDay: a busy block that ends after the window is clipped to the window end', async (t) => {
+  // Busy 22:00-23:59 Asia/Jerusalem; window ends at 23:00 — must clip to 22:00-23:00.
+  const calendarMock = t.mock.method(google, 'calendar', () => ({
+    freebusy: {
+      query: async () => ({
+        data: { calendars: { primary: { busy: [{ start: '2026-11-02T20:00:00Z', end: '2026-11-02T21:59:00Z' }] } } }
+      })
+    }
+  }));
+  try {
+    const busy = await getFreeBusyForDay(user, '2026-11-02', '06:00', '23:00', 'Asia/Jerusalem');
+    assert.deepEqual(busy, [{ start: 1320, end: 1380 }]); // 22:00-23:00
+  } finally {
+    calendarMock.mock.restore();
+  }
+});
+
+test('getFreeBusyForDay: a busy block entirely outside the window is dropped, not returned as a zero/negative-length range', async (t) => {
+  // Busy 23:30-23:50 Asia/Jerusalem is entirely past the 06:00-23:00 window.
+  const calendarMock = t.mock.method(google, 'calendar', () => ({
+    freebusy: {
+      query: async () => ({
+        data: { calendars: { primary: { busy: [{ start: '2026-11-02T21:30:00Z', end: '2026-11-02T21:50:00Z' }] } } }
+      })
+    }
+  }));
+  try {
+    const busy = await getFreeBusyForDay(user, '2026-11-02', '06:00', '23:00', 'Asia/Jerusalem');
+    assert.deepEqual(busy, []);
+  } finally {
+    calendarMock.mock.restore();
+  }
+});
+
+test('getFreeBusyForDay: no busy blocks at all resolves to an empty array', async (t) => {
+  const calendarMock = t.mock.method(google, 'calendar', () => ({
+    freebusy: { query: async () => ({ data: { calendars: { primary: { busy: [] } } } }) }
+  }));
+  try {
+    const busy = await getFreeBusyForDay(user, '2026-11-02', '06:00', '23:00', 'Asia/Jerusalem');
+    assert.deepEqual(busy, []);
+  } finally {
+    calendarMock.mock.restore();
+  }
+});
+
+test('getFreeBusyForDay: queries Google with the window expressed as absolute instants in the right timezone', async (t) => {
+  let capturedRequestBody = null;
+  const calendarMock = t.mock.method(google, 'calendar', () => ({
+    freebusy: {
+      query: async (opts) => {
+        capturedRequestBody = opts.requestBody;
+        return { data: { calendars: { primary: { busy: [] } } } };
+      }
+    }
+  }));
+  try {
+    await getFreeBusyForDay(user, '2026-11-02', '06:00', '23:00', 'Asia/Jerusalem');
+    assert.equal(capturedRequestBody.timeMin, '2026-11-02T04:00:00.000Z'); // 06:00 Asia/Jerusalem (UTC+2)
+    assert.equal(capturedRequestBody.timeMax, '2026-11-02T21:00:00.000Z'); // 23:00 Asia/Jerusalem
+    assert.equal(capturedRequestBody.timeZone, 'Asia/Jerusalem');
+    assert.deepEqual(capturedRequestBody.items, [{ id: 'primary' }]);
+  } finally {
     calendarMock.mock.restore();
   }
 });
