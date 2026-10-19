@@ -57,7 +57,7 @@ function isShabbatAt(instant, timeZone) {
 
 function nextFireFor(reminder, after = new Date()) {
   return schedule.computeNextFire(reminder, after, {
-    isBlocked: reminder.skipShabbat ? instant => isShabbatAt(instant, reminder.timezone) : null
+    isBlocked: instant => isShabbatAt(instant, reminder.timezone) // never on Shabbat
   });
 }
 
