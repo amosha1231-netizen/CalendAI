@@ -3,9 +3,39 @@
 @tailwind utilities;
 
 :root {
-  color: #0f172a;
-  background-color: #F8FAFC;
-  font-family: Inter, Arial, sans-serif;
+  color: #14181A;
+  background-color: #EEF0E9;
+  font-family: 'Noto Sans Hebrew', 'Rubik', 'Work Sans', system-ui, sans-serif;
+}
+
+/* ──────────────────────────────────────────── */
+/* "Ledger & Index" brand primitives            */
+/* ──────────────────────────────────────────── */
+.bg-ledger-grid {
+  background-image:
+    repeating-linear-gradient(0deg, rgba(20, 24, 20, .05) 0 1px, transparent 1px 32px),
+    repeating-linear-gradient(90deg, rgba(20, 24, 20, .05) 0 1px, transparent 1px 32px);
+}
+
+.card-fold {
+  position: relative;
+}
+
+.card-fold::after {
+  content: "";
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-end: 0;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 0 16px 16px 0;
+  border-color: transparent #D7DBC9 transparent transparent;
+}
+
+[dir="rtl"] .card-fold::after {
+  border-width: 0 0 16px 16px;
+  border-color: transparent transparent transparent #D7DBC9;
 }
 
 @keyframes slide-in {

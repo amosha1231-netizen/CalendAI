@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, Suspense, lazy } from 
 import { motion } from "framer-motion";
 import { BrowserRouter } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
-import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Menu, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff, Home, Plus, Zap, ChevronDown, ChevronUp, FileText, Layout, Trophy, Image, Upload, Search, CalendarPlus, BookOpen, ListChecks } from "lucide-react";
+import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Menu, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff, Home, Plus, Zap, ChevronDown, ChevronUp, FileText, Layout, Trophy, Image, Upload, Search, CalendarPlus, BookOpen, Users, ListChecks } from "lucide-react";
 import { staggerContainerVariants, staggerItemVariants } from "./hooks/useStaggeredAnimation";
 import GlobalSearch from "./components/GlobalSearch";
 import MonthlyCalendar from "./components/MonthlyCalendar";
@@ -28,6 +28,11 @@ const LandingPage = lazy(() => import("./components/LandingPage"));
 const AuthSuccess = lazy(() => import("./pages/AuthSuccess"));
 const GuestBookingView = lazy(() => import("./components/GuestBookingView"));
 const Booking = lazy(() => import("./components/Booking"));
+const MutualScheduler = lazy(() => import("./components/MutualScheduler"));
+const ProviderDirectory = lazy(() => import("./components/ProviderDirectory"));
+const ProviderBookingView = lazy(() => import("./components/ProviderBookingView"));
+const ProviderProfileEditor = lazy(() => import("./components/ProviderProfileEditor"));
+const ExpectedExpenses = lazy(() => import("./components/ExpectedExpenses"));
 import PrivacyPolicyPage from "./pages/PrivacyPolicy";
 import DeleteAccountPage from "./pages/DeleteAccount";
 import TermsPage from "./pages/Terms";
@@ -60,6 +65,19 @@ function isJwtExpired(token) {
 
 // ── Module-level declarations (using var/function to avoid TDZ) ──
 var API_BASE = import.meta.env.VITE_API_URL || "";
+
+// JWT auth header for raw fetch() calls below — withCredentials cookies alone
+// aren't reliable (e.g. iOS Safari drops third-party session cookies), and the
+// backend's auth check looks for this Bearer token first. Without it, requests
+// from a logged-in user silently fall back to an anonymous/guest bucket.
+function getAuthHeaders() {
+  try {
+    const token = safeStorage.getItem('token') || safeStorage.getItem('calendai-jwt');
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  } catch (e) {
+    return {};
+  }
+}
 
 function RECURRENCE_OPTIONS(lang) {
   return [
@@ -378,6 +396,13 @@ function AppRoutes() {
   const [showPublicGoals, setShowPublicGoals] = useState(false);
   const [showChallengeDetail, setShowChallengeDetail] = useState(false);
   const [selectedChallengeId, setSelectedChallengeId] = useState(null);
+  const [showProviderDirectory, setShowProviderDirectory] = useState(false);
+  const [showProviderBooking, setShowProviderBooking] = useState(false);
+  const [selectedProviderId, setSelectedProviderId] = useState(null);
+  const [showProviderProfileEditor, setShowProviderProfileEditor] = useState(false);
+  const [showExpenses, setShowExpenses] = useState(false);
+  const [expensePrefill, setExpensePrefill] = useState(null);
+  const [expenseSuggestions, setExpenseSuggestions] = useState([]);
   const [showJournal, setShowJournal] = useState(false);
   // Routines & shared challenges (components/Routines.jsx)
   const [routinesView, setRoutinesView] = useState(null); // null | 'today' | 'progress' | 'discover'
@@ -459,7 +484,7 @@ function AppRoutes() {
         if (entry.type === 'parse' && entry.data?.text) {
           await fetch(`${API_BASE}/api/parse-schedule`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", ...getAuthHeaders() },
             body: JSON.stringify({
               text: entry.data.text,
               recurrence: entry.data.recurrence || 'weekly',
@@ -478,7 +503,7 @@ function AppRoutes() {
   }, []);
 
   const handleShareApp = useCallback(async () => {
-    const shareUrl = 'https://calendai-q59p.onrender.com/';
+    const shareUrl = 'https://calendai.org/';
     if (navigator.share) {
       try {
         await navigator.share({
@@ -606,7 +631,7 @@ function AppRoutes() {
 
   const fetchSchedule = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/schedule`, { credentials: "include" });
+      const res = await fetch(`${API_BASE}/api/schedule`, { credentials: "include", headers: getAuthHeaders() });
       if (res.ok) {
         const data = await res.json();
         if (data.schedule) setSchedule(data.schedule);
@@ -708,7 +733,7 @@ function AppRoutes() {
         if (user) {
           const res = await fetch(`${API_BASE}/api/schedule/add-to-free-slot`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", ...getAuthHeaders() },
             body: JSON.stringify({
               day: day,
               startTime,
@@ -907,7 +932,7 @@ function AppRoutes() {
     try {
       await fetch(`${API_BASE}/api/schedule`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ schedule: previousSchedule }),
         credentials: "include"
       });
@@ -1019,7 +1044,7 @@ function AppRoutes() {
     try {
       const res = await fetch(`${API_BASE}/api/parse-schedule`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ text: inputText, recurrence: DEFAULT_RECURRENCE, location: selectedLocation, eventType: DEFAULT_EVENT_TYPE, duration: DEFAULT_DURATION }),
         credentials: "include"
       });
@@ -1063,6 +1088,7 @@ function AppRoutes() {
       }
       if (data.conflicts?.length > 0) setConflicts(data.conflicts);
       else setConflicts([]);
+      if (data.suggestedExpenses?.length > 0) setExpenseSuggestions(data.suggestedExpenses);
       if (data.aiCredits !== undefined && data.aiCredits !== null) {
         const normalizedCredits = normalizeCredits(data.aiCredits);
         setUser(prev => prev ? { ...prev, aiCredits: normalizedCredits } : prev);
@@ -1101,7 +1127,7 @@ function AppRoutes() {
     try {
       await fetch(`${API_BASE}/api/schedule/event`, {
         method: "DELETE",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ day, index }),
         credentials: "include"
       });
@@ -1129,7 +1155,7 @@ function AppRoutes() {
     setRescheduleLoading(true);
     setRescheduleError("");
     try {
-      const gapsRes = await fetch(`${API_BASE}/api/reschedule/gaps`, { credentials: "include" });
+      const gapsRes = await fetch(`${API_BASE}/api/reschedule/gaps`, { credentials: "include", headers: getAuthHeaders() });
       const gapsData = await gapsRes.json();
       setGapsResult(gapsData);
       setRescheduleStep("choose");
@@ -1143,7 +1169,7 @@ function AppRoutes() {
     setRescheduleError("");
     try {
       const res = await fetch(`${API_BASE}/api/reschedule/merge-gaps`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include"
+        method: "POST", headers: { "Content-Type": "application/json", ...getAuthHeaders() }, credentials: "include"
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Merge failed");
@@ -1159,7 +1185,7 @@ function AppRoutes() {
     setRescheduleError("");
     try {
       const res = await fetch(`${API_BASE}/api/reschedule/shift`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
+        method: "POST", headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ delayMinutes: rescheduleDelay }), credentials: "include"
       });
       const data = await res.json();
@@ -1175,7 +1201,7 @@ function AppRoutes() {
     setRescheduleError("");
     try {
       const res = await fetch(`${API_BASE}/api/reschedule`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
+        method: "POST", headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ reason }), credentials: "include"
       });
       if (!res.ok) { const e = await res.json(); throw new Error(e.error || "AI failed"); }
@@ -1209,7 +1235,7 @@ function AppRoutes() {
       const dayMapEn = { 'Sunday': 'Sunday', 'Monday': 'Monday', 'Tuesday': 'Tuesday', 'Wednesday': 'Wednesday', 'Thursday': 'Thursday', 'Friday': 'Friday', 'Saturday': 'Saturday' };
       const dayMapHe = { 'ראשון': 'Sunday', 'שני': 'Monday', 'שלישי': 'Tuesday', 'רביעי': 'Wednesday', 'חמישי': 'Thursday', 'שישי': 'Friday', 'שבת': 'Saturday', 'היום': 'Today' };
       const actualDay = dayMapEn[day] || dayMapHe[day] || day || 'Today';
-      const res = await fetch(`${API_BASE}/api/schedule/free-slots?day=${actualDay}&duration=${durationMinutes}&location=${selectedLocation}`, { credentials: "include" });
+      const res = await fetch(`${API_BASE}/api/schedule/free-slots?day=${actualDay}&duration=${durationMinutes}&location=${selectedLocation}`, { credentials: "include", headers: getAuthHeaders() });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed");
       setFreeSlotsData(data);
@@ -1223,7 +1249,7 @@ function AppRoutes() {
     setFreeSlotsLoading(true);
     try {
       const res = await fetch(`${API_BASE}/api/schedule/add-to-free-slot`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
+        method: "POST", headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ day: freeSlotsData.day, startTime: slot.startTime, endTime: slot.endTime, title, recurrence: DEFAULT_RECURRENCE, location: selectedLocation }),
         credentials: "include"
       });
@@ -1249,7 +1275,7 @@ function AppRoutes() {
     setEditLoading(true);
     try {
       const res = await fetch(`${API_BASE}/api/schedule/event`, {
-        method: "PUT", headers: { "Content-Type": "application/json" },
+        method: "PUT", headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ day: editModalData.day, index: editModalData.index, updates: editModalData.event }),
         credentials: "include"
       });
@@ -1497,6 +1523,17 @@ function AppRoutes() {
     );
   }
 
+  if (currentView === 'mutual') {
+    return (
+      <MutualScheduler
+        lang={lang}
+        t={t}
+        onClose={() => setCurrentView('dashboard')}
+        onFallbackToShareLink={() => setCurrentView('booking')}
+      />
+    );
+  }
+
   const isRTL = lang === 'he';
   const SUGGESTION_CHIPS = t.suggestionChips;
 
@@ -1661,6 +1698,15 @@ function AppRoutes() {
             >
               <Trophy className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">{lang === "he" ? "אתגרים" : "Goals"}</span>
+            </button>
+            {/* Mutual Scheduling Button — pick slots, share a link, the other person picks what works */}
+            <button
+              onClick={() => setShowWizard(true)}
+              className="hidden xs:flex items-center gap-1 text-xs font-medium px-1.5 sm:px-2.5 py-1.5 rounded-full border border-blue-200 text-blue-700 bg-blue-50 hover:bg-blue-100 transition"
+              title={lang === "he" ? "🤝 תיאום פגישה הדדי" : "🤝 Mutual Scheduling"}
+            >
+              <Users className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">{lang === "he" ? "תיאום" : "Meet"}</span>
             </button>
             {/* Mobile Search Icon Toggle */}
             <button
@@ -2164,7 +2210,7 @@ function AppRoutes() {
                       setRescheduleQuickActionLoading(true);
                       try {
                         const res = await fetch(`${API_BASE}/api/reschedule/merge-gaps`, {
-                          method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include"
+                          method: "POST", headers: { "Content-Type": "application/json", ...getAuthHeaders() }, credentials: "include"
                         });
                         const data = await res.json();
                         if (res.ok) {
@@ -2580,8 +2626,12 @@ function AppRoutes() {
         onLogout={handleLogout}
         onOpenShareModal={() => setShowWizard(true)}
         onOpenHistory={() => setShowHistoryModal(true)}
+        onOpenMutualScheduler={() => setCurrentView('mutual')}
+        onOpenProviderDirectory={() => setShowProviderDirectory(true)}
+        onOpenProviderProfile={() => setShowProviderProfileEditor(true)}
+        onOpenExpenses={() => setShowExpenses(true)}
         onOpenAlarm={() => setShowAlarmSettings(true)}
-        selectedLocation={profileLocation}
+        selectedLocation={profileLocation !== 'none' ? profileLocation : selectedLocation}
         onLocationChange={(loc) => {
           setProfileLocation(loc);
           try { safeStorage.setItem('calendai-profile-location', loc); } catch (e) {}
@@ -2636,6 +2686,47 @@ function AppRoutes() {
         />
       )}
 
+      {/* Provider Directory Modal */}
+      {showProviderDirectory && (
+        <Suspense fallback={null}>
+          <ProviderDirectory
+            lang={lang}
+            user={user}
+            onClose={() => setShowProviderDirectory(false)}
+            onSelectProvider={(providerId) => {
+              setSelectedProviderId(providerId);
+              setShowProviderBooking(true);
+            }}
+          />
+        </Suspense>
+      )}
+
+      {/* Provider Booking Modal */}
+      {showProviderBooking && selectedProviderId && (
+        <Suspense fallback={null}>
+          <ProviderBookingView
+            providerId={selectedProviderId}
+            lang={lang}
+            user={user}
+            onClose={() => {
+              setShowProviderBooking(false);
+              setSelectedProviderId(null);
+            }}
+          />
+        </Suspense>
+      )}
+
+      {/* Provider Profile Editor Modal */}
+      {showProviderProfileEditor && (
+        <Suspense fallback={null}>
+          <ProviderProfileEditor
+            lang={lang}
+            user={user}
+            onClose={() => setShowProviderProfileEditor(false)}
+          />
+        </Suspense>
+      )}
+
       {/* Recurring reminders ("every day at 8: take a pill") */}
       {showReminders && (
         <Reminders
@@ -2669,6 +2760,53 @@ function AppRoutes() {
         t={t}
         user={user}
       />
+
+      {/* Expected Expenses Modal */}
+      {showExpenses && (
+        <Suspense fallback={null}>
+          <ExpectedExpenses
+            lang={lang}
+            prefill={expensePrefill}
+            onConsumedPrefill={() => setExpensePrefill(null)}
+            onClose={() => setShowExpenses(false)}
+          />
+        </Suspense>
+      )}
+
+      {/* Expected-Expense Suggestion Banners — shown after the AI schedules a
+          cost-bearing life event (e.g. "חתונה ב-15/3"), one at a time. */}
+      {!showExpenses && expenseSuggestions.length > 0 && (
+        <div className="fixed bottom-4 inset-x-4 sm:inset-x-auto sm:right-4 sm:left-auto z-[9998] max-w-sm mx-auto sm:mx-0" dir={isRTL ? 'rtl' : 'ltr'}>
+          <div className="bg-white border border-emerald-200 shadow-xl rounded-2xl p-4 flex items-start gap-3">
+            <span className="text-2xl">💰</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-slate-800">
+                {lang === 'he'
+                  ? `רוצה לעקוב אחרי ההוצאה הצפויה של "${expenseSuggestions[0].title}"?`
+                  : `Want to track the expected expense for "${expenseSuggestions[0].title}"?`}
+              </p>
+              <div className="flex gap-2 mt-2">
+                <button
+                  onClick={() => {
+                    setExpensePrefill(expenseSuggestions[0]);
+                    setShowExpenses(true);
+                    setExpenseSuggestions(prev => prev.slice(1));
+                  }}
+                  className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-medium hover:bg-emerald-700 transition"
+                >
+                  {lang === 'he' ? '➕ הוסף כהוצאה צפויה' : '➕ Add as Expected Expense'}
+                </button>
+                <button
+                  onClick={() => setExpenseSuggestions(prev => prev.slice(1))}
+                  className="px-3 py-1.5 bg-gray-100 text-gray-600 rounded-lg text-xs font-medium hover:bg-gray-200 transition"
+                >
+                  {lang === 'he' ? 'לא כעת' : 'Not now'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

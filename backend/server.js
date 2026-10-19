@@ -29,6 +29,7 @@ const ProcessedPaymentEvent = require('./models/ProcessedPaymentEvent');
 const Booking = require('./models/Booking');
 const OAuthHandoff = require('./models/OAuthHandoff');
 const { google } = require('googleapis');
+const { createOAuth2ClientWithRefresh, buildGcalEventBody } = require('./services/googleCalendar');
 const fs = require('fs');
 const path = require('path');
 const rateLimit = require('express-rate-limit');
@@ -40,6 +41,21 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 
 dotenv.config({ path: path.join(__dirname, '.env') });
 
 const isProduction = process.env.NODE_ENV === 'production' || !!process.env.RENDER;
+
+// Node's c-ares DNS resolver can fail to query a link-local IPv6 DNS server
+// (seen on some Windows networks) with ECONNREFUSED specifically on the SRV
+// lookup `mongodb+srv://` needs, even though the OS resolver (nslookup) has
+// no trouble with it. Point Node at public DNS for local dev only, so the
+// Atlas connection doesn't depend on that resolver; production environments
+// (Render) are unaffected.
+if (!isProduction) {
+  try {
+    require('dns').setServers(['8.8.8.8', '1.1.1.1']);
+  } catch (dnsErr) {
+    console.warn('Could not set fallback DNS servers:', dnsErr.message);
+  }
+}
+
 const JWT_SECRET = require('./config/jwtSecret');
 const SESSION_SECRET = process.env.SESSION_SECRET?.trim() || (!isProduction ? 'calendai-secret-key-change-me' : null);
 const MONGO_URI = process.env.MONGODB_URI?.trim() || process.env.MONGO_URI?.trim() || (!isProduction ? 'mongodb://localhost:27017/calendai' : null);
@@ -174,7 +190,7 @@ function saveSchedules(map) {
 // 1. Middleware
 // ──────────────────────────────────────────────
 // Frontend and backend are two separate Render services (different origins).
-const PRODUCTION_APP_URL = 'https://calendai-q59p.onrender.com';
+const PRODUCTION_APP_URL = 'https://www.calendai.org';
 const PRODUCTION_BACKEND_URL = 'https://calendai-backend-dfmi.onrender.com';
 const FRONTEND_URL = (process.env.FRONTEND_URL?.trim() || process.env.CLIENT_URL?.trim() || (isProduction ? PRODUCTION_APP_URL : 'http://localhost:5173')).replace(/\/+$/, '');
 const CLIENT_URL = (process.env.CLIENT_URL?.trim() || FRONTEND_URL).replace(/\/+$/, '');
@@ -192,6 +208,15 @@ const allowedOrigins = corsOrigin && corsOrigin !== '*'
       'http://localhost:5173',
       PRODUCTION_APP_URL
     ];
+// .env's FRONTEND_URL is a production value (e.g. https://calendai.onrender.com),
+// which — when set, even while developing locally — replaced the list above
+// entirely and silently dropped localhost:5173. That made every cross-origin
+// fetch from the local Vite dev server fail with a CORS error that surfaces
+// to users as a bare "Failed to fetch". Always keep localhost allowed outside
+// production so local dev keeps working no matter what FRONTEND_URL is set to.
+if (!isProduction && !allowedOrigins.includes('http://localhost:5173')) {
+  allowedOrigins.push('http://localhost:5173');
+}
 app.use(cors({
   origin: allowedOrigins,
   credentials: true
@@ -510,6 +535,9 @@ function getUserId(req) {
 // ── Semantic Router (fast vs smart track classification)
 const { classifyRequest } = require('./services/semanticRouter');
 
+// ── Expected Expense suggestion detector (wedding, trip, etc.) ──
+const { detectExpenseSuggestion } = require('./services/expenseSuggestion');
+
 // ── Public Goals & Challenges Routes ──
 const goalRoutes = require('./routes/goalRoutes');
 const routineRoutes = require('./routes/routineRoutes');
@@ -523,6 +551,16 @@ app.set('getUserSchedule', getUserSchedule);
 app.set('saveSchedulesNow', saveSchedulesNow);
 app.set('saveScheduleToMongo', saveScheduleToMongo);
 app.set('syncTodayWithCurrentDay', syncTodayWithCurrentDay);
+
+// Expose booking-adjacent helpers for provider routes to reuse the same
+// Google Calendar sync / conflict-check / auth logic as /api/booking/:id/confirm
+// (functions are hoisted, so this is safe even though some are defined later in the file).
+app.set('getAuthenticatedUserId', getAuthenticatedUserId);
+app.set('timeToMinutes', timeToMinutes);
+app.set('getDefaultSchedule', getDefaultSchedule);
+app.set('getTodayDayName', getTodayDayName);
+app.set('syncEventToGoogleCalendar', syncEventToGoogleCalendar);
+app.set('DEFAULT_LOCATION_ID', DEFAULT_LOCATION_ID);
 
 // ── Token Usage Tracker (Pay-As-You-Go billing)
 const { calculateCost, formatCostBreakdown } = require('./services/tokenTracker');
@@ -1102,7 +1140,9 @@ function mergeGaps(schedule) {
 const configuredOAuthScopes = process.env.OAUTH_SCOPES?.split(',').map(scope => scope.trim()).filter(Boolean);
 const OAUTH_SCOPES = configuredOAuthScopes?.length
   ? configuredOAuthScopes
-  : ['profile', 'email', 'https://www.googleapis.com/auth/calendar.events'];
+  // calendar.freebusy is required for the freebusy.query API used by mutual
+  // scheduling — calendar.events alone (read/write events) does not grant it.
+  : ['profile', 'email', 'https://www.googleapis.com/auth/calendar.events', 'https://www.googleapis.com/auth/calendar.freebusy'];
 
 app.get('/api/auth/google',
   (req, res, next) => {
@@ -2224,12 +2264,30 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
       logActionHistory(authedUserId, text, googleEventIds, addedEvents, 'parse').catch(() => {});
     }
 
-    res.json({ 
+    // ── Suggest tracking an "expected expense" for cost-bearing life events ──
+    // (wedding, trip, bar mitzvah, ...). Suggestion only — nothing is saved
+    // until the user confirms it from the Expected Expenses screen.
+    const suggestedExpenses = [];
+    for (const ev of addedEvents) {
+      const match = detectExpenseSuggestion(ev.title);
+      if (match) {
+        suggestedExpenses.push({
+          title: ev.title,
+          category: match.category,
+          day: ev.day,
+          targetDate: ev.targetDate || null,
+          sourceEventTitle: ev.title
+        });
+      }
+    }
+
+    res.json({
       events: addedEvents,
       reminders: createdReminders.length ? createdReminders : undefined,
       replyMessage: replyMessage || (createdReminders.length ? `נוספו ${createdReminders.length} תזכורות.` : `נוספו ${addedEvents.length} אירועים.`),
       totalEvents: Object.values(schedule).reduce((sum, arr) => sum + arr.length, 0),
       conflicts: conflictWarnings.length > 0 ? conflictWarnings : undefined,
+      suggestedExpenses: suggestedExpenses.length > 0 ? suggestedExpenses : undefined,
       aiCredits: remainingCredits,
       googleCalendar: {
         synced: googleSyncSuccessCount,
@@ -2760,92 +2818,8 @@ app.post(SIRI_ENDPOINT_PATH, aiLimiter, async (req, res) => {
 // 9. Google Calendar Integration
 // ──────────────────────────────────────────────
 
-/**
- * Format a Date with given hours and minutes into an ISO 8601 string
- * with the correct timezone offset for the given IANA timezone.
- * This avoids the bug where toISOString() always outputs UTC (Z),
- * which causes Google Calendar to misinterpret the time.
- * @param {Date} date - The base date
- * @param {number} hours - The hour (0-23) in the target timezone
- * @param {number} minutes - The minute (0-59) in the target timezone
- * @param {string} timeZone - IANA timezone string (e.g., 'Asia/Jerusalem')
- * @returns {string} ISO 8601 string with offset (e.g., '2026-08-24T07:00:00+03:00')
- */
-function formatDateTimeWithTimezone(date, hours, minutes, timeZone) {
-  // Get date components in the target timezone using Intl
-  const dateParts = new Intl.DateTimeFormat('en-CA', { // en-CA outputs YYYY-MM-DD
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  }).formatToParts(date);
-
-  const year = dateParts.find(p => p.type === 'year').value;
-  const month = dateParts.find(p => p.type === 'month').value;
-  const day = dateParts.find(p => p.type === 'day').value;
-
-  const hh = String(hours).padStart(2, '0');
-  const mm = String(minutes).padStart(2, '0');
-
-  // Extract the GMT offset from the timezone (e.g., "GMT+03:00" → "+03:00")
-  const formatted = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    timeZoneName: 'longOffset'
-  }).format(date);
-  const offsetMatch = formatted.match(/GMT([+-]\d{2}:\d{2})/);
-  const offset = offsetMatch ? offsetMatch[1] : '+03:00';
-
-  return `${year}-${month}-${day}T${hh}:${mm}:00${offset}`;
-}
-
-/**
- * Helper: Refresh Google access token and save to DB.
- * Sets up token refresh handler on the OAuth2 client.
- * @param {Object} user - The user document with googleAccessToken and googleRefreshToken
- * @returns {Promise<google.auth.OAuth2>} Configured OAuth2 client with auto-refresh
- */
-async function createOAuth2ClientWithRefresh(user) {
-  const oauth2Client = new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID?.trim(),
-    process.env.GOOGLE_CLIENT_SECRET?.trim(),
-    GOOGLE_CALLBACK_URL
-  );
-
-  oauth2Client.setCredentials({
-    access_token: user.googleAccessToken,
-    refresh_token: user.googleRefreshToken || undefined
-  });
-
-  // Auto-refresh tokens: when Google issues a new access token, save it to DB
-  oauth2Client.on('tokens', async (tokens) => {
-    if (tokens.access_token) {
-      try {
-        await User.findByIdAndUpdate(user._id, {
-          googleAccessToken: tokens.access_token,
-          ...(tokens.refresh_token ? { googleRefreshToken: tokens.refresh_token } : {})
-        });
-        console.log(`[Google Calendar] Tokens refreshed for user ${user._id}`);
-      } catch (err) {
-        console.error('[Google Calendar] Failed to save refreshed tokens:', err.message);
-      }
-    }
-  });
-
-  // Force refresh if the current access token might be expired
-  try {
-    const tokenInfo = oauth2Client.credentials;
-    if (tokenInfo.refresh_token && tokenInfo.expiry_date && tokenInfo.expiry_date < Date.now()) {
-      console.log('[Google Calendar] Access token expired, refreshing...');
-      const { credentials } = await oauth2Client.refreshAccessToken();
-      oauth2Client.setCredentials(credentials);
-    }
-  } catch (refreshErr) {
-    console.warn('[Google Calendar] Token refresh pre-check failed:', refreshErr.message);
-    // Continue anyway — the actual API call will trigger a retry
-  }
-
-  return oauth2Client;
-}
+// formatDateTimeWithTimezone / createOAuth2ClientWithRefresh / buildGcalEventBody
+// now live in ./services/googleCalendar.js (shared with the mutual-scheduling routes).
 
 // timeZoneOverride: the calendar owner's zone when the request comes from
 // someone else (a guest confirming a booking); otherwise the requester's zone.
@@ -2922,24 +2896,9 @@ async function syncEventToGoogleCalendar(userId, event, locationId, timeZoneOver
 
     // Build request body
     const isReminderEvent = event.isReminder === true || event.eventType === 'reminder' || event.eventType === 'notification';
-    const requestBody = {
-      summary: event.title || 'CalendAI Event',
-      description: event.description || `Created by CalendAI for ${event.day}`,
-      start: { dateTime: formatDateTimeWithTimezone(eventDate, startHour, startMinute, timeZone), timeZone },
-      end: { dateTime: formatDateTimeWithTimezone(eventDate, endHour, endMinute, timeZone), timeZone },
-    };
-
-    // Force popup reminders for notification/reminder events so the user gets a ping
-    if (isReminderEvent) {
-      requestBody.reminders = {
-        useDefault: false,
-        overrides: [
-          { method: 'popup', minutes: 0 } // pops exactly at event start time
-        ]
-      };
-    }
 
     // Build RRULE for recurring events
+    let recurrenceRuleStr = null;
     if (event.recurrence) {
       let freq = null;
       switch (event.recurrence) {
@@ -2949,14 +2908,32 @@ async function syncEventToGoogleCalendar(userId, event, locationId, timeZoneOver
         case 'yearly': freq = 'YEARLY'; break;
         case 'forever': freq = 'DAILY'; break;
       }
-      if (freq) {
-        requestBody.recurrence = [`RRULE:FREQ=${freq}`];
-      }
+      if (freq) recurrenceRuleStr = `RRULE:FREQ=${freq}`;
     }
+
+    // A guest's email on the event (set when this came from a booking-link
+    // confirmation) is added as an attendee so Google emails BOTH the host
+    // (organizer) and the guest a calendar invite/confirmation automatically —
+    // no separate email service needed.
+    const guestEmail = typeof event.guestEmail === 'string' ? event.guestEmail.trim() : '';
+    const attendees = guestEmail ? [{ email: guestEmail }] : [];
+
+    const requestBody = buildGcalEventBody({
+      title: event.title,
+      description: event.description || `Created by CalendAI for ${event.day}`,
+      eventDate, startHour, startMinute, endHour, endMinute, timeZone,
+      // Force popup reminders for notification/reminder events so the user gets a ping
+      reminders: isReminderEvent
+        ? { useDefault: false, overrides: [{ method: 'popup', minutes: 0 }] } // pops exactly at event start time
+        : null,
+      recurrenceRule: recurrenceRuleStr,
+      attendees
+    });
 
     const gcalResponse = await calendar.events.insert({
       calendarId: 'primary',
       requestBody,
+      sendUpdates: attendees.length ? 'all' : 'none',
     });
 
     const gcalEventId = gcalResponse?.data?.id || null;
@@ -3107,27 +3084,17 @@ app.post('/api/add-to-google-calendar', async (req, res) => {
 
   try {
     const isReminderEvent = event.isReminder === true || event.eventType === 'reminder' || event.eventType === 'notification';
-    const requestBody = {
-      summary: event.title,
-      start: { dateTime: formatDateTimeWithTimezone(eventDate, startHour24, startMinute, timeZone), timeZone },
-      end: { dateTime: formatDateTimeWithTimezone(eventDate, endHour24, endMinute, timeZone), timeZone },
-    };
+    const requestBody = buildGcalEventBody({
+      title: event.title,
+      eventDate, startHour: startHour24, startMinute, endHour: endHour24, endMinute, timeZone,
+      // Force popup reminders for notification/reminder events so the user gets a ping
+      reminders: isReminderEvent
+        ? { useDefault: false, overrides: [{ method: 'popup', minutes: 0 }] } // pops exactly at event start time
+        : null,
+      // Attach RRULE to recurring events
+      recurrenceRule
+    });
 
-    // Force popup reminders for notification/reminder events so the user gets a ping
-    if (isReminderEvent) {
-      requestBody.reminders = {
-        useDefault: false,
-        overrides: [
-          { method: 'popup', minutes: 0 } // pops exactly at event start time
-        ]
-      };
-    }
-    
-    // Attach RRULE to recurring events
-    if (recurrenceRule) {
-      requestBody.recurrence = [recurrenceRule];
-    }
-    
     const gcalEvent = await calendar.events.insert({
       calendarId: 'primary',
       requestBody,
@@ -3804,6 +3771,11 @@ app.post('/api/booking/:id/confirm', async (req, res) => {
     if (typeof guestName !== 'string' || !guestName.trim() || guestName.length > 200) {
       return res.status(400).json({ error: 'guestName is required.' });
     }
+    // Required so Google Calendar can add the guest as an attendee and email
+    // both sides a confirmation — without it there is no way to notify the guest.
+    if (typeof guestEmail !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(guestEmail.trim())) {
+      return res.status(400).json({ error: 'A valid guestEmail is required to send the meeting confirmation.' });
+    }
     const booking = await Booking.findOne({ bookingId: id }).lean();
     if (!booking) return res.status(404).json({ error: 'Booking not found.' });
     if (booking.status !== 'active') return res.status(409).json({ error: booking.status === 'processing' ? 'This booking is being confirmed.' : 'This booking link has already been used.' });
@@ -4377,9 +4349,21 @@ app.use('/api/goals', goalRoutes);
 app.use('/api/routines', routineRoutes);
 app.use('/api/reminders', reminderRoutes);
 
+// ── Social Provider Bookings (public provider directory) ──
+const providerRoutes = require('./routes/providerRoutes');
+app.use('/api/providers', providerRoutes);
+
 // ── Daily Log / Personal Journal Routes ──
 const dailyLogRoutes = require('./routes/dailyLogRoutes');
 app.use('/api/daily-log', dailyLogRoutes);
+
+// ── Mutual (peer-to-peer) Scheduling Routes ──
+const mutualRoutes = require('./routes/mutualRoutes');
+app.use('/api/mutual', mutualRoutes);
+
+// ── Expected Expenses Routes (personal expense tracking) ──
+const expenseRoutes = require('./routes/expenseRoutes');
+app.use('/api/expenses', expenseRoutes);
 
 // ──────────────────────────────────────────────
 // User Search Endpoint — for GlobalSearch component

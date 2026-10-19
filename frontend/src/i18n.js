@@ -389,7 +389,7 @@ const translations = {
     referralBannerTitle: 'רוצה גם לנצל את המקסימום מהזמן שלך?',
     referralBannerSubtitle: 'הצטרף ל-CalendAI! 🚀',
     referralBannerButton: 'התחל עכשיו',
-    referralBannerDesc: 'ניהול לו"ז חכם עם AI - תיאם פגישות, נהל משימות וחסוך זמן',
+    referralBannerDesc: 'ניהול יומן חכם עם AI שמתאם לך פגישות, מוצא זמנים פנויים מול חברים ברגע אחד, ושולח תזכורות בול בזמן. ההצטרפות לוקחת פחות מדקה - ותתחיל לחסוך זמן כבר היום.',
 
     // Shabbat Banner
     shabbatBannerMessage: 'המערכת אינה פעילה במהלך השבת. נשמח לחזור לפעילות מלאה ולתיאום פגישות במוצאי השבת.',
@@ -1026,7 +1026,7 @@ const translations = {
     referralBannerTitle: 'Want to get the most out of your time too?',
     referralBannerSubtitle: 'Join CalendAI! 🚀',
     referralBannerButton: 'Start Free',
-    referralBannerDesc: 'Smart AI schedule management - schedule meetings, manage tasks, and save time',
+    referralBannerDesc: "Smart AI scheduling that books meetings for you, instantly finds mutual free time with friends, and sends reminders at exactly the right moment. Joining takes under a minute - start saving time today.",
 
     // Shabbat Banner
     shabbatBannerMessage: 'The system is not active during Shabbat. We will resume full activity and meeting scheduling after Shabbat ends.',
@@ -1663,7 +1663,7 @@ const translations = {
     referralBannerTitle: 'Vous aussi, vous voulez optimiser votre temps ?',
     referralBannerSubtitle: 'Rejoignez CalendAI ! 🚀',
     referralBannerButton: 'Commencer gratuitement',
-    referralBannerDesc: 'Gestion intelligente de l\'emploi du temps avec IA',
+    referralBannerDesc: "Une gestion d'agenda intelligente par IA qui planifie vos rendez-vous, trouve instantanément un créneau commun avec vos amis, et envoie des rappels au bon moment. L'inscription prend moins d'une minute.",
 
     // Shabbat Banner
     shabbatBannerMessage: 'Le système n\'est pas actif pendant Shabbat. Nous reprendrons l\'activité complète après Shabbat.',
@@ -2256,7 +2256,7 @@ const translations = {
     referralBannerTitle: '¿Quieres aprovechar al máximo tu tiempo también?',
     referralBannerSubtitle: '¡Únete a CalendAI! 🚀',
     referralBannerButton: 'Comenzar gratis',
-    referralBannerDesc: 'Gestión inteligente de horarios con IA',
+    referralBannerDesc: 'Gestión de agenda inteligente con IA que programa tus reuniones, encuentra al instante horarios en común con tus amigos, y envía recordatorios en el momento justo. Unirte toma menos de un minuto.',
 
     // Shabbat Banner
     shabbatBannerMessage: 'El sistema no está activo durante Shabat. Reanudaremos la actividad completa después de Shabat.',

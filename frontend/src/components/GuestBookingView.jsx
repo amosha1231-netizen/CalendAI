@@ -8,6 +8,10 @@ const API_BASE = import.meta.env.VITE_API_URL || "";
 const DAY_NAMES_EN = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const DAY_NAMES_HE = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
 
+function isValidEmail(value) {
+  return typeof value === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+}
+
 export default function GuestBookingView(props) {
   return (
     <ShabbatGate t={props.t} lang={props.lang}>
@@ -269,7 +273,7 @@ function GuestBookingViewScreen({ bookingId, lang, t, onClose }) {
               </div>
               <p className="text-xs text-indigo-600 mb-3">{t.referralBannerDesc || 'Join CalendAI and start getting the most out of your time!'}</p>
               <a
-                href="https://calendai-q59p.onrender.com"
+                href="https://calendai.org"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition shadow-md"
@@ -375,7 +379,7 @@ function GuestBookingViewScreen({ bookingId, lang, t, onClose }) {
 
               {/* Email */}
               <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-2">{t.bookingGuestEmail || 'Email'}</label>
+                <label className="block text-sm font-semibold text-slate-700 mb-2">{t.bookingGuestEmail || 'Email'} *</label>
                 <div className="relative">
                   <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                   <input
@@ -387,6 +391,9 @@ function GuestBookingViewScreen({ bookingId, lang, t, onClose }) {
                     dir="ltr"
                   />
                 </div>
+                <p className="text-xs text-slate-400 mt-1">
+                  {t.bookingGuestEmailHint || (isRTL ? 'כדי שנוכל לשלוח לך ולמארח אישור פגישה במייל' : "So we can email both you and the host a confirmation")}
+                </p>
               </div>
 
               {/* Phone */}
@@ -432,7 +439,7 @@ function GuestBookingViewScreen({ bookingId, lang, t, onClose }) {
             {/* Confirm Button */}
             <button
               onClick={handleConfirm}
-              disabled={!guestName.trim() || confirming}
+              disabled={!guestName.trim() || !isValidEmail(guestEmail) || confirming}
               className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-semibold transition disabled:bg-blue-400 disabled:cursor-not-allowed shadow-lg"
             >
               {confirming ? (
@@ -488,7 +495,7 @@ function GuestBookingViewScreen({ bookingId, lang, t, onClose }) {
             </div>
             <p className="text-xs text-indigo-600 mb-3">{t.referralBannerDesc || 'Join CalendAI and start getting the most out of your time!'}</p>
             <a
-              href="https://calendai-q59p.onrender.com"
+              href="https://calendai.org"
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition shadow-md"
@@ -597,7 +604,7 @@ function GuestBookingViewScreen({ bookingId, lang, t, onClose }) {
 
               {/* Email */}
               <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-2">{t.bookingGuestEmail || 'Email'}</label>
+                <label className="block text-sm font-semibold text-slate-700 mb-2">{t.bookingGuestEmail || 'Email'} *</label>
                 <div className="relative">
                   <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                   <input
@@ -609,6 +616,9 @@ function GuestBookingViewScreen({ bookingId, lang, t, onClose }) {
                     dir="ltr"
                   />
                 </div>
+                <p className="text-xs text-slate-400 mt-1">
+                  {t.bookingGuestEmailHint || (isRTL ? 'כדי שנוכל לשלוח לך ולמארח אישור פגישה במייל' : "So we can email both you and the host a confirmation")}
+                </p>
               </div>
 
               {/* Phone */}
@@ -655,7 +665,7 @@ function GuestBookingViewScreen({ bookingId, lang, t, onClose }) {
           {/* Confirm Button */}
           <button
             onClick={handleConfirm}
-            disabled={selectedSlotIndex === null || !guestName.trim() || confirming}
+            disabled={selectedSlotIndex === null || !guestName.trim() || !isValidEmail(guestEmail) || confirming}
             className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-semibold transition disabled:bg-blue-400 disabled:cursor-not-allowed shadow-lg"
           >
             {confirming ? (
