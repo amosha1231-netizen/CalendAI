@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, Suspense, lazy } from 
 import { motion } from "framer-motion";
 import { BrowserRouter } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
-import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Menu, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff, Home, Plus, Zap, ChevronDown, ChevronUp, FileText, Layout, Trophy, Image, Upload, Search, CalendarPlus, BookOpen, Users } from "lucide-react";
+import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Menu, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff, Home, Plus, Zap, ChevronDown, ChevronUp, FileText, Layout, Trophy, Image, Upload, Search, CalendarPlus, BookOpen, Users, ListChecks } from "lucide-react";
 import { staggerContainerVariants, staggerItemVariants } from "./hooks/useStaggeredAnimation";
 import GlobalSearch from "./components/GlobalSearch";
 import MonthlyCalendar from "./components/MonthlyCalendar";
@@ -19,6 +19,9 @@ import HistoryModal from "./components/HistoryModal";
 import PublicGoals from "./components/PublicGoals";
 import ChallengeDetail from "./components/ChallengeDetail";
 import DailyJournal from "./components/DailyJournal";
+import SmartAlarm from "./components/SmartAlarm";
+import Routines, { RoutinesTodayCard, consumeSharedRoutineParam, clearSharedRoutineParam } from "./components/Routines";
+import Reminders, { RemindersCard, consumeRemindersParam } from "./components/Reminders";
 
 // ── Lazy-loaded page chunks ──
 const LandingPage = lazy(() => import("./components/LandingPage"));
@@ -35,8 +38,11 @@ import DeleteAccountPage from "./pages/DeleteAccount";
 import TermsPage from "./pages/Terms";
 import translations from "./i18n";
 import safeStorage from "./utils/safeStorage";
+import { openCheckout, readCheckoutResponse, consumePaymentSuccessParam, CREDITS_PURCHASED_EVENT, notifyCreditsPurchased } from './utils/lemonCheckout';
 import { isIosWhatsApp, isIosSafari, isIosNonSafari, isStandalone } from "./utils/browserDetection";
-import { normalizeCredits, normalizeUserCredits } from "./utils/credits";
+import { normalizeCredits, normalizeUserCredits, formatCredits } from "./utils/credits";
+import { isShabbatNow as isShabbatNowAtUser } from "./utils/shabbatHelper";
+import { getUserTimeZone, setUserTimeZone, presetLocationForTimeZone, formatUtcOffset, PRESET_LOCATIONS } from "./utils/userLocation";
 
 // ── JWT Decode helper (client-side expiry check) ──
 function decodeJwtPayload(token) {
@@ -179,11 +185,7 @@ function AppRoutes() {
   const t = translations[lang] || translations['he'];
 
   // Timezone state
-  const [selectedTimezone, setSelectedTimezone] = useState(() => {
-    try {
-      return safeStorage.getItem('calendai-timezone') || Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Jerusalem';
-    } catch { return 'Asia/Jerusalem'; }
-  });
+  const [selectedTimezone, setSelectedTimezone] = useState(() => getUserTimeZone());
 
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [inputText, setInputText] = useState("");
@@ -232,7 +234,6 @@ function AppRoutes() {
   const [editModalData, setEditModalData] = useState(null);
   const [editLoading, setEditLoading] = useState(false);
 
-  const [selectedLocation, setSelectedLocation] = useState("jerusalem");
   const [locationFilter, setLocationFilter] = useState("all");
   const { user, isPro, isAuthenticated, authLoading, authStatus, handleLogin, handleLogout, setUser, setIsPro } = useAuth();
 
@@ -251,10 +252,10 @@ function AppRoutes() {
     if (intentRef.current.wantsBooking) return 'booking';
     try {
       // Check if we have a valid (non-expired) JWT token stored
-      const token = localStorage.getItem('calendai-jwt') || localStorage.getItem('token');
+      const token = safeStorage.getItem('calendai-jwt') || safeStorage.getItem('token');
       if (token && !isJwtExpired(token)) return 'dashboard';
       // Fallback to isLoggedIn flag for backward compatibility
-      const isLoggedIn = localStorage.getItem('calendai-isLoggedIn') === 'true';
+      const isLoggedIn = safeStorage.getItem('calendai-isLoggedIn') === 'true';
       if (isLoggedIn) return 'dashboard';
       return 'landing';
     } catch { return 'landing'; }
@@ -273,10 +274,22 @@ function AppRoutes() {
   });
 
   useEffect(() => {
+    // Leave the landing page once signed in, but keep a booking link (?book=true) open.
     if (isAuthenticated) {
-      setCurrentView('dashboard');
+      setCurrentView(view => (view === 'landing' ? 'dashboard' : view));
     }
   }, [isAuthenticated]);
+
+  // Keep the document's language and direction in step with the UI language
+  // (screen readers, native controls and fixed elements depend on them).
+  useEffect(() => {
+    try {
+      if (typeof document !== 'undefined') {
+        document.documentElement.lang = lang;
+        document.documentElement.dir = lang === 'he' ? 'rtl' : 'ltr';
+      }
+    } catch (e) {}
+  }, [lang]);
 
   // ── Re-check view when user returns to the app (iOS visibility fix) ──
   useEffect(() => {
@@ -284,7 +297,7 @@ function AppRoutes() {
       if (!document.hidden && !isAuthenticated) {
         // Check if we have a valid token that wasn't picked up yet
         try {
-          const token = localStorage.getItem('calendai-jwt') || localStorage.getItem('token');
+          const token = safeStorage.getItem('calendai-jwt') || safeStorage.getItem('token');
           if (token && !isJwtExpired(token)) {
             setCurrentView('dashboard');
           }
@@ -308,6 +321,7 @@ function AppRoutes() {
 
   const [expandedDays, setExpandedDays] = useState({});
   const [dayDetailModal, setDayDetailModal] = useState(null);
+  const [showAlarmSettings, setShowAlarmSettings] = useState(false);
   
   // ── Calendar View State (day / weekly / monthly / yearly / 100year) ──
   const [calendarView, setCalendarView] = useState('day');
@@ -359,12 +373,13 @@ function AppRoutes() {
         body: JSON.stringify({ lang }),
         credentials: "include"
       });
-      const data = await res.json();
+      const data = await readCheckoutResponse(res, lang);
       if (!res.ok) {
-        throw new Error(data.error || lang === 'he' ? 'שגיאה ביצירת דף התשלום.' : 'Failed to create checkout session.');
+        throw new Error(data.error || (lang === 'he' ? 'שגיאה ביצירת דף התשלום.' : 'Failed to create checkout session.'));
       }
       if (data.url) {
-        window.location.href = data.url;
+        await openCheckout(data.url, { onSuccess: notifyCreditsPurchased });
+        setCheckoutLoading(false);
       } else {
         throw new Error('Invalid response from server.');
       }
@@ -389,6 +404,17 @@ function AppRoutes() {
   const [expensePrefill, setExpensePrefill] = useState(null);
   const [expenseSuggestions, setExpenseSuggestions] = useState([]);
   const [showJournal, setShowJournal] = useState(false);
+  // Routines & shared challenges (components/Routines.jsx)
+  const [routinesView, setRoutinesView] = useState(null); // null | 'today' | 'progress' | 'discover'
+  const [routinesRefresh, setRoutinesRefresh] = useState(0);
+  // Reminders (components/Reminders.jsx); ?reminders=1 comes from a tapped notification
+  const [showReminders, setShowReminders] = useState(() => consumeRemindersParam());
+  const [remindersRefresh, setRemindersRefresh] = useState(0);
+  const [sharedRoutineCode, setSharedRoutineCode] = useState(() => consumeSharedRoutineParam());
+  // A shared routine link opens once the user is signed in.
+  useEffect(() => {
+    if (sharedRoutineCode && user) setRoutinesView(view => view || 'today');
+  }, [sharedRoutineCode, user]);
   const [showMobileSearch, setShowMobileSearch] = useState(false);
 
   const [installPrompt, setInstallPrompt] = useState(null);
@@ -414,6 +440,15 @@ function AppRoutes() {
   const [profileLocation, setProfileLocation] = useState(() => {
     try { return safeStorage.getItem('calendai-profile-location') || 'none'; } catch { return 'none'; }
   });
+  // The preset sent to the server (working hours). The time zone itself always
+  // travels with every request (see utils/authFetch.js), so users outside the
+  // four presets still get their own "today" and Google Calendar times.
+  const selectedLocation = profileLocation !== 'none'
+    ? profileLocation
+    : (presetLocationForTimeZone(selectedTimezone) || 'jerusalem');
+  const timezoneOptions = TIMEZONE_OPTIONS.some(tz => tz.value === selectedTimezone)
+    ? TIMEZONE_OPTIONS
+    : [{ value: selectedTimezone, label: `${selectedTimezone.replace(/_/g, ' ')} (${formatUtcOffset(selectedTimezone)})` }, ...TIMEZONE_OPTIONS];
 
 
   const incrementGuestUsage = useCallback(() => {
@@ -511,80 +546,17 @@ function AppRoutes() {
   }
 
   // ── Shabbat Mode ──
-  const [shabbatTimes, setShabbatTimes] = useState(null);
-  const [shabbatFetchError, setShabbatFetchError] = useState(false);
-
-  const fetchShabbatTimes = useCallback(async () => {
-    try {
-      const res = await fetch('https://www.hebcal.com/shabbat?cfg=json&geonameid=293397&m=50');
-      if (!res.ok) throw new Error('Failed to fetch Shabbat times');
-      const data = await res.json();
-      let candlesTime = null;
-      let havdalahTime = null;
-      for (const item of data.items) {
-        if (item.category === 'candles' && !candlesTime) {
-          candlesTime = new Date(item.date);
-        }
-        if (item.category === 'havdalah' && !havdalahTime) {
-          havdalahTime = new Date(item.date);
-        }
-      }
-      if (candlesTime && havdalahTime) {
-        setShabbatTimes({ candles: candlesTime, havdalah: havdalahTime });
-        setShabbatFetchError(false);
-      } else {
-        throw new Error('Could not find candles/havdalah times');
-      }
-    } catch (e) {
-      console.error('Hebcal API error:', e);
-      setShabbatFetchError(true);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchShabbatTimes();
-    const interval = setInterval(fetchShabbatTimes, 6 * 60 * 60 * 1000);
-    return () => clearInterval(interval);
-  }, [fetchShabbatTimes]);
-
-  const isShabbatNow = useCallback(() => {
-    if (!shabbatTimes || !shabbatTimes.candles || !shabbatTimes.havdalah) {
-      const now = new Date();
-      const day = now.getDay();
-      const hours = now.getHours();
-      const minutes = now.getMinutes();
-      const totalMinutes = hours * 60 + minutes;
-      if (day === 5 && totalMinutes >= 960) return true;
-      if (day === 6 && totalMinutes < 1200) return true;
-      return false;
-    }
-    const now = new Date();
-    return now >= shabbatTimes.candles && now < shabbatTimes.havdalah;
-  }, [shabbatTimes]);
-
-  const isTimeInShabbat = useCallback((date) => {
-    if (!shabbatTimes || !shabbatTimes.candles || !shabbatTimes.havdalah) {
-      const day = date.getDay();
-      const hours = date.getHours();
-      const minutes = date.getMinutes();
-      const totalMinutes = hours * 60 + minutes;
-      if (day === 5 && totalMinutes >= 960) return true;
-      if (day === 6 && totalMinutes < 1200) return true;
-      return false;
-    }
-    return date >= shabbatTimes.candles && date < shabbatTimes.havdalah;
-  }, [shabbatTimes]);
-
-  const [showShabbatOverlay, setShowShabbatOverlay] = useState(() => isShabbatNow());
+  // Shabbat follows the user's own location (time zone / GPS), not Jerusalem.
+  const [showShabbatOverlay, setShowShabbatOverlay] = useState(() => isShabbatNowAtUser());
 
   useEffect(() => {
     const checkShabbat = () => {
-      setShowShabbatOverlay(isShabbatNow());
+      setShowShabbatOverlay(isShabbatNowAtUser());
     };
     checkShabbat();
     const interval = setInterval(checkShabbat, 60000);
     return () => clearInterval(interval);
-  }, [isShabbatNow]);
+  }, [selectedTimezone]);
 
   const handleParseOriginalRef = useRef(null);
 
@@ -689,6 +661,24 @@ function AppRoutes() {
       console.warn("Failed to refresh user credits:", e);
     }
   }, [user, setUser]);
+
+  // ── After a purchase (overlay success event or return from the checkout redirect),
+  // refresh credits a few times: the Lemon Squeezy webhook can land a few seconds later.
+  // A ref keeps the timers alive when `user` (and so refreshUserCredits) changes mid-refresh.
+  const refreshUserCreditsRef = useRef(refreshUserCredits);
+  refreshUserCreditsRef.current = refreshUserCredits;
+  const hasUser = Boolean(user);
+  useEffect(() => {
+    if (!hasUser) return undefined;
+    // Timers are deliberately not cleared on cleanup: a late credits refresh is
+    // harmless, and clearing would drop it (StrictMode re-runs effects once).
+    const refreshSoon = () => {
+      [0, 3000, 8000].forEach(delay => setTimeout(() => refreshUserCreditsRef.current(), delay));
+    };
+    if (consumePaymentSuccessParam()) refreshSoon();
+    window.addEventListener(CREDITS_PURCHASED_EVENT, refreshSoon);
+    return () => window.removeEventListener(CREDITS_PURCHASED_EVENT, refreshSoon);
+  }, [hasUser]);
 
   const saveScheduleState = useCallback(() => {
     scheduleHistoryRef.current.push(JSON.parse(JSON.stringify(schedule)));
@@ -805,8 +795,8 @@ function AppRoutes() {
   };
 
   const handleTimezoneChange = (newTimezone) => {
-    setSelectedTimezone(newTimezone);
-    safeStorage.setItem('calendai-timezone', newTimezone);
+    setUserTimeZone(newTimezone);
+    setSelectedTimezone(getUserTimeZone());
   };
 
   const requestNotificationPermission = useCallback(async () => {
@@ -1069,6 +1059,11 @@ function AppRoutes() {
           setError(errorData.conflictMessage || errorData.replyMessage || 'יש כבר פעילות בזמן הזה. האם להוסיף בכל זאת או לקבוע לזמן אחר?');
           return;
         }
+        if (res.status === 401) {
+          // Session/token no longer valid: AI actions require a logged-in account.
+          setShowLoginPrompt(true);
+          return;
+        }
         if (res.status === 402) {
           setCreditsError(errorData.error || 'נגמרו לך הקרדיטים! אנא רכוש חבילת פעולות נוספת כדי להמשיך להשתמש ב-AI.');
           setShowCreditsModal(true);
@@ -1107,6 +1102,7 @@ function AppRoutes() {
       } else {
         refreshUserCredits();
       }
+      if (data.reminders?.length > 0) setRemindersRefresh(n => n + 1);
       await fetchSchedule();
       setSuccess(data.replyMessage || `${t.successAdded} ${data.events?.length || 0} ${t.successEvents}`);
       setInputText("");
@@ -1388,7 +1384,6 @@ function AppRoutes() {
     return <AuthSuccess />;
   }
 
-  console.log('🔄 [App render] authLoading:', authLoading, 'isAuthenticated:', isAuthenticated, 'currentView:', currentView, 'authStatus:', authStatus);
   // Loading guard: show loader while auth is being checked.
   // Checks BOTH safeStorage and localStorage directly for the token.
   // This prevents the landing page from flashing while the OAuth callback
@@ -1580,7 +1575,7 @@ function AppRoutes() {
         </div>
       )}
 
-      <div className={`min-h-screen bg-[#F8FAFC] font-sans pb-24 sm:pb-8`} dir={isRTL ? 'rtl' : 'ltr'}>
+      <div className={`min-h-screen bg-[#F8FAFC] font-sans pb-[calc(6rem+env(safe-area-inset-bottom))]`} dir={isRTL ? 'rtl' : 'ltr'}>
         {/* iOS In-App Browser Banner */}
         {isIosWhatsApp() && (
           <div className="fixed top-0 left-0 right-0 z-[99999] bg-amber-50 border-b border-amber-200 px-3 py-2 text-xs text-amber-800 flex items-center justify-between gap-2 shadow-sm" dir="rtl">
@@ -1629,7 +1624,7 @@ function AppRoutes() {
                     <div className="font-bold text-sm text-slate-800">{ti.title}</div>
                     {ti.message && <div className="text-xs text-slate-500 mt-0.5">{ti.message}</div>}
                   </div>
-                  <button onClick={() => setToasts(prev => prev.filter(x => x.id !== ti.id))} className="text-slate-300 hover:text-slate-500">
+                  <button onClick={() => setToasts(prev => prev.filter(x => x.id !== ti.id))} aria-label={t.close || 'Close'} className="text-slate-300 hover:text-slate-500 p-2 -m-2">
                     <X className="w-4 h-4" />
                   </button>
                 </div>
@@ -1642,7 +1637,7 @@ function AppRoutes() {
         <header className="px-4 py-3 flex flex-wrap items-center gap-2 max-w-6xl mx-auto">
           {/* Left: Hamburger + Logo */}
           <div className="flex items-center gap-2 shrink-0">
-            <button onClick={() => setIsSidebarOpen(true)} className="flex items-center justify-center w-8 h-8 rounded-lg hover:bg-slate-100 transition text-slate-600">
+            <button onClick={() => setIsSidebarOpen(true)} aria-label={lang === 'he' ? 'תפריט' : 'Menu'} aria-expanded={isSidebarOpen} className="flex items-center justify-center w-11 h-11 -ms-2 rounded-lg hover:bg-slate-100 transition text-slate-600">
               <Menu className="w-5 h-5" />
             </button>
             <Calendar className="w-6 h-6 text-blue-600" />
@@ -1682,7 +1677,7 @@ function AppRoutes() {
                   }`}
                 >
                   <Zap className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
-                  <span className="text-[10px] sm:text-xs">{credits}</span>
+                  <span className="text-[10px] sm:text-xs">{formatCredits(credits)}</span>
                 </button>
               );
             })()}
@@ -1760,6 +1755,12 @@ function AppRoutes() {
         )}
 
         <main className="px-4 max-w-6xl mx-auto space-y-5">
+          {user && (
+            <RoutinesTodayCard lang={lang} user={user} refreshKey={routinesRefresh} onOpen={tab => setRoutinesView(tab)} />
+          )}
+          {user && (
+            <RemindersCard lang={lang} user={user} refreshKey={remindersRefresh} onOpen={() => setShowReminders(true)} onTryExample={setInputText} />
+          )}
           {/* ── AI Prompt Floating Card ── */}
           <div className="bg-slate-50 p-3 sm:p-5 rounded-2xl sm:rounded-3xl shadow-sm border border-slate-100">
             {/* Suggestion Chips */}
@@ -1810,19 +1811,22 @@ function AppRoutes() {
 
             {/* Send Button */}
             <div className="mt-3 flex flex-wrap items-center gap-2">
+              {/* Primary actions get their own full-width row on phones so labels never truncate */}
+              <div className="grid grid-cols-2 gap-2 w-full sm:w-auto sm:flex">
               <button onClick={handleParse} disabled={loading}
-                className="flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-5 py-2.5 rounded-full font-semibold transition-all duration-200 shadow-md shadow-blue-200 hover:shadow-lg disabled:from-blue-400 disabled:to-indigo-400 disabled:cursor-not-allowed disabled:shadow-none flex-1 sm:flex-none sm:w-44 min-w-0">
-                {loading ? <><Loader2 className="w-4 h-4 animate-spin" /> <span className="truncate">{t.parsing}</span></> : <><Sparkles className="w-5 h-5 shrink-0" /> <span className="truncate">{t.parseButton}</span></>}
+                className="flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-3 sm:px-5 py-2.5 min-h-[44px] rounded-full font-semibold transition-all duration-200 shadow-md shadow-blue-200 hover:shadow-lg disabled:from-blue-400 disabled:to-indigo-400 disabled:cursor-not-allowed disabled:shadow-none sm:w-44 min-w-0">
+                {loading ? <><Loader2 className="w-4 h-4 animate-spin" /> <span className="truncate">{t.parsing}</span></> : <><Sparkles className="w-5 h-5 shrink-0" /> <span className="text-sm sm:text-base leading-tight text-center">{t.parseButton}</span></>}
               </button>
               {/* Prominent Schedule Event Button */}
               <button
                 onClick={() => setShowManualEvent(true)}
-                className="flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white px-5 py-2.5 rounded-full font-semibold transition-all duration-200 shadow-md shadow-emerald-200 hover:shadow-lg flex-1 sm:flex-none sm:w-48 min-w-0"
+                className="flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white px-3 sm:px-5 py-2.5 min-h-[44px] rounded-full font-semibold transition-all duration-200 shadow-md shadow-emerald-200 hover:shadow-lg sm:w-48 min-w-0"
                 title={t.manualEventTitle || 'הוספת אירוע ידנית'}
               >
                 <CalendarPlus className="w-5 h-5 shrink-0" />
-                <span className="truncate">{t.manualEvent || 'אירוע ידני'}</span>
+                <span className="text-sm sm:text-base leading-tight text-center">{t.manualEvent || 'אירוע ידני'}</span>
               </button>
+              </div>
               {/* Image Upload Button */}
               <div className="relative">
                 <input
@@ -1846,7 +1850,8 @@ function AppRoutes() {
                     </button>
                     <button
                       onClick={handleRemoveImage}
-                      className="p-2 text-slate-400 hover:text-red-500 transition"
+                      aria-label={t.removeImage || 'הסר תמונה'}
+                      className="p-3 text-slate-400 hover:text-red-500 transition"
                       title={t.removeImage || 'הסר תמונה'}
                     >
                       <X className="w-4 h-4" />
@@ -1855,22 +1860,25 @@ function AppRoutes() {
                 ) : (
                   <label
                     htmlFor="image-upload-input"
-                    className="flex items-center justify-center gap-1 w-9 h-9 sm:w-auto sm:px-3 sm:py-2.5 rounded-full text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition cursor-pointer text-xs"
+                    className="flex items-center justify-center gap-1 w-11 h-11 sm:w-auto sm:px-3 sm:py-2.5 rounded-full text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition cursor-pointer text-xs"
                     title={t.uploadImage || 'העלה תמונה'}
+                    aria-label={t.uploadImage || 'העלה תמונה'}
                   >
                     <Image className="w-4 h-4 shrink-0" />
                     <span className="hidden sm:inline">{t.uploadImage || 'תמונה'}</span>
                   </label>
                 )}
               </div>
-              <button onClick={handleUndo} disabled={scheduleHistoryRef.current.length === 0} className="flex items-center justify-center gap-1 text-slate-500 hover:text-slate-700 w-9 h-9 sm:px-3 sm:py-2.5 rounded-full hover:bg-slate-100 transition text-sm disabled:opacity-30 disabled:cursor-not-allowed">
+              <button onClick={handleUndo} disabled={scheduleHistoryRef.current.length === 0} aria-label={t.undo} className="flex items-center justify-center gap-1 text-slate-500 hover:text-slate-700 w-11 h-11 sm:w-auto sm:h-auto sm:px-3 sm:py-2.5 rounded-full hover:bg-slate-100 transition text-sm disabled:opacity-30 disabled:cursor-not-allowed">
                 <RotateCcw className="w-4 h-4 shrink-0" />
                 <span className="hidden sm:inline">{t.undo}</span>
               </button>
               {/* Advanced Toggle */}
               <button
                 onClick={() => setShowAdvanced(!showAdvanced)}
-                className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 px-2.5 py-2 rounded-full hover:bg-slate-100 transition"
+                aria-label={t.advanced}
+                aria-expanded={showAdvanced}
+                className="flex items-center justify-center gap-1 text-xs text-slate-500 hover:text-slate-700 min-w-[44px] min-h-[44px] px-2.5 py-2 rounded-full hover:bg-slate-100 transition"
               >
                 {showAdvanced ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                 <span className="hidden sm:inline">{t.advanced}</span>
@@ -1948,6 +1956,7 @@ function AppRoutes() {
               onNext={() => setDayOffset(prev => prev + 1)}
               onToday={() => setDayOffset(0)}
               t={t}
+              isRTL={isRTL}
             />
 
             {/* Day View (default) */}
@@ -2076,18 +2085,34 @@ function AppRoutes() {
           </div>
         </footer>
 
+
         {/* ── Bottom Navigation Bar ── */}
-        <nav className="sm:hidden fixed bottom-0 left-0 right-0 z-50 bg-white/80 backdrop-blur-lg border-t border-slate-200/60 safe-area-bottom">
-          <div className="max-w-lg mx-auto flex items-center justify-around py-2 px-4">
+        <nav className="fixed bottom-0 left-0 right-0 z-50 bg-white/80 backdrop-blur-lg border-t border-slate-200/60 safe-area-bottom">
+          <div className="max-w-lg mx-auto flex items-center justify-around py-2 px-2">
             {/* Home Tab */}
             <button
-              onClick={() => setActiveTab('home')}
-              className={`flex flex-col items-center gap-0.5 px-4 py-1 rounded-xl transition ${
+              onClick={() => {
+                setActiveTab('home');
+                setDayOffset(0);
+                try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (e) {}
+              }}
+              className={`flex flex-col items-center gap-0.5 px-2 py-1 min-h-[44px] rounded-xl transition ${
                 activeTab === 'home' ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'
               }`}
             >
               <Home className="w-5 h-5" />
-              <span className="text-[10px] font-medium">{t.home}</span>
+              <span className="text-[11px] font-medium">{t.home}</span>
+            </button>
+
+            {/* Routines Tab */}
+            <button
+              onClick={() => setRoutinesView('today')}
+              className={`flex flex-col items-center gap-0.5 px-2 py-1 min-h-[44px] rounded-xl transition ${
+                routinesView ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'
+              }`}
+            >
+              <ListChecks className="w-5 h-5" />
+              <span className="text-[11px] font-medium">{lang === 'he' ? 'רוטינות' : 'Routines'}</span>
             </button>
 
             {/* Center Add Button - opens manual event form */}
@@ -2098,24 +2123,34 @@ function AppRoutes() {
               <div className="w-12 h-12 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-full flex items-center justify-center shadow-lg shadow-blue-200 hover:shadow-xl hover:-translate-y-0.5 transition-all active:translate-y-0">
                 <Plus className="w-6 h-6 text-white" />
               </div>
-              <span className="text-[10px] font-medium text-slate-500 mt-0.5">{t.addEvent}</span>
+              <span className="text-[11px] font-medium text-slate-500 mt-0.5">{t.addEvent}</span>
+            </button>
+
+            {/* Shared challenges */}
+            <button
+              onClick={() => setRoutinesView('discover')}
+              className="flex flex-col items-center gap-0.5 px-2 py-1 min-h-[44px] rounded-xl transition text-slate-400 hover:text-slate-600"
+            >
+              <Trophy className="w-5 h-5" />
+              <span className="text-[11px] font-medium">{lang === 'he' ? 'אתגרים' : 'Challenges'}</span>
             </button>
 
             {/* Credits Tab */}
             <button
               onClick={() => {
+                // Show balance and packages first instead of jumping straight to payment.
                 if (user) {
-                  handleBuyCredits();
+                  setIsSidebarOpen(true);
                 } else {
                   setShowLoginPrompt(true);
                 }
               }}
-              className={`flex flex-col items-center gap-0.5 px-4 py-1 rounded-xl transition ${
+              className={`flex flex-col items-center gap-0.5 px-2 py-1 min-h-[44px] rounded-xl transition ${
                 activeTab === 'credits' ? 'text-amber-600' : 'text-slate-400 hover:text-slate-600'
               }`}
             >
               <Zap className="w-5 h-5" />
-              <span className="text-[10px] font-medium">{t.credits}</span>
+              <span className="text-[11px] font-medium">{t.credits}</span>
             </button>
           </div>
         </nav>
@@ -2559,7 +2594,7 @@ function AppRoutes() {
 
       {/* Meeting Wizard Modal */}
       {showWizard && (
-        <MeetingWizard schedule={schedule} lang={lang} t={t} hostName={user?.name || user?.displayName || user?.email || 'Host'} locationId={profileLocation !== 'none' ? profileLocation : selectedLocation} onClose={() => setShowWizard(false)} />
+        <MeetingWizard schedule={schedule} lang={lang} t={t} hostName={user?.name || user?.displayName || user?.email || 'Host'} locationId={selectedLocation} onClose={() => setShowWizard(false)} />
       )}
 
       {/* History Modal */}
@@ -2595,14 +2630,26 @@ function AppRoutes() {
         onOpenProviderDirectory={() => setShowProviderDirectory(true)}
         onOpenProviderProfile={() => setShowProviderProfileEditor(true)}
         onOpenExpenses={() => setShowExpenses(true)}
+        onOpenAlarm={() => setShowAlarmSettings(true)}
         selectedLocation={profileLocation !== 'none' ? profileLocation : selectedLocation}
         onLocationChange={(loc) => {
           setProfileLocation(loc);
-          safeStorage.setItem('calendai-profile-location', loc);
+          try { safeStorage.setItem('calendai-profile-location', loc); } catch (e) {}
+          // Picking a city also means living in its time zone.
+          if (PRESET_LOCATIONS[loc]) handleTimezoneChange(PRESET_LOCATIONS[loc]);
         }}
         selectedTimezone={selectedTimezone}
         onTimezoneChange={handleTimezoneChange}
-        timezoneOptions={TIMEZONE_OPTIONS}
+        timezoneOptions={timezoneOptions}
+      />
+
+      {/* Smart alarm: always mounted so it can ring from any screen */}
+      <SmartAlarm
+        lang={lang}
+        t={t}
+        schedule={schedule}
+        settingsOpen={showAlarmSettings}
+        onCloseSettings={() => setShowAlarmSettings(false)}
       />
 
       {/* Public Goals & Challenges Modal */}
@@ -2678,6 +2725,31 @@ function AppRoutes() {
             onClose={() => setShowProviderProfileEditor(false)}
           />
         </Suspense>
+      )}
+
+      {/* Recurring reminders ("every day at 8: take a pill") */}
+      {showReminders && (
+        <Reminders
+          lang={lang}
+          user={user}
+          onClose={() => { setShowReminders(false); setRemindersRefresh(n => n + 1); }}
+          onChanged={() => setRemindersRefresh(n => n + 1)}
+          onRequireLogin={() => { setShowReminders(false); handleLogin(lang); }}
+        />
+      )}
+
+      {/* Routines, progress and shared challenges */}
+      {routinesView && (
+        <Routines
+          lang={lang}
+          user={user}
+          initialTab={routinesView || 'today'}
+          sharedCode={user ? sharedRoutineCode : null}
+          onSharedHandled={() => { clearSharedRoutineParam(); setSharedRoutineCode(null); }}
+          onClose={() => { setRoutinesView(null); setRoutinesRefresh(n => n + 1); }}
+          onChanged={() => setRoutinesRefresh(n => n + 1)}
+          onRequireLogin={() => { setRoutinesView(null); handleLogin(lang); }}
+        />
       )}
 
       {/* Daily Journal Modal */}

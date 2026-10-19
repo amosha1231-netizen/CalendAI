@@ -52,6 +52,8 @@ const userSchema = new mongoose.Schema({
     services: { type: [providerServiceSchema], default: [] },
     availability: { type: [providerAvailabilitySchema], default: [] }
   },
+  siriKeyHash: { type: String, index: { unique: true, sparse: true } }, // SHA-256 of the personal Siri/Shortcuts key
+  siriKeyCreatedAt: { type: Date },
   createdAt: { type: Date, default: Date.now }
 });
 

@@ -24,7 +24,8 @@
     "openai": "^4.0.0",
     "passport": "^0.7.0",
     "passport-google-oauth20": "^2.0.0",
-    "suncalc": "^2.0.1"
+    "suncalc": "^2.0.1",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "mongodb-memory-server": "^11.3.0"

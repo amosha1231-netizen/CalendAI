@@ -25,6 +25,23 @@ const StampButton = ({ onClick, children, variant = "solid", onDark = false, cla
   );
 };
 
+const AUTH_ERROR_MESSAGES = {
+  microsoft_email_in_use: {
+    he: 'כתובת המייל של חשבון Microsoft כבר רשומה אצלנו. התחברו בדרך שבה נרשמתם (Google או מייל וסיסמה).',
+    en: 'That Microsoft account\'s email is already registered. Sign in the way you signed up (Google or email and password).'
+  },
+  default: {
+    he: 'ההתחברות נכשלה. נסו שוב.',
+    en: 'Sign-in failed. Please try again.'
+  }
+};
+
+function authErrorMessage(code, lang) {
+  const entry = AUTH_ERROR_MESSAGES[code] || AUTH_ERROR_MESSAGES.default;
+  return lang === 'he' ? entry.he : entry.en;
+}
+
+
 export default function LandingPage({ t, lang, onLogin, onMicrosoftLogin, onTryGuest, onEmailLogin, toggleLanguage }) {
   // ── Shabbat Guard ──
   const [shabbatActive, setShabbatActive] = useState(() => isShabbatNow());
@@ -35,6 +52,23 @@ export default function LandingPage({ t, lang, onLogin, onMicrosoftLogin, onTryG
     }, 60000);
     return () => clearInterval(interval);
   }, []);
+
+  // ── Sign-in error from an OAuth redirect (?error=...) ──
+  const [authError] = useState(() => {
+    try {
+      if (typeof window === 'undefined') return null;
+      return new URLSearchParams(window.location.search).get('error');
+    } catch (e) { return null; }
+  });
+  const [authErrorVisible, setAuthErrorVisible] = useState(!!authError);
+  useEffect(() => {
+    if (!authError) return;
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('error');
+      window.history.replaceState({}, document.title, url.pathname + url.search + url.hash);
+    } catch (e) {}
+  }, [authError]);
 
   if (shabbatActive) {
     return <ShabbatBanner t={t} lang={lang} />;
@@ -51,6 +85,14 @@ export default function LandingPage({ t, lang, onLogin, onMicrosoftLogin, onTryG
 
   return (
     <div className={`min-h-screen bg-paper-50 text-ink-900 ${isRTL ? 'font-he' : 'font-en'}`} dir={isRTL ? 'rtl' : 'ltr'}>
+      {authErrorVisible && (
+        <div role="alert" className="bg-rose-50 border-b border-rose-200 text-rose-700 text-sm">
+          <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex items-start gap-3">
+            <p className="flex-1">{authErrorMessage(authError, lang)}</p>
+            <button onClick={() => setAuthErrorVisible(false)} aria-label={lang === 'he' ? 'סגירה' : 'Close'} className="text-rose-400 hover:text-rose-600 px-2 -mx-2">✕</button>
+          </div>
+        </div>
+      )}
       {/* ── Navigation Bar ── */}
       <header className="sticky top-0 z-50 bg-paper-50/90 backdrop-blur-md border-b border-line">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">

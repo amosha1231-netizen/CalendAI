@@ -35,6 +35,7 @@ const path = require('path');
 const rateLimit = require('express-rate-limit');
 const crypto = require('crypto'); // For Lemon Squeezy webhook HMAC signature verification
 const multer = require('multer');
+const { getRequestLocation, getRequestTimeZone, isValidTimeZone } = require('./services/userLocation');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }); // 10MB max
 
 dotenv.config({ path: path.join(__dirname, '.env') });
@@ -188,8 +189,8 @@ function saveSchedules(map) {
 // ──────────────────────────────────────────────
 // 1. Middleware
 // ──────────────────────────────────────────────
-// Frontend and backend are now two separate Render services (different origins).
-const PRODUCTION_APP_URL = 'https://calendai.org';
+// Frontend and backend are two separate Render services (different origins).
+const PRODUCTION_APP_URL = 'https://www.calendai.org';
 const PRODUCTION_BACKEND_URL = 'https://calendai-backend-dfmi.onrender.com';
 const FRONTEND_URL = (process.env.FRONTEND_URL?.trim() || process.env.CLIENT_URL?.trim() || (isProduction ? PRODUCTION_APP_URL : 'http://localhost:5173')).replace(/\/+$/, '');
 const CLIENT_URL = (process.env.CLIENT_URL?.trim() || FRONTEND_URL).replace(/\/+$/, '');
@@ -197,6 +198,7 @@ const BACKEND_URL = (process.env.BACKEND_URL?.trim() || (isProduction ? PRODUCTI
 const GOOGLE_CALLBACK_URL = (process.env.GOOGLE_CALLBACK_URL?.trim() || `${BACKEND_URL}/api/auth/google/callback`).replace(/\/+$/, '');
 
 app.set('trust proxy', 1);
+app.set('frontendUrl', FRONTEND_URL);
 
 const corsOrigin = process.env.FRONTEND_URL?.trim() || process.env.CORS_ORIGIN?.trim();
 // CRITICAL: CORS origin must be explicit URLs, NOT wildcard '*', when using credentials: true
@@ -261,19 +263,34 @@ const aiLimiter = rateLimit({
   message: { error: 'Too many requests. Please try again in a minute.' }
 });
 
+// Email/password login and sign-up: stops password guessing from one address.
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many attempts. Please try again in 15 minutes.' }
+});
+
 // ──────────────────────────────────────────────
 // Global Shabbat Middleware — blocks ALL API requests during Shabbat
 // except for: /api/health, /api/shabbat/status, and static files.
 // ──────────────────────────────────────────────
 app.use('/api/', (req, res, next) => {
+  requestTimeZone.run(getRequestTimeZone(req), next);
+});
+
+app.use('/api/', (req, res, next) => {
   // Skip Shabbat check for these whitelisted paths
   const whitelistedPaths = ['/api/health', '/api/shabbat/status'];
-  if (whitelistedPaths.includes(req.path)) {
+  // Inside app.use('/api/') req.path has the mount stripped ('/health'), so compare the full path.
+  if (whitelistedPaths.includes(req.baseUrl + req.path)) {
     return next();
   }
 
-  // Check if currently Shabbat
-  const shabbatStatus = shabbatService.isShabbatNow();
+  // Check if it is currently Shabbat where the requesting user is
+  // (their time zone / GPS, sent by the app; Jerusalem when unknown).
+  const shabbatStatus = shabbatService.isShabbatNow(getRequestLocation(req));
   if (shabbatStatus) {
     return res.status(503).json({
       isShabbat: true,
@@ -306,8 +323,23 @@ if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET &&
       let user = await User.findOne({ googleId: profile.id });
       if (!user) {
         user = await User.findOne({ email: profile.emails?.[0]?.value || '' });
+        // An account created through Microsoft login carries an email Microsoft
+        // did not necessarily verify, so a stranger could have pre-registered
+        // this address there. Never hand such an account to a Google login.
+        if (user && user.microsoftId && !user.googleId) {
+          console.warn(`Google login refused to link to Microsoft-created account ${user._id}`);
+          return done(null, false, { message: 'email_registered_with_microsoft' });
+        }
         if (user) {
           user.googleId = profile.id;
+          // Password sign-up never verifies the email, so a stranger could have
+          // registered this address first with a password of their own. Google
+          // has now proven who owns it: drop that password so only the owner
+          // can get in.
+          if (user.password) {
+            console.warn(`Google login cleared the unverified password on account ${user._id}`);
+            user.password = undefined;
+          }
           if (!user.displayName) user.displayName = profile.displayName;
           if (!user.photo) user.photo = profile.photos?.[0]?.value || '';
           await user.save();
@@ -406,6 +438,31 @@ try {
   LOCATIONS = [];
 }
 
+/**
+ * Resolve a location for scheduling: the preset (working hours etc.) for
+ * `locationId`, with the time zone replaced by the user's own when it is a
+ * valid IANA zone. Users outside the four preset cities get Jerusalem's
+ * working hours in their own time zone.
+ */
+function resolveLocation(locationId, timeZone) {
+  const base = LOCATIONS.find(loc => loc.id === locationId)
+    || LOCATIONS.find(loc => loc.id === DEFAULT_LOCATION_ID)
+    || { id: DEFAULT_LOCATION_ID, timezone: 'Asia/Jerusalem', defaultDayStart: '06:00', defaultDayEnd: '23:00' };
+  return { ...base, timezone: isValidTimeZone(timeZone) ? timeZone : base.timezone };
+}
+
+// The requesting user's time zone for the duration of a request, so helpers
+// like getTodayDayName() use the user's "today" without threading it through.
+const { AsyncLocalStorage } = require('async_hooks');
+const requestTimeZone = new AsyncLocalStorage();
+function getCurrentRequestTimeZone() {
+  return requestTimeZone.getStore() || 'Asia/Jerusalem';
+}
+// A location preset resolved with the requesting user's time zone (when the app sent one).
+function resolveUserLocation(locationId) {
+  return resolveLocation(locationId || DEFAULT_LOCATION_ID, requestTimeZone.getStore());
+}
+
 // ──────────────────────────────────────────────
 // 4. Persistent schedule storage per user (file-backed for anonymous, MongoDB for logged-in)
 // ──────────────────────────────────────────────
@@ -483,6 +540,11 @@ const { detectExpenseSuggestion } = require('./services/expenseSuggestion');
 
 // ── Public Goals & Challenges Routes ──
 const goalRoutes = require('./routes/goalRoutes');
+const routineRoutes = require('./routes/routineRoutes');
+const reminderRoutes = require('./routes/reminderRoutes');
+const { createReminders } = reminderRoutes;
+const { reminderSpecsFromEvents } = require('./services/reminderSchedule');
+const { createDispatcher } = require('./services/reminderDispatcher');
 
 // Expose schedule helper functions for goal routes to auto-add challenge events to user schedules
 app.set('getUserSchedule', getUserSchedule);
@@ -502,6 +564,7 @@ app.set('DEFAULT_LOCATION_ID', DEFAULT_LOCATION_ID);
 
 // ── Token Usage Tracker (Pay-As-You-Go billing)
 const { calculateCost, formatCostBreakdown } = require('./services/tokenTracker');
+const { refillOwnerCredits } = require('./services/ownerCredits');
 
 // ──────────────────────────────────────────────
 // AI Credit System (Pay As You Go / PAYG)
@@ -509,18 +572,24 @@ const { calculateCost, formatCostBreakdown } = require('./services/tokenTracker'
 
 /**
  * Check if the user has AI credits remaining.
- * Anonymous/guest users are NOT subject to credit enforcement —
- * guest usage limits are handled on the frontend.
- * @returns {Promise<{allowed: boolean, credits: number|null, error?: string}>}
+ * AI actions require a logged-in account: guests ('anonymous') are refused
+ * with 401, since a frontend-only limit is bypassed by calling the API directly.
+ * @returns {Promise<{allowed: boolean, credits: number|null, status?: number, error?: string}>}
  */
 async function checkAICredits(userId) {
   if (!mongoose.Types.ObjectId.isValid(userId)) {
-    return { allowed: true, credits: null };
+    return {
+      allowed: false,
+      credits: null,
+      status: 401,
+      requiresLogin: true,
+      error: 'יש להתחבר לחשבון כדי להשתמש בפעולות AI.'
+    };
   }
   try {
     const user = await User.findById(userId);
     if (!user) return { allowed: false, credits: null, status: 401, error: 'User account not found.' };
-    const credits = user.aiCredits;
+    const credits = await refillOwnerCredits(User, user);
     if (credits === undefined || credits === null || credits > 0) {
       return { allowed: true, credits };
     }
@@ -596,7 +665,14 @@ async function deductAICredit(userId, usage = null, modelName = 'deepseek/deepse
       error.status = existing ? 402 : 401;
       throw error;
     }
-    const remaining = updated.aiCredits;
+    // Fractional $inc leaves floating-point noise (14.999999999999998); store and return 2 decimals.
+    // Conditioned on the value just read, so a concurrent deduction is never overwritten.
+    let remaining = updated.aiCredits;
+    const rounded = Math.round(remaining * 100) / 100;
+    if (rounded !== remaining) {
+      await User.updateOne({ _id: userId, aiCredits: remaining }, { $set: { aiCredits: rounded } });
+      remaining = rounded;
+    }
     console.log(`[PAYG] Credits deducted: ${costInfo.costCredits} | Remaining: ${remaining}`);
     return { remainingCredits: remaining, costInfo };
   } catch (err) {
@@ -889,9 +965,19 @@ function minutesToTime(totalMinutes) {
   return `${String(displayH).padStart(2, '0')}:${String(m).padStart(2, '0')} ${ampm}`;
 }
 
+// "Now" in the requesting user's time zone (see requestTimeZone below). The
+// server itself runs in UTC, so Date#getHours/getDay would be wrong for users.
+function getUserNowParts(timeZone = getCurrentRequestTimeZone()) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone, weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+  }).formatToParts(new Date());
+  const get = type => parts.find(p => p.type === type)?.value;
+  const dayIndex = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }[get('weekday')];
+  return { dayIndex: dayIndex ?? new Date().getDay(), minutes: (parseInt(get('hour'), 10) || 0) * 60 + (parseInt(get('minute'), 10) || 0) };
+}
+
 function getCurrentMinutes() {
-  const now = new Date();
-  return now.getHours() * 60 + now.getMinutes();
+  return getUserNowParts().minutes;
 }
 
 function findGapsInSchedule(schedule) {
@@ -1218,21 +1304,22 @@ app.get('/api/auth/microsoft/callback', async (req, res) => {
     const displayName = profile.displayName || '';
 
     // Find or create user in MongoDB
+    // Accounts are matched by Microsoft's stable id only. The email from Graph
+    // (mail / userPrincipalName) can be set by any tenant admin without
+    // verification, so linking by email would let a stranger log in to an
+    // existing account that owns that address.
     let user = await User.findOne({ microsoftId });
     if (!user) {
-      user = await User.findOne({ email: email.toLowerCase() });
-      if (user) {
-        user.microsoftId = microsoftId;
-        if (!user.displayName) user.displayName = displayName;
-        await user.save();
-      } else {
-        user = await User.create({
-          microsoftId,
-          displayName,
-          email: email.toLowerCase(),
-          photo: ''
-        });
+      if (!email || await User.exists({ email: email.toLowerCase() })) {
+        console.warn('Microsoft login refused: email missing or already registered to another account');
+        return res.redirect(`${FRONTEND_URL}/?error=microsoft_email_in_use`);
       }
+      user = await User.create({
+        microsoftId,
+        displayName,
+        email: email.toLowerCase(),
+        photo: ''
+      });
     }
 
     // Save Microsoft tokens
@@ -1281,7 +1368,7 @@ app.get('/api/auth/me', async (req, res) => {
     // JWT token-based authentication
     const token = authHeader.split(' ')[1];
     try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'calendai_secret');
+      const decoded = jwt.verify(token, JWT_SECRET);
       userId = decoded.id;
     } catch (err) {
       // Return 401 Unauthorized for invalid/expired tokens so the frontend
@@ -1309,6 +1396,11 @@ app.get('/api/auth/me', async (req, res) => {
       dbUser = await User.findOne({ googleId: userId }).catch(() => null);
     }
     if (dbUser) {
+      try {
+        dbUser.aiCredits = await refillOwnerCredits(User, dbUser);
+      } catch (refillErr) {
+        console.error('Failed to refill owner credits:', refillErr.message);
+      }
       freshUser = {
         _id: dbUser._id,
         id: dbUser._id,
@@ -1344,14 +1436,14 @@ app.post('/api/auth/logout', (req, res) => {
  * POST /api/auth/register
  * Register a new user with email and password.
  */
-app.post('/api/auth/register', async (req, res) => {
+app.post('/api/auth/register', authLimiter, async (req, res) => {
   try {
     const { email, password, name } = req.body;
     if (!email || !password) {
       return res.status(400).json({ error: 'Email and password are required.' });
     }
-    if (password.length < 6) {
-      return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+    if (typeof password !== 'string' || password.length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters.' });
     }
 
     // Check if user already exists
@@ -1399,7 +1491,7 @@ app.post('/api/auth/register', async (req, res) => {
  * POST /api/auth/login
  * Login with email and password.
  */
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', authLimiter, async (req, res) => {
   try {
     const { email, password } = req.body;
     if (!email || !password) {
@@ -1725,7 +1817,7 @@ function detectConflicts(newEvent, existingEvents, options = {}) {
 
 function getTodayDayName() {
   const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  return dayNames[new Date().getDay()];
+  return dayNames[getUserNowParts().dayIndex];
 }
 
 function syncTodayWithCurrentDay(schedule) {
@@ -1740,7 +1832,7 @@ function syncTodayWithCurrentDay(schedule) {
 
 function findFreeSlotsForDay(schedule, dayName, locationId, dayEventsOverride = null, dateISO = null) {
   const dayEvents = dayEventsOverride || schedule[dayName] || [];
-  const locData = LOCATIONS.find(loc => loc.id === (locationId || DEFAULT_LOCATION_ID));
+  const locData = resolveUserLocation(locationId);
   const dayStart = locData ? parseTimeToMinutes24(locData.defaultDayStart) : 6 * 60;
   const dayEnd = locData ? parseTimeToMinutes24(locData.defaultDayEnd) : 23 * 60;
   
@@ -1822,7 +1914,7 @@ app.get('/api/schedule/free-slots', async (req, res) => {
       try {
         const user = await User.findById(userId);
         if (user?.googleAccessToken) {
-          const location = LOCATIONS.find(loc => loc.id === locationId) || LOCATIONS.find(loc => loc.id === DEFAULT_LOCATION_ID);
+          const location = resolveUserLocation(locationId);
           const timeZone = location?.timezone || 'Asia/Jerusalem';
           const zonedMidnight = isoDate => {
             const [year, month, datePart] = isoDate.split('-').map(Number);
@@ -2045,8 +2137,22 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
 
     const { events: parsedEvents, replyMessage } = parsedResult;
 
+    // ── REMINDERS: "remind me every day at 8 to take a pill" becomes a Reminder
+    // that pings the user (see routes/reminderRoutes), not a calendar block.
+    // Guests have nowhere to receive pings, so they keep the calendar event.
+    let eventsToSchedule = Array.isArray(parsedEvents) ? parsedEvents : [];
+    let createdReminders = [];
+    if (mongoose.Types.ObjectId.isValid(userId)) {
+      const timeZone = getCurrentRequestTimeZone();
+      const { reminders: reminderSpecs, remainingEvents } = reminderSpecsFromEvents(eventsToSchedule, { timeZone, todayName });
+      if (reminderSpecs.length) {
+        createdReminders = await createReminders(userId, reminderSpecs, { timeZone, source: 'ai', sourceText: text });
+        if (createdReminders.length) eventsToSchedule = remainingEvents;
+      }
+    }
+
     const locationId = location || DEFAULT_LOCATION_ID;
-    const locData = LOCATIONS.find(loc => loc.id === locationId);
+    const locData = resolveUserLocation(locationId);
     const locationOptions = locData ? {
       dayStart: locData.defaultDayStart,
       dayEnd: locData.defaultDayEnd
@@ -2056,7 +2162,7 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
     const conflictWarnings = [];
     const shabbatFilteredEvents = [];
 
-    for (const event of parsedEvents) {
+    for (const event of eventsToSchedule) {
       let day = event.day || todayName;
       if (day === 'Today') {
         day = todayName;
@@ -2177,7 +2283,8 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
 
     res.json({
       events: addedEvents,
-      replyMessage: replyMessage || `נוספו ${addedEvents.length} אירועים.`,
+      reminders: createdReminders.length ? createdReminders : undefined,
+      replyMessage: replyMessage || (createdReminders.length ? `נוספו ${createdReminders.length} תזכורות.` : `נוספו ${addedEvents.length} אירועים.`),
       totalEvents: Object.values(schedule).reduce((sum, arr) => sum + arr.length, 0),
       conflicts: conflictWarnings.length > 0 ? conflictWarnings : undefined,
       suggestedExpenses: suggestedExpenses.length > 0 ? suggestedExpenses : undefined,
@@ -2328,6 +2435,200 @@ app.post('/api/parse-image', aiLimiter, upload.single('image'), async (req, res)
   }
 });
 
+/**
+ * Shared AI quick-add pipeline used by /api/events/quick-add and the Siri endpoint.
+ * Parses free text, applies Shabbat/conflict guards, charges an AI credit,
+ * persists the schedule (MongoDB + cache) and syncs to Google Calendar.
+ * @returns {Promise<{status: number, body: object}>}
+ */
+async function runQuickAdd(userId, userData, text, source = 'quick-add') {
+  const reply = (status, body) => ({ status, body });
+  // ── PAYG CREDIT CHECK: Block if user has no AI credits left ──
+  const creditCheck = await checkAICredits(userId);
+  if (!creditCheck.allowed) {
+    return reply(creditCheck.status || 402, { success: false, error: creditCheck.error });
+  }
+
+  // Get the user's schedule for context-aware AI.
+  // Load from MongoDB first: after a server restart the in-memory cache is empty,
+  // and saving on top of an empty default would wipe the user's real schedule.
+  // This matters most for Siri, which often wakes a cold server.
+  const effectiveUserId = userId || 'anonymous';
+  if (mongoose.Types.ObjectId.isValid(effectiveUserId)) {
+    try {
+      const dbUser = await User.findById(effectiveUserId).select('schedule').lean();
+      if (dbUser && dbUser.schedule) userSchedules.set(effectiveUserId, dbUser.schedule);
+    } catch (err) {
+      console.error(`[${source}] Failed to load schedule from MongoDB:`, err.message);
+    }
+  }
+  const schedule = JSON.parse(JSON.stringify(getUserSchedule(effectiveUserId)));
+  const todayName = getTodayDayName();
+
+  // Build busy slots array from existing schedule for conflict-aware AI
+  const busySlots = [];
+  for (const [day, events] of Object.entries(schedule)) {
+    if (Array.isArray(events) && events.length > 0) {
+      for (const ev of events) {
+        if (ev.startTime && ev.endTime) {
+          busySlots.push({
+            day,
+            startTime: ev.startTime,
+            endTime: ev.endTime,
+            title: ev.title || ''
+          });
+        }
+      }
+    }
+  }
+
+  // ── SEMANTIC ROUTING: Classify the request as Fast Track or Smart Track ──
+  const classification = classifyRequest(text);
+  console.log(`[Semantic Router][${source}] Route: ${classification.route} | Reason: ${classification.reason} | Text: "${text.slice(0, 60)}..."`);
+
+  let parsedResult;
+  if (classification.route === 'fast') {
+    // FAST TRACK: User specified a specific time → no need to fetch busy slots
+    parsedResult = await parseWithGemini(text, { busySlots: [], schedule: {} });
+  } else {
+    // SMART TRACK: User made a general request → inject busy slots with 15-min buffer
+    parsedResult = await parseWithGeminiSmart(text, { busySlots, schedule });
+  }
+  
+  // Handle Shabbat block response from AI
+  if (parsedResult.isBlocked === true) {
+    return reply(400, { 
+      success: false, 
+      isBlocked: true,
+      blockedMessage: parsedResult.blockedMessage || 'האפליקציה אינה קובעת פגישות במהלך השבת. נשמח לתאם מועד לפני כניסת השבת או במוצאי השבת.',
+      message: parsedResult.blockedMessage || 'האפליקציה אינה קובעת פגישות במהלך השבת. נשמח לתאם מועד לפני כניסת השבת או במוצאי השבת.',
+      events: []
+    });
+  }
+
+  // Handle CONFLICT response: user requested a time that is already taken.
+  // The server MUST NOT save any event and MUST NOT deduct an AI credit.
+  if (parsedResult.hasConflict === true) {
+    return reply(409, {
+      success: false,
+      hasConflict: true,
+      conflictMessage: parsedResult.conflictMessage || 'יש כבר פעילות בזמן הזה. האם להוסיף בכל זאת או לקבוע לזמן אחר?',
+      message: parsedResult.replyMessage || 'יש כבר פעילות בזמן הזה. האם להוסיף בכל זאת או לקבוע לזמן אחר?',
+      events: []
+    });
+  }
+
+  const { events: parsedEvents, replyMessage } = parsedResult;
+
+  if (!parsedEvents || parsedEvents.length === 0) {
+    return reply(400, { success: false, error: 'Could not parse any events from the provided text.' });
+  }
+
+  // (schedule already loaded above)
+
+  const addedEvents = [];
+  const shabbatFilteredEvents = [];
+
+  for (const event of parsedEvents) {
+    let day = event.day || todayName;
+    if (day === 'Today') {
+      day = todayName;
+    }
+
+    // ── HARD SHABBAT GUARD: Filter out any event scheduled on Saturday ──
+    if (isShabbat(day)) {
+      console.warn(`[Shabbat Guard] Quick-add blocked event "${event.title}" with day "${day}".`);
+      shabbatFilteredEvents.push(event);
+      continue;
+    }
+
+    const eventRecurrence = event.recurrence || 'once';
+
+    // Auto-set createdMonth for yearly events
+    const createdMonth = new Date().getMonth();
+
+    const eventWithRecurrence = {
+      ...event,
+      day,
+      recurrence: eventRecurrence,
+      location: DEFAULT_LOCATION_ID,
+      ...(eventRecurrence === 'yearly' && { createdMonth })
+    };
+
+    // Add to schedule
+    if (schedule[day]) {
+      schedule[day].push(eventWithRecurrence);
+    } else {
+      schedule['Today'].push(eventWithRecurrence);
+    }
+
+    addedEvents.push(eventWithRecurrence);
+  }
+
+  // If ALL events were filtered out for Shabbat, return an error
+  if (addedEvents.length === 0 && shabbatFilteredEvents.length > 0) {
+    return reply(400, {
+      success: false,
+      isBlocked: true,
+      blockedMessage: 'שבת שלום 🕯️ המערכת אינה מאפשרת קביעת פעילויות בשבת. נשמח לתאם למוצאי השבת או ליום חול.',
+      events: []
+    });
+  }
+
+  const { remainingCredits } = await deductAICredit(userId, parsedResult.usage, parsedResult.modelName || 'deepseek/deepseek-chat', source);
+  syncTodayWithCurrentDay(schedule);
+  // Save to MongoDB for logged-in users
+  if (userId && mongoose.Types.ObjectId.isValid(userId)) {
+    await saveScheduleToMongo(userId, schedule);
+  }
+  userSchedules.set(userId, schedule);
+  saveSchedulesNow();
+
+  // Build a friendly message for the response
+  const firstEvent = addedEvents[0];
+  const eventCount = addedEvents.length;
+  const displayName = userData?.displayName || userData?.email || '';
+
+  let message;
+  if (eventCount === 1) {
+    message = replyMessage || `האירוע "${firstEvent.title}" נקבע בהצלחה ליום ${firstEvent.day} בשעה ${firstEvent.startTime}.`;
+  } else {
+    message = replyMessage || `${eventCount} אירועים נוספו בהצלחה.`;
+  }
+
+  // ── GOOGLE CALENDAR SYNC: Automatically sync each added event to Google Calendar ──
+  // This is non-blocking — failures are logged but never crash the response.
+  const googleSyncResults = await Promise.allSettled(
+    addedEvents.map(ev => syncEventToGoogleCalendar(userId, ev, DEFAULT_LOCATION_ID))
+  );
+  const googleSyncSuccessCount = googleSyncResults.filter(r => r.status === 'fulfilled' && r.value.success).length;
+  const googleSyncFailedCount = googleSyncResults.filter(r => r.status === 'fulfilled' && !r.value.success).length;
+
+  // ── LOG ACTION HISTORY: Record this quick-add action for undo ──
+  const googleEventIds = googleSyncResults
+    .filter(r => r.status === 'fulfilled' && r.value.success && r.value.eventId)
+    .map(r => r.value.eventId);
+  if (userId && mongoose.Types.ObjectId.isValid(userId)) {
+    // Fire-and-forget: don't block the response
+    logActionHistory(userId, text, googleEventIds, addedEvents, source).catch(() => {});
+  }
+
+  return reply(200, {
+    success: true,
+    message,
+    events: addedEvents,
+    count: eventCount,
+    aiCredits: remainingCredits,
+    googleCalendar: {
+      synced: googleSyncSuccessCount,
+      failed: googleSyncFailedCount,
+      total: addedEvents.length,
+      link: googleSyncSuccessCount > 0 ? 'https://calendar.google.com' : undefined
+    }
+  });
+
+}
+
 app.post('/api/events/quick-add', aiLimiter, async (req, res) => {
   try {
     const { text } = req.body;
@@ -2363,182 +2664,153 @@ app.post('/api/events/quick-add', aiLimiter, async (req, res) => {
       return res.status(401).json({ success: false, error: 'Authentication required. Provide a Bearer token.' });
     }
 
-    // ── PAYG CREDIT CHECK: Block if user has no AI credits left ──
-    const creditCheck = await checkAICredits(userId);
-    if (!creditCheck.allowed) {
-      return res.status(creditCheck.status || 402).json({ success: false, error: creditCheck.error });
-    }
-
-    // Get the user's schedule for context-aware AI
-    const effectiveUserId = userId || 'anonymous';
-    const schedule = JSON.parse(JSON.stringify(getUserSchedule(effectiveUserId)));
-    const todayName = getTodayDayName();
-
-    // Build busy slots array from existing schedule for conflict-aware AI
-    const busySlots = [];
-    for (const [day, events] of Object.entries(schedule)) {
-      if (Array.isArray(events) && events.length > 0) {
-        for (const ev of events) {
-          if (ev.startTime && ev.endTime) {
-            busySlots.push({
-              day,
-              startTime: ev.startTime,
-              endTime: ev.endTime,
-              title: ev.title || ''
-            });
-          }
-        }
-      }
-    }
-
-    // ── SEMANTIC ROUTING: Classify the request as Fast Track or Smart Track ──
-    const classification = classifyRequest(text);
-    console.log(`[Semantic Router][Quick-Add] Route: ${classification.route} | Reason: ${classification.reason} | Text: "${text.slice(0, 60)}..."`);
-
-    let parsedResult;
-    if (classification.route === 'fast') {
-      // FAST TRACK: User specified a specific time → no need to fetch busy slots
-      parsedResult = await parseWithGemini(text, { busySlots: [], schedule: {} });
-    } else {
-      // SMART TRACK: User made a general request → inject busy slots with 15-min buffer
-      parsedResult = await parseWithGeminiSmart(text, { busySlots, schedule });
-    }
-    
-    // Handle Shabbat block response from AI
-    if (parsedResult.isBlocked === true) {
-      return res.status(400).json({ 
-        success: false, 
-        isBlocked: true,
-        blockedMessage: parsedResult.blockedMessage || 'האפליקציה אינה קובעת פגישות במהלך השבת. נשמח לתאם מועד לפני כניסת השבת או במוצאי השבת.',
-        message: parsedResult.blockedMessage || 'האפליקציה אינה קובעת פגישות במהלך השבת. נשמח לתאם מועד לפני כניסת השבת או במוצאי השבת.',
-        events: []
-      });
-    }
-
-    // Handle CONFLICT response: user requested a time that is already taken.
-    // The server MUST NOT save any event and MUST NOT deduct an AI credit.
-    if (parsedResult.hasConflict === true) {
-      return res.status(409).json({
-        success: false,
-        hasConflict: true,
-        conflictMessage: parsedResult.conflictMessage || 'יש כבר פעילות בזמן הזה. האם להוסיף בכל זאת או לקבוע לזמן אחר?',
-        message: parsedResult.replyMessage || 'יש כבר פעילות בזמן הזה. האם להוסיף בכל זאת או לקבוע לזמן אחר?',
-        events: []
-      });
-    }
-
-    const { events: parsedEvents, replyMessage } = parsedResult;
-
-    if (!parsedEvents || parsedEvents.length === 0) {
-      return res.status(400).json({ success: false, error: 'Could not parse any events from the provided text.' });
-    }
-
-    // (schedule already loaded above)
-
-    const addedEvents = [];
-    const shabbatFilteredEvents = [];
-
-    for (const event of parsedEvents) {
-      let day = event.day || todayName;
-      if (day === 'Today') {
-        day = todayName;
-      }
-
-      // ── HARD SHABBAT GUARD: Filter out any event scheduled on Saturday ──
-      if (isShabbat(day)) {
-        console.warn(`[Shabbat Guard] Quick-add blocked event "${event.title}" with day "${day}".`);
-        shabbatFilteredEvents.push(event);
-        continue;
-      }
-
-      const eventRecurrence = event.recurrence || 'once';
-
-      // Auto-set createdMonth for yearly events
-      const createdMonth = new Date().getMonth();
-
-      const eventWithRecurrence = {
-        ...event,
-        day,
-        recurrence: eventRecurrence,
-        location: DEFAULT_LOCATION_ID,
-        ...(eventRecurrence === 'yearly' && { createdMonth })
-      };
-
-      // Add to schedule
-      if (schedule[day]) {
-        schedule[day].push(eventWithRecurrence);
-      } else {
-        schedule['Today'].push(eventWithRecurrence);
-      }
-
-      addedEvents.push(eventWithRecurrence);
-    }
-
-    // If ALL events were filtered out for Shabbat, return an error
-    if (addedEvents.length === 0 && shabbatFilteredEvents.length > 0) {
-      return res.status(400).json({
-        success: false,
-        isBlocked: true,
-        blockedMessage: 'שבת שלום 🕯️ המערכת אינה מאפשרת קביעת פעילויות בשבת. נשמח לתאם למוצאי השבת או ליום חול.',
-        events: []
-      });
-    }
-
-    const { remainingCredits } = await deductAICredit(userId, parsedResult.usage, parsedResult.modelName || 'deepseek/deepseek-chat', 'quick-add');
-    syncTodayWithCurrentDay(schedule);
-    // Save to MongoDB for logged-in users
-    if (userId && mongoose.Types.ObjectId.isValid(userId)) {
-      await saveScheduleToMongo(userId, schedule);
-    }
-    userSchedules.set(userId, schedule);
-    saveSchedulesNow();
-
-    // Build a friendly message for the response
-    const firstEvent = addedEvents[0];
-    const eventCount = addedEvents.length;
-    const displayName = userData?.displayName || userData?.email || '';
-
-    let message;
-    if (eventCount === 1) {
-      message = replyMessage || `האירוע "${firstEvent.title}" נקבע בהצלחה ליום ${firstEvent.day} בשעה ${firstEvent.startTime}.`;
-    } else {
-      message = replyMessage || `${eventCount} אירועים נוספו בהצלחה.`;
-    }
-
-    // ── GOOGLE CALENDAR SYNC: Automatically sync each added event to Google Calendar ──
-    // This is non-blocking — failures are logged but never crash the response.
-    const googleSyncResults = await Promise.allSettled(
-      addedEvents.map(ev => syncEventToGoogleCalendar(userId, ev, DEFAULT_LOCATION_ID))
-    );
-    const googleSyncSuccessCount = googleSyncResults.filter(r => r.status === 'fulfilled' && r.value.success).length;
-    const googleSyncFailedCount = googleSyncResults.filter(r => r.status === 'fulfilled' && !r.value.success).length;
-
-    // ── LOG ACTION HISTORY: Record this quick-add action for undo ──
-    const googleEventIds = googleSyncResults
-      .filter(r => r.status === 'fulfilled' && r.value.success && r.value.eventId)
-      .map(r => r.value.eventId);
-    if (userId && mongoose.Types.ObjectId.isValid(userId)) {
-      // Fire-and-forget: don't block the response
-      logActionHistory(userId, text, googleEventIds, addedEvents, 'quick-add').catch(() => {});
-    }
-
-    res.json({
-      success: true,
-      message,
-      events: addedEvents,
-      count: eventCount,
-      aiCredits: remainingCredits,
-      googleCalendar: {
-        synced: googleSyncSuccessCount,
-        failed: googleSyncFailedCount,
-        total: addedEvents.length,
-        link: googleSyncSuccessCount > 0 ? 'https://calendar.google.com' : undefined
-      }
-    });
+    const result = await runQuickAdd(userId, userData, text, 'quick-add');
+    res.status(result.status).json(result.body);
 
   } catch (error) {
     console.error('Quick-add endpoint error:', error);
     res.status(error.status || 500).json({ success: false, error: error.message || 'Failed to process quick-add request.' });
+  }
+});
+
+// ──────────────────────────────────────────────
+// 8f. Siri / Apple Shortcuts
+// ──────────────────────────────────────────────
+// A Shortcut cannot hold a short-lived login JWT, so each user gets a personal,
+// revocable Siri key. Only its SHA-256 hash is stored; the plain key is shown once.
+
+const SIRI_KEY_PREFIX = 'cai_';
+const SIRI_ENDPOINT_PATH = '/api/events/siri';
+
+function hashSiriKey(key) {
+  return crypto.createHash('sha256').update(key).digest('hex');
+}
+
+function getSiriEndpointUrl() {
+  return `${BACKEND_URL}${SIRI_ENDPOINT_PATH}`;
+}
+
+function extractSiriKey(req) {
+  const headerKey = req.headers['x-calendai-key'];
+  if (typeof headerKey === 'string' && headerKey.trim()) return headerKey.trim();
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith(`Bearer ${SIRI_KEY_PREFIX}`)) return authHeader.slice(7).trim();
+  if (typeof req.body?.key === 'string' && req.body.key.trim()) return req.body.key.trim();
+  return null;
+}
+
+/**
+ * GET /api/siri/key — does the logged-in user have a Siri key? Returns the endpoint URL.
+ * POST /api/siri/key — create (or rotate) the user's Siri key. The plain key is returned once.
+ * DELETE /api/siri/key — revoke the key; existing Shortcuts stop working.
+ */
+app.get('/api/siri/key', async (req, res) => {
+  const userId = getAuthenticatedUserId(req);
+  if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
+    return res.status(401).json({ error: 'Authentication required.' });
+  }
+  try {
+    const user = await User.findById(userId).select('siriKeyHash siriKeyCreatedAt').lean();
+    if (!user) return res.status(404).json({ error: 'User not found.' });
+    res.json({
+      hasKey: Boolean(user.siriKeyHash),
+      createdAt: user.siriKeyCreatedAt || null,
+      endpoint: getSiriEndpointUrl()
+    });
+  } catch (error) {
+    console.error('[Siri] Failed to read key status:', error.message);
+    res.status(500).json({ error: 'Failed to load Siri settings.' });
+  }
+});
+
+app.post('/api/siri/key', async (req, res) => {
+  const userId = getAuthenticatedUserId(req);
+  if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
+    return res.status(401).json({ error: 'Authentication required.' });
+  }
+  try {
+    const key = SIRI_KEY_PREFIX + crypto.randomBytes(24).toString('hex');
+    const createdAt = new Date();
+    const result = await User.updateOne(
+      { _id: userId },
+      { $set: { siriKeyHash: hashSiriKey(key), siriKeyCreatedAt: createdAt } }
+    );
+    if (!result.matchedCount) return res.status(404).json({ error: 'User not found.' });
+    res.json({ key, createdAt, endpoint: getSiriEndpointUrl() });
+  } catch (error) {
+    console.error('[Siri] Failed to create key:', error.message);
+    res.status(500).json({ error: 'Failed to create Siri key.' });
+  }
+});
+
+app.delete('/api/siri/key', async (req, res) => {
+  const userId = getAuthenticatedUserId(req);
+  if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
+    return res.status(401).json({ error: 'Authentication required.' });
+  }
+  try {
+    await User.updateOne({ _id: userId }, { $unset: { siriKeyHash: 1, siriKeyCreatedAt: 1 } });
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('[Siri] Failed to revoke key:', error.message);
+    res.status(500).json({ error: 'Failed to revoke Siri key.' });
+  }
+});
+
+/**
+ * POST /api/events/siri
+ * Called by the user's Apple Shortcut ("Hey Siri, <shortcut name>").
+ * Auth: personal Siri key in the X-CalendAI-Key header (or Bearer / body.key).
+ * Body: { text: "פגישה עם דני מחר בשלוש" }
+ * Response: plain text for Siri to speak. Add ?format=json for { success, response, ... }.
+ * Always HTTP 200 so the Shortcut reaches its "Speak" step and the user hears what happened.
+ */
+app.post(SIRI_ENDPOINT_PATH, aiLimiter, async (req, res) => {
+  const wantsJson = req.query.format === 'json';
+  const speak = (success, response, extra = {}) => {
+    if (wantsJson) return res.json({ success, response, ...extra });
+    res.type('text/plain; charset=utf-8').send(response);
+  };
+
+  try {
+    const key = extractSiriKey(req);
+    if (!key || !key.startsWith(SIRI_KEY_PREFIX)) {
+      return speak(false, 'קיצור הדרך לא מחובר לחשבון. פתחו את CalendAI, תפריט, "חיבור לסירי", וצרו מפתח חדש.');
+    }
+
+    const user = await User.findOne({ siriKeyHash: hashSiriKey(key) }).lean();
+    if (!user) {
+      return speak(false, 'מפתח הסירי אינו תקף או שבוטל. צרו מפתח חדש באפליקציה ועדכנו את קיצור הדרך.');
+    }
+
+    const rawText = typeof req.body?.text === 'string' ? req.body.text : (typeof req.query.text === 'string' ? req.query.text : '');
+    const text = rawText.trim().slice(0, 1000);
+    if (!text) {
+      return speak(false, 'לא שמעתי מה לקבוע. נסו שוב.');
+    }
+
+    const result = await runQuickAdd(user._id.toString(), user, text, 'siri');
+    const body = result.body || {};
+
+    if (result.status === 200 && body.success) {
+      return speak(true, body.message, { events: body.events, count: body.count });
+    }
+    if (body.hasConflict) {
+      return speak(false, body.conflictMessage, { hasConflict: true });
+    }
+    if (body.isBlocked) {
+      return speak(false, body.blockedMessage, { isBlocked: true });
+    }
+    if (result.status === 402) {
+      return speak(false, 'נגמרו קרדיטי ה-AI בחשבון. אפשר לשדרג באפליקציה.');
+    }
+    if (result.status === 400) {
+      return speak(false, 'לא הצלחתי להבין איזה אירוע לקבוע. נסו לומר למשל: פגישה עם דני מחר בשלוש.');
+    }
+    return speak(false, body.error || 'אירעה שגיאה. נסו שוב בעוד רגע.');
+  } catch (error) {
+    console.error('[Siri] Endpoint error:', error);
+    speak(false, 'אירעה שגיאה בשרת. נסו שוב בעוד רגע.');
   }
 });
 
@@ -2549,7 +2821,9 @@ app.post('/api/events/quick-add', aiLimiter, async (req, res) => {
 // formatDateTimeWithTimezone / createOAuth2ClientWithRefresh / buildGcalEventBody
 // now live in ./services/googleCalendar.js (shared with the mutual-scheduling routes).
 
-async function syncEventToGoogleCalendar(userId, event, locationId) {
+// timeZoneOverride: the calendar owner's zone when the request comes from
+// someone else (a guest confirming a booking); otherwise the requester's zone.
+async function syncEventToGoogleCalendar(userId, event, locationId, timeZoneOverride = null) {
   // Only sync for logged-in users with valid ObjectId
   if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
     return { success: false, error: 'Not a logged-in user', eventId: null };
@@ -2560,9 +2834,9 @@ async function syncEventToGoogleCalendar(userId, event, locationId) {
       return { success: false, error: 'No Google token stored', eventId: null };
     }
 
-    const locId = locationId || DEFAULT_LOCATION_ID;
-    const locData = LOCATIONS.find(loc => loc.id === locId);
-    const timeZone = locData ? locData.timezone : 'Asia/Jerusalem';
+    const timeZone = isValidTimeZone(timeZoneOverride)
+      ? timeZoneOverride
+      : resolveUserLocation(locationId).timezone;
 
     // Create OAuth2 client with auto-refresh capability
     const oauth2Client = await createOAuth2ClientWithRefresh(user);
@@ -2714,8 +2988,8 @@ app.post('/api/add-to-google-calendar', async (req, res) => {
   }
 
   const locationId = location || DEFAULT_LOCATION_ID;
-  const locData = LOCATIONS.find(loc => loc.id === locationId);
-  const timeZone = locData ? locData.timezone : 'Asia/Jerusalem';
+  const locData = resolveUserLocation(locationId);
+  const timeZone = locData.timezone;
 
   // Look up the full user from MongoDB to get refresh_token for auto-refresh
   let user = null;
@@ -3414,6 +3688,8 @@ app.post('/api/booking/create-link', async (req, res) => {
       endTime: isLocked ? endTime : null,
       guestTimezone: guestTimezone || null,
       locationId: locationId || DEFAULT_LOCATION_ID,
+      // Slot hours are wall-clock times in the host's zone; guests convert from it.
+      hostTimezone: getRequestTimeZone(req) || resolveLocation(locationId || DEFAULT_LOCATION_ID).timezone,
       slots: isLocked 
         ? [] 
         : slots.map(s => ({ hour: s.hour, minute: s.minute, booked: false })),
@@ -3466,6 +3742,7 @@ app.get('/api/booking/:id', async (req, res) => {
         endTime: booking.isLocked ? booking.endTime : null,
         guestTimezone: booking.guestTimezone || null,
         locationId: booking.locationId || DEFAULT_LOCATION_ID,
+        hostTimezone: booking.hostTimezone || resolveLocation(booking.locationId || DEFAULT_LOCATION_ID).timezone,
         createdAt: booking.createdAt
       },
       slots: availableSlots
@@ -3571,7 +3848,7 @@ app.post('/api/booking/:id/confirm', async (req, res) => {
     };
     let googleCalendar = { success: false, reason: 'Host has no connected Google Calendar' };
     if (host.googleAccessToken) {
-      const syncResult = await syncEventToGoogleCalendar(hostId, eventToPersist, bookingData.locationId || DEFAULT_LOCATION_ID);
+      const syncResult = await syncEventToGoogleCalendar(hostId, eventToPersist, bookingData.locationId || DEFAULT_LOCATION_ID, bookingData.hostTimezone || resolveLocation(bookingData.locationId || DEFAULT_LOCATION_ID).timezone);
       if (!syncResult.success) throw Object.assign(new Error(`Google Calendar insertion failed: ${syncResult.error || 'unknown error'}`), { status: 502 });
       syncedEventId = syncResult.eventId;
       googleCalendar = { success: true, eventId: syncedEventId };
@@ -4069,6 +4346,8 @@ app.use('/api/action-history', actionHistoryRoutes);
 
 // ── Public Goals & Challenges Routes ──
 app.use('/api/goals', goalRoutes);
+app.use('/api/routines', routineRoutes);
+app.use('/api/reminders', reminderRoutes);
 
 // ── Social Provider Bookings (public provider directory) ──
 const providerRoutes = require('./routes/providerRoutes');
@@ -4160,8 +4439,8 @@ app.get('/api/health', (_req, res) => {
 
 // ── Shabbat Status Endpoint ──
 // Returns the current Shabbat status so the frontend can display Shabbat banner.
-app.get('/api/shabbat/status', (_req, res) => {
-  res.json(shabbatService.getShabbatStatus());
+app.get('/api/shabbat/status', (req, res) => {
+  res.json(shabbatService.getShabbatStatus(getRequestLocation(req)));
 });
 
 // ──────────────────────────────────────────────
@@ -4190,6 +4469,13 @@ app.get('*', (req, res) => {
 mongoReady
   .then(() => {
     console.log('MongoDB connected');
+    // Reminder pings: checks every 30s for reminders that are due (services/reminderDispatcher).
+    createDispatcher({
+      Reminder: require('./models/Reminder'),
+      PushSubscription: require('./models/PushSubscription'),
+      push: require('./services/webPush'),
+      isShabbatAt: reminderRoutes.isShabbatAt
+    }).start(30000, () => mongoose.connection.readyState === 1);
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`Backend running at http://localhost:${PORT}`);
     });

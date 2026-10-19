@@ -23,6 +23,9 @@
       window.addEventListener('DOMContentLoaded', function() {
         if (window.Capacitor) {
           document.documentElement.classList.add('capacitor-native');
+          // The native app keeps a fixed scale; the website allows pinch-zoom (accessibility).
+          var vp = document.querySelector('meta[name="viewport"]');
+          if (vp) vp.setAttribute('content', vp.getAttribute('content') + ', maximum-scale=1.0, user-scalable=no');
         }
       });
     </script>

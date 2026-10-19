@@ -110,6 +110,48 @@ OR if the requested time conflicts with an existing event:
 **CRITICAL — SUMMARY CLEANLINESS**: The "summary" field MUST be completely free of any time, date, day, or duration information. All temporal data goes into "day", "startTime", and "endTime" fields only.`;
 }
 
+// Shared by both prompts: recurring reminders ("every day at 8am take a pill")
+// come back as ONE event with a `repeat` object; the server turns isReminder
+// events into Reminder documents that ping the user (services/reminderSchedule).
+const RECURRING_REMINDER_RULES = `
+    ─────────────────────────────────────────────
+    RECURRING REMINDERS (CRITICAL)
+    ─────────────────────────────────────────────
+    A request with reminder words ("תזכיר" / "תזכורת" / "תעשה לי תזכורת" / "התראה" / "פינג" / "remind" / "reminder" / "ping me")
+    is a REMINDER: set "isReminder": true. When it REPEATS ("כל יום" / "כל בוקר" / "כל ערב" / "כל שבוע" / "כל יום שני" / "כל חודש" /
+    "every day" / "daily" / "every morning" / "every Monday" / "every week" / "every month"):
+    1. Return EXACTLY ONE event for it. Do NOT create one event per day, even for "every day".
+    2. "startTime" = the reminder time (HH:MM 24-hour). "endTime" = startTime + 5 minutes.
+    3. Add a "repeat" object:
+       - daily:   { "frequency": "daily" }
+       - weekly:  { "frequency": "weekly", "daysOfWeek": ["Monday", "Thursday"] }  (English day names)
+       - monthly: { "frequency": "monthly", "dayOfMonth": 1 }
+    4. Set "recurrence" to the same frequency ("daily" / "weekly" / "monthly") and "isRecurring": true.
+    5. "summary" = what to be reminded about, cleaned like any summary (no time or frequency words).
+    6. "replyMessage" confirms the reminder and when it pings, in the user's language.
+    Weekdays-only ("בימי חול" / "on weekdays") → weekly with Sunday-Thursday in Hebrew requests, Monday-Friday in English ones.
+
+    Example (Hebrew):
+    User text: "תעשה לי תזכורת לכל יום בשמונה בבוקר לקחת כדור"
+    {
+      "reasoning": "תזכורת יומית קבועה בשעה 08:00 לקחת כדור.",
+      "replyMessage": "קבעתי לך תזכורת כל יום ב-08:00 לקחת כדור 💊",
+      "events": [
+        { "summary": "לקחת כדור", "day": "Today", "startTime": "08:00", "endTime": "08:05", "recurrence": "daily", "isRecurring": true, "isSleep": false, "hasAdvice": false, "aiAdvice": "", "isReminder": true, "repeat": { "frequency": "daily" } }
+      ]
+    }
+
+    Example (English):
+    User text: "remind me every Monday and Thursday at 6pm to water the plants"
+    {
+      "reasoning": "A weekly reminder on Monday and Thursday at 18:00.",
+      "replyMessage": "Done! I'll remind you to water the plants every Monday and Thursday at 18:00.",
+      "events": [
+        { "summary": "Water the plants", "day": "Monday", "startTime": "18:00", "endTime": "18:05", "recurrence": "weekly", "isRecurring": true, "isSleep": false, "hasAdvice": false, "aiAdvice": "", "isReminder": true, "repeat": { "frequency": "weekly", "daysOfWeek": ["Monday", "Thursday"] } }
+      ]
+    }
+`;
+
 /**
  * Parse a free-text Hebrew (or English) scheduling request into structured events.
  * Now accepts existing schedule data for conflict-aware scheduling.
@@ -812,6 +854,7 @@ async function parseWithGemini(text, options = {}) {
     5. Set recurrence: "once" for one-time reminders.
     6. IMPORTANT: Do not confuse reminder events with regular schedule events.
 
+${RECURRING_REMINDER_RULES}
     ─────────────────────────────────────────────
     USER REQUEST
     ─────────────────────────────────────────────
@@ -1536,6 +1579,7 @@ async function parseWithGeminiSmart(text, options = {}) {
 
     CRITICAL: You MUST return an ARRAY of events, even if there's only one event. Always wrap in [ ].
 
+${RECURRING_REMINDER_RULES}
     ─────────────────────────────────────────────
     USER REQUEST
     ─────────────────────────────────────────────

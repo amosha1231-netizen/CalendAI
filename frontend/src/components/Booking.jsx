@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Calendar, Clock, Loader2, Sparkles, X, Check, Sun, Moon, MapPin, Filter, Eye, EyeOff, Square, Mail, Phone, MessageSquare, AlertCircle, Share2, ExternalLink, Copy, Download, Users, Send } from "lucide-react";
-import { isShabbatNow } from "../utils/shabbatHelper";
-import ShabbatBanner from "./ShabbatBanner";
+import ShabbatGate from "./ShabbatGate";
 import safeStorage from "../utils/safeStorage";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
@@ -20,24 +19,24 @@ const MEETING_TYPES = [
   { id: 'consultation', mins: 60, icon: '🔍' }
 ];
 
-export default function Booking({ schedule, lang, t, onClose, onConfirm, user }) {
-  // ── Shabbat Guard ──
-  const [shabbatActive] = useState(() => isShabbatNow());
+// "YYYY-MM-DD" of the next occurrence of a weekday (today counts), on the host's device calendar.
+function nextDateForDay(dayKey) {
+  const dayIndex = ALL_DAY_KEYS.indexOf(dayKey);
+  if (dayIndex === -1) return undefined;
+  const date = new Date();
+  date.setDate(date.getDate() + ((dayIndex - date.getDay() + 7) % 7));
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
 
-  // Check every minute if Shabbat status changed
-  useEffect(() => {
-    if (!shabbatActive) return;
-    const interval = setInterval(() => {
-      if (!isShabbatNow()) {
-        window.location.reload();
-      }
-    }, 60000);
-    return () => clearInterval(interval);
-  }, [shabbatActive]);
+export default function Booking(props) {
+  return (
+    <ShabbatGate t={props.t} lang={props.lang}>
+      <BookingScreen {...props} />
+    </ShabbatGate>
+  );
+}
 
-  if (shabbatActive) {
-    return <ShabbatBanner t={t} lang={lang} />;
-  }
+function BookingScreen({ schedule, lang, t, onClose, onConfirm, user }) {
   const [step, setStep] = useState('meeting-type'); // 'meeting-type' | 'select-time' | 'details' | 'success' | 'share-link'
   const [selectedMeetingType, setSelectedMeetingType] = useState(null);
   const [selectedDay, setSelectedDay] = useState(() => {
@@ -312,6 +311,9 @@ export default function Booking({ schedule, lang, t, onClose, onConfirm, user })
           endTime: endTimeStr,
           duration,
           day: selectedDay,
+          // The real date, so guests see the same day the host meant and can
+          // convert the time into their own zone.
+          date: nextDateForDay(selectedDay),
           hostName: user?.displayName || guestName || user?.email || '',
           guestTimezone: guestTimezone || ''
         })

@@ -343,5 +343,8 @@ module.exports = {
   isValidIsoDate,
   getMutualFreeSlots,
   isSlotMutuallyFree,
+  minutesToTime12,
+  parseClock12,
+  currentMinuteOfDay,
   FRIDAY_SHABBAT_CUTOFF_MIN
 };

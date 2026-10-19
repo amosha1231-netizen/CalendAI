@@ -20,7 +20,8 @@ const { createOAuth2ClientWithRefresh } = require('../services/googleCalendar');
 // function after the module is mocked.
 const mutualAvailability = require('../services/mutualAvailability');
 const {
-  mergeIntervals, sliceIntoSlots, overlapsAny, isValidIsoDate, getLocationTimeZone, todayIsoInTimeZone, FRIDAY_SHABBAT_CUTOFF_MIN
+  mergeIntervals, sliceIntoSlots, overlapsAny, isValidIsoDate, getLocationTimeZone, todayIsoInTimeZone, FRIDAY_SHABBAT_CUTOFF_MIN,
+  minutesToTime12, currentMinuteOfDay
 } = mutualAvailability;
 const { google } = require('googleapis');
 
@@ -101,11 +102,6 @@ const browseLimiter = rateLimit({
   message: { error: 'יותר מדי חיפושים. נסה שוב בעוד דקה.' }
 });
 
-function currentMinuteOfDay(timeZone) {
-  const parts = new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date());
-  return Number(parts.find(p => p.type === 'hour').value) * 60 + Number(parts.find(p => p.type === 'minute').value);
-}
-
 /**
  * Extract the authenticated user's id. Delegates to the same
  * getAuthenticatedUserId server.js uses for /api/booking/:id/confirm
@@ -144,14 +140,6 @@ function mapServicesForSave(services) {
     if (s._id && mongoose.Types.ObjectId.isValid(s._id)) svc._id = s._id;
     return svc;
   });
-}
-
-function minutesToTime12(totalMinutes) {
-  const h = Math.floor(totalMinutes / 60);
-  const m = totalMinutes % 60;
-  const ampm = h >= 12 ? 'PM' : 'AM';
-  const h12 = h % 12 || 12;
-  return `${String(h12).padStart(2, '0')}:${String(m).padStart(2, '0')} ${ampm}`;
 }
 
 /**

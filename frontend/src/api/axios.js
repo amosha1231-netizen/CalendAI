@@ -1,5 +1,6 @@
 import axios from 'axios';
 import safeStorage from '../utils/safeStorage';
+import { getLocationHeaders } from '../utils/userLocation';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
@@ -56,6 +57,10 @@ api.interceptors.request.use(
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
+    const locationHeaders = getLocationHeaders();
+    Object.keys(locationHeaders).forEach(name => {
+      config.headers[name] = locationHeaders[name];
+    });
     return config;
   },
   (error) => Promise.reject(error)
