@@ -224,9 +224,16 @@ function BookingScreen({ schedule, lang, t, onClose, onConfirm, user }) {
     setAiError("");
     setAiResult(null);
     try {
+      let authToken = null;
+      try {
+        authToken = safeStorage.getItem('token') || safeStorage.getItem('calendai-jwt');
+      } catch (e) {}
       const res = await fetch(`${API_BASE}/api/booking/ai-find-slot`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {})
+        },
         credentials: "include",
         body: JSON.stringify({
           day: selectedDay,

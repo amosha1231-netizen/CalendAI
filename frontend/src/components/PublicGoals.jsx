@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { Search, Users, Trophy, CheckCircle, X, Plus, Loader2, ChevronDown, Filter, Check } from "lucide-react";
+import { Search, Users, Trophy, CheckCircle, X, Plus, Loader2, ChevronDown, Filter, Check, Flame } from "lucide-react";
 import translations from "../i18n";
 import safeStorage from "../utils/safeStorage";
 
@@ -67,7 +67,13 @@ export default function PublicGoals({ lang, user, onClose, onJoinChallenge, onVi
   const [myGoalsLoading, setMyGoalsLoading] = useState(false);
   const [togglingId, setTogglingId] = useState(null);
 
-  const getToken = () => safeStorage.getItem("token") || safeStorage.getItem("calendai-jwt") || "";
+  const getToken = () => {
+    try {
+      return safeStorage.getItem("token") || safeStorage.getItem("calendai-jwt") || "";
+    } catch (e) {
+      return "";
+    }
+  };
 
   const fetchGoals = useCallback(async (query, category) => {
     setLoading(true);
@@ -442,6 +448,12 @@ export default function PublicGoals({ lang, user, onClose, onJoinChallenge, onVi
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
+                          {goal.myStreak > 0 && (
+                            <span className="text-xs font-medium px-2 py-1 rounded-full bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-400 flex items-center gap-1">
+                              <Flame className="w-3 h-3" />
+                              {goal.myStreak}
+                            </span>
+                          )}
                           <span className={`text-xs font-medium px-2 py-1 rounded-full ${
                             goal.myStatus === "completed"
                               ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400"

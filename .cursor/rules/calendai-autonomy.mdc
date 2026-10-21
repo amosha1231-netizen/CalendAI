@@ -1,0 +1,14 @@
+---
+description: When to act vs ask — stay autonomous without irreversible mistakes
+alwaysApply: true
+---
+
+# Autonomy
+
+Default: continue the current plan. Do not ask for permission to read, diagnose, fix, extract modules, or verify with build/syntax checks.
+
+Ask only for: push, destructive git, secrets/prod env, DB migrations, billing/credit formula, ambiguous UX, paid API spend.
+
+Never: rewrite the app, invent AI usage for billing, skip required model files, hand-edit `frontend/dist`, grow `server.js` / `App.jsx` when a new file would do.
+
+After a change: verify the path you touched. State what you did and the next step in one short paragraph — do not stall for approval of that next reversible step.

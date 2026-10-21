@@ -18,6 +18,7 @@ import {
   startEscalatingAlarm,
   previewAlarmSound
 } from '../utils/alarmEngine';
+import { isShabbatNow } from '../utils/shabbatHelper';
 
 const ESCALATION_OPTIONS = [30, 60, 120, 300];
 const PREP_OPTIONS = [30, 45, 60, 90, 120];
@@ -75,6 +76,11 @@ export default function SmartAlarm({ lang, t, schedule, settingsOpen, onCloseSet
       const a = alarmRef.current;
       const now = Date.now();
       const due = [a.enabled && a.nextFireAt, a.snoozeUntil].filter(Boolean);
+      // The app is closed on Shabbat: never ring then (the Shabbat screen
+      // would also cover the dismiss controls), and stop a ring left over.
+      let shabbat = false;
+      try { shabbat = isShabbatNow(); } catch (e) {}
+      if (shabbat && loadRinging()) { saveRinging(null); setRinging(null); return; }
       if (!due.length || loadRinging()) return;
       const fireAt = Math.min(...due);
       if (now < fireAt) return;
@@ -86,7 +92,7 @@ export default function SmartAlarm({ lang, t, schedule, settingsOpen, onCloseSet
         else { next.enabled = false; next.nextFireAt = null; }
       }
       updateAlarm(next);
-      if (!missed) startRinging(false, a);
+      if (!missed && !shabbat) startRinging(false, a);
     };
     check();
     const id = setInterval(check, 1000);

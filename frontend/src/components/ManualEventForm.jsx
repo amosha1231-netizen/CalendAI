@@ -1,7 +1,6 @@
 import React, { useState } from "react";
 import { X, Calendar, Clock, Save, Loader2, CheckCircle, AlertCircle } from "lucide-react";
-
-var API_BASE = import.meta.env.VITE_API_URL || "";
+import api from "../api/axios";
 
 export default function ManualEventForm({ t, lang, onClose, onSuccess, user, authLoading }) {
   const isRTL = lang === 'he';
@@ -64,14 +63,7 @@ export default function ManualEventForm({ t, lang, onClose, onSuccess, user, aut
       };
 
       if (user) {
-        const res = await fetch(`${API_BASE}/api/schedule/add-to-free-slot`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-          credentials: "include"
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || t.manualEventError);
+        await api.post("/api/schedule/add-to-free-slot", payload);
       }
 
       setSuccess(t.manualEventSuccess);
@@ -80,7 +72,7 @@ export default function ManualEventForm({ t, lang, onClose, onSuccess, user, aut
         if (onClose) onClose();
       }, 1500);
     } catch (err) {
-      setError(err.message || t.manualEventError);
+      setError(err.response?.data?.error || err.message || t.manualEventError);
     } finally {
       setSaving(false);
     }

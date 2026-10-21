@@ -6,6 +6,8 @@
  * sends, so two server instances never double-ping), moves nextFireAt to the
  * following occurrence, and sends a Web Push to each of the user's browsers.
  *
+ * Nothing is sent during Shabbat in the reminder's time zone.
+ *
  * A ping that is more than STALE_MS late (the server was asleep, e.g. a Render
  * free instance spinning down) is skipped rather than delivered hours late.
  */
@@ -16,7 +18,9 @@ const BATCH = 200;
 
 function createDispatcher({ Reminder, PushSubscription, push, isShabbatAt, now = () => new Date(), logger = console }) {
   function nextFor(reminder, after) {
-    const isBlocked = reminder.skipShabbat && typeof isShabbatAt === 'function'
+    // The app is closed on Shabbat, so no reminder ever pings then
+    // (whatever an older reminder's skipShabbat flag says).
+    const isBlocked = typeof isShabbatAt === 'function'
       ? instant => isShabbatAt(instant, reminder.timezone)
       : null;
     return computeNextFire(reminder, after, { isBlocked });
@@ -65,6 +69,8 @@ function createDispatcher({ Reminder, PushSubscription, push, isShabbatAt, now =
       );
       if (!claimed) continue; // another instance took it, or the user just edited it
       if (current.getTime() - fireAt.getTime() > STALE_MS) { skipped++; continue; }
+      // A ping scheduled before this rule (or before Shabbat times shifted) is not sent on Shabbat.
+      if (typeof isShabbatAt === 'function' && isShabbatAt(current, reminder.timezone)) { skipped++; continue; }
       try {
         await deliver(reminder, fireAt);
         fired++;

@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { CalendarDays, ChevronLeft, ChevronRight, Eye } from 'lucide-react';
 import translations from "../i18n";
-
-const API_BASE = import.meta.env.VITE_API_URL || "";
+import api from "../api/axios";
 
 const enDays = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
@@ -31,8 +30,9 @@ export default function MonthlyCalendar({ schedule, lang }) {
           const m = (rollingStartMonth + offset) % 12;
           const y = rollingStartYear + Math.floor((rollingStartMonth + offset) / 12);
           promises.push(
-            fetch(`${API_BASE}/api/schedule/expanded?year=${y}&month=${m}&view=month`, { credentials: "include" })
-              .then(res => res.ok ? res.json() : { events: [] })
+            api.get(`/api/schedule/expanded?year=${y}&month=${m}&view=month`)
+              .then(res => res.data)
+              .catch(() => ({ events: [] }))
           );
         }
         const results = await Promise.all(promises);
@@ -40,11 +40,8 @@ export default function MonthlyCalendar({ schedule, lang }) {
         setExpandedEvents(allEvents);
       } else {
         const params = `year=${currentYear}&month=${currentMonth}&view=month`;
-        const res = await fetch(`${API_BASE}/api/schedule/expanded?${params}`, { credentials: "include" });
-        if (res.ok) {
-          const data = await res.json();
-          setExpandedEvents(data.events || []);
-        }
+        const res = await api.get(`/api/schedule/expanded?${params}`);
+        setExpandedEvents(res.data.events || []);
       }
     } catch (err) {
       console.error("Failed to fetch expanded events:", err);

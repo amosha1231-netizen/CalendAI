@@ -19,7 +19,7 @@ function initModel() {
       baseURL: 'https://openrouter.ai/api/v1',
       apiKey: apiKey,
       defaultHeaders: {
-        'HTTP-Referer': process.env.BASE_URL || 'https://calendai-q59p.onrender.com',
+        'HTTP-Referer': process.env.BASE_URL || 'https://calendai.org',
         'X-Title': 'CalendAI',
       },
     });

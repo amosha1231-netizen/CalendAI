@@ -183,3 +183,18 @@ test('dispatcher skips pings that are long overdue and deactivates finished one-
   assert.equal(once.active, false);
   assert.equal(once.nextFireAt, null);
 });
+
+test('dispatcher never pings on Shabbat, even for reminders saved with skipShabbat off', async () => {
+  const due = new Date('2026-10-17T05:00:00Z'); // Saturday 08:00 in Israel
+  const Reminder = fakeStore([{ _id: 'r1', userId: 'u1', title: 'Pill', time: '08:00', frequency: 'daily', timezone: IL, active: true, skipShabbat: false, nextFireAt: due }]);
+  const PushSubscription = fakeStore([{ _id: 's1', userId: 'u1', endpoint: 'https://push/1', keys: { p256dh: 'a', auth: 'b' } }]);
+  const sent = [];
+  const push = { send: async (sub, payload) => { sent.push(payload); return { ok: true }; } };
+  const isShabbatAt = (instant, timeZone) => shabbatService.isShabbatTime(instant, buildLocation({ timeZone })).isShabbat;
+  const d = createDispatcher({ Reminder, PushSubscription, push, isShabbatAt, now: () => new Date('2026-10-17T05:00:20Z'), logger: { warn() {}, error() {} } });
+
+  const result = await d.tick();
+  assert.equal(result.fired, 0);
+  assert.equal(sent.length, 0);
+  assert.equal(Reminder.rows[0].nextFireAt.toISOString(), '2026-10-18T05:00:00.000Z');
+});

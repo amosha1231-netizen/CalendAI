@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Calendar, Clock, X, Loader2, Check, Share2, Sun, Filter, MessageSquare, Mail, Copy, ChevronRight, ChevronLeft } from "lucide-react";
 import safeStorage from "../utils/safeStorage";
 
@@ -41,6 +41,7 @@ export default function MeetingWizard({ schedule, lang, t, hostName = 'Host', lo
     if (step !== 2) return;
     let cancelled = false;
     setAvailabilityLoading(true);
+    setError("");
     const token = safeStorage.getItem('token') || safeStorage.getItem('calendai-jwt');
     fetch(`${API_BASE}/api/schedule/free-slots?date=${selectedDate}&duration=${duration}&location=${encodeURIComponent(locationId)}`, { credentials: 'include', headers: token ? { Authorization: `Bearer ${token}` } : {} })
       .then(async res => { const data = await res.json(); if (!res.ok) throw new Error(data.error || 'Availability check failed'); return data; })
@@ -92,6 +93,86 @@ export default function MeetingWizard({ schedule, lang, t, hostName = 'Host', lo
       if (exists) return prev.filter(s => s.hour !== hour || s.minute !== minute);
       return [...prev, { hour, minute }];
     });
+  }
+
+  function paintSlot(hour, minute, value) {
+    if (isSlotBusy(hour, minute)) return;
+    setSelectedSlots(prev => {
+      const exists = prev.some(s => s.hour === hour && s.minute === minute);
+      if (value && !exists) return [...prev, { hour, minute }];
+      if (!value && exists) return prev.filter(s => s.hour !== hour || s.minute !== minute);
+      return prev;
+    });
+  }
+
+  // ── iOS-Photos-style long-press-then-drag multi-select ──
+  // A quick tap toggles one slot (unchanged). Pressing and holding ~380ms,
+  // then dragging the finger across cells, paints every cell it crosses to
+  // the same select/deselect state as the first cell. Moving before the
+  // long-press fires is treated as a scroll and cancels selection.
+  const dragRef = useRef({ timer: null, active: false, paintValue: true, startCell: null, startX: 0, startY: 0 });
+  const [dragActive, setDragActive] = useState(false);
+
+  function clearLongPressTimer() {
+    if (dragRef.current.timer) {
+      clearTimeout(dragRef.current.timer);
+      dragRef.current.timer = null;
+    }
+  }
+
+  function handleSlotPointerDown(e, hour, minute, busy) {
+    if (busy) return;
+    clearLongPressTimer();
+    dragRef.current.startCell = { hour, minute };
+    dragRef.current.startX = e.clientX;
+    dragRef.current.startY = e.clientY;
+    dragRef.current.active = false;
+    dragRef.current.timer = setTimeout(() => {
+      const alreadySelected = selectedSlots.some(s => s.hour === hour && s.minute === minute);
+      dragRef.current.active = true;
+      dragRef.current.paintValue = !alreadySelected;
+      setDragActive(true);
+      paintSlot(hour, minute, dragRef.current.paintValue);
+      try { if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate(10); } catch {}
+    }, 380);
+  }
+
+  function handleGridPointerMove(e) {
+    if (dragRef.current.active) {
+      e.preventDefault();
+      const el = typeof document !== 'undefined' ? document.elementFromPoint(e.clientX, e.clientY) : null;
+      const cellBtn = el && el.closest ? el.closest('[data-slot-cell="true"]') : null;
+      if (!cellBtn || cellBtn.disabled) return;
+      const h = Number(cellBtn.dataset.hour);
+      const m = Number(cellBtn.dataset.minute);
+      paintSlot(h, m, dragRef.current.paintValue);
+      return;
+    }
+    if (dragRef.current.timer && dragRef.current.startCell) {
+      const dx = e.clientX - dragRef.current.startX;
+      const dy = e.clientY - dragRef.current.startY;
+      if (Math.hypot(dx, dy) > 8) clearLongPressTimer();
+    }
+  }
+
+  function handleGridPointerUp() {
+    const wasActive = dragRef.current.active;
+    const startCell = dragRef.current.startCell;
+    const hadTimer = !!dragRef.current.timer;
+    clearLongPressTimer();
+    if (!wasActive && hadTimer && startCell) {
+      toggleSlot(startCell.hour, startCell.minute);
+    }
+    dragRef.current.active = false;
+    dragRef.current.startCell = null;
+    setDragActive(false);
+  }
+
+  function handleGridPointerCancel() {
+    clearLongPressTimer();
+    dragRef.current.active = false;
+    dragRef.current.startCell = null;
+    setDragActive(false);
   }
 
   function formatTimeDisplay(hour, minute) {
@@ -310,25 +391,44 @@ export default function MeetingWizard({ schedule, lang, t, hostName = 'Host', lo
             </div>
 
             {availabilityLoading && <p className="text-xs text-slate-500">Checking calendar availability…</p>}
-            {/* Time Slots Grid */}
-            <div className="border rounded-lg overflow-hidden max-h-64 overflow-y-auto">
-              <div className="grid grid-cols-4 sm:grid-cols-6 gap-1 p-2">
+            {/* Time Slots Grid — tap a slot to toggle it, or press & hold then drag to select a range (like picking multiple photos) */}
+            <div
+              className="border rounded-lg overflow-hidden max-h-64 overflow-y-auto"
+              onPointerMove={handleGridPointerMove}
+              onPointerUp={handleGridPointerUp}
+              onPointerCancel={handleGridPointerCancel}
+              onPointerLeave={handleGridPointerCancel}
+            >
+              <div className="grid grid-cols-4 sm:grid-cols-6 gap-1 p-2" style={{ touchAction: dragActive ? 'none' : 'auto' }}>
                 {HOURS.map(hour => (
                   [0, 30].map(minute => {
                     const busy = isSlotBusy(hour, minute);
                     const selected = selectedSlots.some(s => s.hour === hour && s.minute === minute);
-                    
+
                     if (busy && showOnlyFree) return null;
 
                     return (
                       <button
                         key={`${hour}-${minute}`}
-                        onClick={() => toggleSlot(hour, minute)}
-                        className={`flex items-center justify-center px-2 py-2.5 rounded-lg text-xs font-medium border transition ${
-                          busy 
-                            ? 'bg-red-50 border-red-200 text-red-400 cursor-not-allowed' 
-                            : selected 
-                              ? 'bg-blue-600 text-white border-blue-600 shadow-sm' 
+                        data-slot-cell="true"
+                        data-hour={hour}
+                        data-minute={minute}
+                        onPointerDown={(e) => handleSlotPointerDown(e, hour, minute, busy)}
+                        onKeyDown={(e) => {
+                          // Keyboard activation (Enter/Space) never fires the
+                          // pointer events the drag-to-paint logic relies on —
+                          // toggle directly so keyboard users can still select a slot.
+                          if (busy) return;
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            toggleSlot(hour, minute);
+                          }
+                        }}
+                        className={`flex items-center justify-center px-2 py-2.5 rounded-lg text-xs font-medium border transition select-none ${
+                          busy
+                            ? 'bg-red-50 border-red-200 text-red-400 cursor-not-allowed'
+                            : selected
+                              ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
                               : 'bg-white border-slate-200 text-slate-700 hover:border-blue-400 hover:bg-blue-50'
                         }`}
                         disabled={busy || availabilityLoading || availableRanges === null}
@@ -351,9 +451,9 @@ export default function MeetingWizard({ schedule, lang, t, hostName = 'Host', lo
 
             {/* Selected Count */}
             <div className="text-xs text-slate-500 text-center">
-              {selectedSlots.length > 0 
-                ? `${selectedSlots.length} ${t.wizardSelectSlots || 'slots selected'} (${duration} ${t.wizardDurationMinutes})` 
-                : t.wizardNoSlots}
+              {selectedSlots.length > 0
+                ? `${selectedSlots.length} ${t.wizardSelectSlots || 'slots selected'} (${duration} ${t.wizardDurationMinutes})`
+                : (t.wizardLongPressHint || (isRTL ? 'טיפ: לחיצה ארוכה + החלקה בוחרת כמה זמנים בבת אחת' : 'Tip: press & hold, then drag to select multiple times at once'))}
             </div>
 
             {error && (

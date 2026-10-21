@@ -134,16 +134,16 @@ export function AuthProvider({ children }) {
 
       for (const entry of guestData) {
         if (entry.type === 'parse' && entry.data?.text) {
-          await fetch(`${API_BASE}/api/parse-schedule`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
+          try {
+            await api.post('/api/parse-schedule', {
               text: entry.data.text,
               recurrence: entry.data.recurrence || 'weekly',
               location: entry.data.location || 'jerusalem'
-            }),
-            credentials: "include"
-          });
+            });
+          } catch (entryErr) {
+            // Don't let one bad/failed entry abort the rest of the sync.
+            console.error('Failed to sync one guest entry:', entryErr);
+          }
         }
       }
 

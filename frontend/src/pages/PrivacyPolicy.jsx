@@ -158,9 +158,20 @@ export default function PrivacyPolicy() {
                 <div>
                   <code className="font-mono text-xs bg-white px-1.5 py-0.5 rounded border">https://www.googleapis.com/auth/calendar.events</code>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    <strong>Only requested if you choose to sync events.</strong> Allows the app to create, read, update, and delete 
-                    events on your Google Calendar <strong>only when you explicitly request it</strong>. 
+                    <strong>Only requested if you choose to sync events.</strong> Allows the app to create, read, update, and delete
+                    events on your Google Calendar <strong>only when you explicitly request it</strong>.
                     We never access your calendar without your action.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-start gap-3">
+                <div className="w-1.5 h-1.5 rounded-full bg-amber-500 mt-2 shrink-0"></div>
+                <div>
+                  <code className="font-mono text-xs bg-white px-1.5 py-0.5 rounded border">https://www.googleapis.com/auth/calendar.freebusy</code>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    <strong>Only requested when using mutual scheduling.</strong> Lets the app check whether a time slot is free
+                    or busy on your Google Calendar so it can find a time that works for both participants.
+                    It does not reveal event titles, descriptions, or attendees — only free/busy status.
                   </p>
                 </div>
               </div>
