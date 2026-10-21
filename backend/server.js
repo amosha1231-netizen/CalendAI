@@ -2195,7 +2195,9 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
         continue;
       }
 
-      let eventRecurrence = event.recurrence || recurrence || 'weekly';
+      // No recurrence from the AI or the client means a one-off event, unless
+      // the AI flagged it as recurring.
+      let eventRecurrence = event.recurrence || recurrence || (event.isRecurring ? 'weekly' : 'once');
       if (event.isSleep) {
         eventRecurrence = 'daily';
       }
