@@ -2164,7 +2164,7 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
     let createdReminders = [];
     if (mongoose.Types.ObjectId.isValid(userId)) {
       const timeZone = getCurrentRequestTimeZone();
-      const { reminders: reminderSpecs, remainingEvents } = reminderSpecsFromEvents(eventsToSchedule, { timeZone, todayName });
+      const { reminders: reminderSpecs, remainingEvents } = reminderSpecsFromEvents(eventsToSchedule, { timeZone, todayName, text });
       if (reminderSpecs.length) {
         createdReminders = await createReminders(userId, reminderSpecs, { timeZone, source: 'ai', sourceText: text });
         if (createdReminders.length) eventsToSchedule = remainingEvents;

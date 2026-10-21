@@ -364,6 +364,11 @@ async function parseWithGemini(text, options = {}) {
 
     5. **"מחרתיים" / "במחרתיים" / "day after tomorrow"**: today + 2 days.
 
+    6. **"בעוד X ימים/שבועות/חודשים/שנים" / "לעוד X ימים" / "in X days/weeks/months/years"** (e.g., "בעוד 355 ימים", "בעוד שבועיים", "in 3 months"):
+       - Add the offset to today's date (${isoDate}). The result can be MONTHS or YEARS away — do NOT wrap it into the current week.
+       - Set "targetDate" to the resulting date as "YYYY-MM-DD", and "day" to that date's English day name.
+       - Example: today is 2026-10-21 and the user says "בעוד 355 ימים" → targetDate "2027-10-11", day "Monday".
+
     ─────────────────────────────────────────────
     LANGUAGE INSTRUCTIONS
     ─────────────────────────────────────────────
@@ -1365,6 +1370,11 @@ async function parseWithGeminiSmart(text, options = {}) {
        - "החודש הבא" → calculate the same day-of-month in the next month. If that day doesn't exist (e.g., Jan 31 → Feb 28/29), use the last day of that month.
 
     5. **"מחרתיים" / "במחרתיים" / "day after tomorrow"**: today + 2 days.
+
+    6. **"בעוד X ימים/שבועות/חודשים/שנים" / "לעוד X ימים" / "in X days/weeks/months/years"** (e.g., "בעוד 355 ימים", "בעוד שבועיים", "in 3 months"):
+       - Add the offset to today's date (${isoDate}). The result can be MONTHS or YEARS away — do NOT wrap it into the current week.
+       - Set "targetDate" to the resulting date as "YYYY-MM-DD", and "day" to that date's English day name.
+       - Example: today is 2026-10-21 and the user says "בעוד 355 ימים" → targetDate "2027-10-11", day "Monday".
 
     ─────────────────────────────────────────────
     LANGUAGE INSTRUCTIONS

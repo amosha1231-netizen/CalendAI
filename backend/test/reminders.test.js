@@ -120,6 +120,44 @@ test('one-off reminder gets the next date for its weekday; yearly stays a calend
   assert.equal(remainingEvents.length, 1);
 });
 
+test('"בעוד 355 ימים" pins the reminder to the date 355 days out, not next week', () => {
+  const now = new Date('2026-10-21T16:00:00Z'); // Wednesday 19:00 in Israel
+  const text = 'תוכל לשים לי תזכורת לעוד 355 ימים לחדש מנוי לדומיין';
+  // What the AI sent back: only a weekday name, which used to resolve to next Wednesday.
+  const { reminders } = s.reminderSpecsFromEvents([
+    { summary: 'לחדש מנוי לדומיין', day: 'Wednesday', startTime: '09:00', recurrence: 'once', isReminder: true }
+  ], { timeZone: IL, now, text });
+  assert.equal(reminders.length, 1);
+  assert.equal(reminders[0].date, '2027-10-11');
+});
+
+test('relative day, week, month and year offsets resolve to calendar dates', () => {
+  const now = new Date('2026-10-21T16:00:00Z');
+  const rel = t => s.relativeDateFromText(t, IL, now);
+  assert.equal(rel('בעוד 355 ימים'), '2027-10-11');
+  assert.equal(rel('תזכיר לי בעוד 3 שבועות'), '2026-11-11');
+  assert.equal(rel('בעוד שבועיים'), '2026-11-04');
+  assert.equal(rel('בעוד חודש'), '2026-11-21');
+  assert.equal(rel('בעוד שנה לחדש דומיין'), '2027-10-21');
+  assert.equal(rel('remind me in 355 days'), '2027-10-11');
+  assert.equal(rel('in a year'), '2027-10-21');
+  assert.equal(rel('10 days from now'), '2026-10-31');
+  // Month ends clamp, and minutes/hours are not day offsets.
+  assert.equal(s.relativeDateFromText('בעוד חודש', IL, new Date('2027-01-31T10:00:00Z')), '2027-02-28');
+  assert.equal(rel('בעוד 10 דקות'), null);
+  assert.equal(rel('בעוד שעה'), null);
+  assert.equal(rel('עוד יום עבודה'), null);
+  assert.equal(rel('בעוד 3 ימים ובעוד שבוע'), null);
+});
+
+test('a future targetDate from the AI is used for a one-off reminder', () => {
+  const now = new Date('2026-10-21T16:00:00Z');
+  const { reminders } = s.reminderSpecsFromEvents([
+    { summary: 'Renew domain', day: 'Monday', targetDate: '2027-10-11', startTime: '09:00', recurrence: 'once', isReminder: true }
+  ], { timeZone: IL, now });
+  assert.equal(reminders[0].date, '2027-10-11');
+});
+
 // ── Dispatcher with in-memory fakes ──
 function fakeStore(docs) {
   const rows = docs.map(d => ({ ...d }));
