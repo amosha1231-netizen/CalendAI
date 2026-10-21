@@ -29,22 +29,165 @@
         }
       });
     </script>
+    <!-- Loader styles live here (not in index.css) so the boot splash is styled on first paint -->
+    <style>
+      /* ──────────────────────────────────────────── */
+      /* LuxuryLoader + boot splash (#app-splash)     */
+      /* ──────────────────────────────────────────── */
+      .luxury-loader-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 99999;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: #0a0a0c;
+        overflow: hidden;
+      }
+
+      .luxury-loader-overlay.fade-out {
+        animation: luxury-fade-out 0.5s ease-out forwards;
+      }
+
+      @keyframes luxury-fade-out {
+        from { opacity: 1; }
+        to { opacity: 0; pointer-events: none; }
+      }
+
+      .luxury-loader-bg {
+        position: absolute;
+        inset: 0;
+        background: radial-gradient(ellipse at 50% 40%, rgba(0, 242, 254, 0.04) 0%, transparent 60%),
+                    radial-gradient(ellipse at 50% 60%, rgba(79, 172, 254, 0.04) 0%, transparent 60%);
+        pointer-events: none;
+      }
+
+      .luxury-loader-glow {
+        position: absolute;
+        width: 280px;
+        height: 280px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(0, 242, 254, 0.15) 0%, rgba(79, 172, 254, 0.08) 40%, transparent 70%);
+        animation: luxury-breathe 3s ease-in-out infinite;
+        filter: blur(40px);
+        pointer-events: none;
+      }
+
+      @keyframes luxury-breathe {
+        0%, 100% {
+          transform: scale(0.85);
+          opacity: 0.6;
+        }
+        50% {
+          transform: scale(1.15);
+          opacity: 1;
+        }
+      }
+
+      .luxury-loader-core {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        z-index: 1;
+      }
+
+      .luxury-loader-orb {
+        position: absolute;
+        width: 160px;
+        height: 160px;
+        border-radius: 50%;
+        background: radial-gradient(circle at 30% 30%, rgba(0, 242, 254, 0.1), rgba(79, 172, 254, 0.05) 60%, transparent);
+        animation: luxury-breathe-orb 3s ease-in-out infinite;
+        pointer-events: none;
+      }
+
+      @keyframes luxury-breathe-orb {
+        0%, 100% {
+          transform: scale(0.9);
+          opacity: 0.5;
+        }
+        50% {
+          transform: scale(1.1);
+          opacity: 0.8;
+        }
+      }
+
+      .luxury-loader-title {
+        font-size: 3rem;
+        font-weight: 200;
+        letter-spacing: -0.03em;
+        color: rgba(255, 255, 255, 0.7);
+        font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+        z-index: 2;
+        text-shadow: 0 0 40px rgba(0, 242, 254, 0.15);
+        animation: luxury-title-pulse 3s ease-in-out infinite;
+      }
+
+      @keyframes luxury-title-pulse {
+        0%, 100% {
+          opacity: 0.7;
+          text-shadow: 0 0 40px rgba(0, 242, 254, 0.15);
+        }
+        50% {
+          opacity: 1;
+          text-shadow: 0 0 60px rgba(0, 242, 254, 0.3), 0 0 80px rgba(79, 172, 254, 0.15);
+        }
+      }
+
+      .luxury-loader-status-wrapper {
+        position: absolute;
+        bottom: 80px;
+        left: 0;
+        right: 0;
+        display: flex;
+        justify-content: center;
+        z-index: 1;
+      }
+
+      .luxury-loader-status {
+        direction: ltr;
+        unicode-bidi: isolate;
+        font-size: 0.65rem;
+        font-weight: 400;
+        letter-spacing: 0.35em;
+        color: rgba(255, 255, 255, 0.25);
+        font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+        animation: luxury-status-fade 3s ease-in-out infinite;
+      }
+
+      @keyframes luxury-status-fade {
+        0%, 100% {
+          opacity: 0.25;
+        }
+        50% {
+          opacity: 0.5;
+        }
+      }
+
+      #app-splash {
+        z-index: 100000;
+      }
+    </style>
   </head>
   <body>
-    <div id="root">
-      <!-- ── Instant Splash Screen (visible until React hydrates) ── -->
-      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;min-height:100dvh;background:#0a0a0f;color:white;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;text-align:center;padding:2rem;box-sizing:border-box;position:relative;overflow:hidden;">
-        <!-- Radial gradient depth effect -->
-        <div style="position:absolute;inset:0;background:radial-gradient(ellipse 60% 50% at 50% 40%,rgba(99,102,241,0.15),transparent 70%);pointer-events:none;"></div>
-        <div style="position:absolute;top:20%;left:50%;transform:translateX(-50%);width:300px;height:300px;background:radial-gradient(circle,rgba(99,102,241,0.06),transparent 70%);border-radius:50%;filter:blur(20px);pointer-events:none;animation:orph 3s ease-in-out infinite alternate;"></div>
-        <div style="position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;">
-          <!-- Breathing orb -->
-          <div style="width:48px;height:48px;border-radius:50%;background:radial-gradient(circle at 30% 30%,#818cf8,#6366f1,#4f46e5);box-shadow:0 0 40px rgba(99,102,241,0.4),0 0 80px rgba(99,102,241,0.2);animation:breath 3s ease-in-out infinite;margin-bottom:1.5rem;"></div>
-          <h1 style="font-size:2rem;font-weight:700;letter-spacing:0.05em;margin-bottom:0.5rem;background:linear-gradient(135deg,#f0f0ff 0%,#a5b4fc 50%,#c4b5fd 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">CalendAI</h1>
-          <p style="font-size:0.85rem;opacity:0.5;font-weight:300;letter-spacing:0.15em;">OPTIMIZING YOUR SCHEDULE...</p>
-        </div>
+    <!-- Boot splash: identical to <LuxuryLoader />, so React's own loaders continue it
+         seamlessly. It sits outside #root and fades out once the first real screen
+         has rendered (see src/utils/splash.js). -->
+    <div id="app-splash" class="luxury-loader-overlay" aria-hidden="true">
+      <div class="luxury-loader-bg"></div>
+      <div class="luxury-loader-glow"></div>
+      <div class="luxury-loader-core">
+        <div class="luxury-loader-orb"></div>
+        <h1 class="luxury-loader-title">CalendAI</h1>
+      </div>
+      <div class="luxury-loader-status-wrapper">
+        <span class="luxury-loader-status">OPTIMIZING YOUR SCHEDULE...</span>
       </div>
     </div>
+    <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

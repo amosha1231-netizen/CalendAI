@@ -2822,7 +2822,7 @@ function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <Suspense fallback={<LuxuryLoader statusText="Loading..." />}>
+        <Suspense fallback={<LuxuryLoader />}>
           <AppRoutes />
         </Suspense>
       </AuthProvider>
