@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import api from '../api/axios';
+import { startOAuth } from '../utils/nativeApp';
 import safeStorage from '../utils/safeStorage';
 import { normalizeUserCredits } from '../utils/credits';
 
@@ -276,7 +277,7 @@ export function AuthProvider({ children }) {
   const handleLogin = useCallback((lang) => {
     const baseUrl = `${API_BASE}/api/auth/google`;
     const url = lang ? `${baseUrl}?lang=${lang}` : baseUrl;
-    window.location.href = url;
+    startOAuth(url);
   }, []);
 
   // ── Set Authorization header from localStorage token on app init ──

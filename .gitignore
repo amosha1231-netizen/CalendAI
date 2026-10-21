@@ -3,7 +3,6 @@ node_modules/
 frontend/dist/
 backend/data/schedules.json
 android/
-ios/
 .DS_Store
 *.log
 *.apk

@@ -38,6 +38,7 @@ import DeleteAccountPage from "./pages/DeleteAccount";
 import TermsPage from "./pages/Terms";
 import translations from "./i18n";
 import safeStorage from "./utils/safeStorage";
+import { isNativeApp, startOAuth } from './utils/nativeApp';
 import { openCheckout, readCheckoutResponse, consumePaymentSuccessParam, CREDITS_PURCHASED_EVENT, notifyCreditsPurchased } from './utils/lemonCheckout';
 import { isIosWhatsApp, isIosSafari, isIosNonSafari, isStandalone } from "./utils/browserDetection";
 import { normalizeCredits, normalizeUserCredits, formatCredits } from "./utils/credits";
@@ -238,7 +239,7 @@ function AppRoutes() {
   const { user, isPro, isAuthenticated, authLoading, authStatus, handleLogin, handleLogout, setUser, setIsPro } = useAuth();
 
   const handleMicrosoftLogin = useCallback(() => {
-    window.location.href = `${API_BASE}/api/auth/microsoft`;
+    startOAuth(`${API_BASE}/api/auth/microsoft`);
   }, []);
 
   // Smart Auth: show login prompt for save operations
@@ -356,6 +357,9 @@ function AppRoutes() {
   const [activeTab, setActiveTab] = useState('home');
 
   const handleBuyCredits = useCallback(async () => {
+    // App Store rules: digital purchases inside the iOS app must use Apple's
+    // in-app purchase, so the native app does not open the web checkout.
+    if (isNativeApp()) return;
     if (!user) {
       setShowLoginPrompt(true);
       return;
@@ -1065,7 +1069,9 @@ function AppRoutes() {
           return;
         }
         if (res.status === 402) {
-          setCreditsError(errorData.error || 'נגמרו לך הקרדיטים! אנא רכוש חבילת פעולות נוספת כדי להמשיך להשתמש ב-AI.');
+          setCreditsError(isNativeApp()
+            ? (lang === 'he' ? 'נגמרו לך הקרדיטים לפעולות AI.' : 'You have used all your AI credits.')
+            : (errorData.error || 'נגמרו לך הקרדיטים! אנא רכוש חבילת פעולות נוספת כדי להמשיך להשתמש ב-AI.'));
           setShowCreditsModal(true);
           return;
         }
@@ -1669,7 +1675,7 @@ function AppRoutes() {
               return (
                 <button
                   onClick={handleBuyCredits}
-                  disabled={checkoutLoading}
+                  disabled={checkoutLoading || isNativeApp()}
                   className={`flex items-center gap-1 text-xs font-medium px-1.5 sm:px-3 py-1.5 rounded-full border shadow-sm transition ${
                     credits > 0
                       ? 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'
