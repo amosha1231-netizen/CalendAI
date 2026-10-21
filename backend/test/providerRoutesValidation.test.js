@@ -22,7 +22,7 @@
 // Run with: npm test  (from backend/)
 // ──────────────────────────────────────────────
 const assert = require('node:assert/strict');
-const { test } = require('node:test');
+const { test, mock } = require('node:test');
 const express = require('express');
 const mongoose = require('mongoose');
 
@@ -52,13 +52,13 @@ function timeToMinutes(timeStr) {
   return hours * 60 + minutes;
 }
 
-function startApp(router, { userId = null } = {}) {
+function startApp(router, { userId = null, getTodayDayName = () => 'Monday' } = {}) {
   const app = express();
   app.use(express.json());
   app.set('timeToMinutes', timeToMinutes);
   app.set('getAuthenticatedUserId', () => userId);
   app.set('getDefaultSchedule', () => ({}));
-  app.set('getTodayDayName', () => 'Monday');
+  app.set('getTodayDayName', getTodayDayName);
   app.set('syncEventToGoogleCalendar', async () => ({ success: true, eventId: 'gcal-evt-test' }));
   app.set('DEFAULT_LOCATION_ID', 'jerusalem');
   app.set('getUserSchedule', () => null);
@@ -579,6 +579,64 @@ test('POST /:id/book: a booking that slips in between the availability read and 
     assert.equal(deleteMock.mock.calls[0].arguments[0]._id, createdBooking._id, 'it must delete its own document, not the conflicting one');
   } finally {
     server.close();
+  }
+});
+
+// A booking's "Today" schedule-mirror decision must come from the PROVIDER's
+// own location timezone (see providerRoutes.js' providerTodayDayName), not
+// server.js's generic getTodayDayName() app helper — that one resolves from
+// the *requesting* visitor's own timezone (server.js's request-scoped
+// AsyncLocalStorage), which is right for a user managing their own schedule
+// but wrong for an anonymous guest, in any timezone, booking a provider
+// elsewhere. This test fakes "now" to a real instant that is Monday in
+// Asia/Jerusalem, and deliberately lies via the getTodayDayName stub with a
+// different day — the push must still land in schedule.Today, proving the
+// route never consults that stub for this decision.
+test('POST /:id/book: a successful booking\'s "Today" push is decided by the provider\'s own location timezone, not the getTodayDayName app helper', async (t) => {
+  const serviceId = new mongoose.Types.ObjectId();
+  const providerId = new mongoose.Types.ObjectId();
+  // 2026-12-07T08:00:00Z = 10:00 AM in Asia/Jerusalem (UTC+2 in December),
+  // which is Monday Dec 7 — the exact day being booked.
+  mock.timers.enable({ apis: ['Date'], now: new Date('2026-12-07T08:00:00Z').getTime() });
+  t.mock.method(User, 'findOne', () => Promise.resolve({
+    _id: providerId,
+    googleAccessToken: null,
+    schedule: {},
+    scheduleRevision: 0,
+    providerProfile: {
+      locationId: 'jerusalem',
+      services: [{ _id: serviceId, name: 'Haircut', duration: 30, active: true }],
+      availability: [{ day: 'Monday', startTime: '09:00 AM', endTime: '11:00 AM' }]
+    }
+  }));
+  t.mock.method(ProviderBooking, 'find', () => ({ select: () => ({ lean: async () => [] }) }));
+  const createdBooking = {
+    _id: new mongoose.Types.ObjectId(),
+    createdAt: new Date('2026-12-07T08:00:01.000Z'),
+    day: 'Monday',
+    async save() { return this; },
+    toObject() { return { _id: this._id, status: this.status }; }
+  };
+  t.mock.method(ProviderBooking, 'create', () => Promise.resolve(createdBooking));
+  const updateOneMock = t.mock.method(User, 'updateOne', () => Promise.resolve({ matchedCount: 1 }));
+
+  // Deliberately wrong day — if the route ever fell back to consulting this,
+  // the "Today" push below would not happen and the test would fail.
+  const { server, base } = startApp(freshProviderRoutes(), { getTodayDayName: () => 'Wednesday' });
+  try {
+    const res = await fetch(`${base}/api/providers/${providerId}/book`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ serviceId: serviceId.toString(), date: '2026-12-07', startTime: '10:00 AM', guestName: 'Guest' })
+    });
+    const data = await res.json();
+    assert.equal(res.status, 200, JSON.stringify(data));
+    assert.equal(updateOneMock.mock.callCount(), 1);
+    const [, update] = updateOneMock.mock.calls[0].arguments;
+    assert.ok(update.$push['schedule.Monday'], 'the booked day itself must always be pushed');
+    assert.ok(update.$push['schedule.Today'], 'the provider\'s own location timezone (Asia/Jerusalem) says today is Monday, so schedule.Today must be pushed even though the getTodayDayName stub lies with a different day');
+  } finally {
+    server.close();
+    mock.timers.reset();
   }
 });
 

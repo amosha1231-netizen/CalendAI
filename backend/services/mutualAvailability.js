@@ -42,6 +42,23 @@ function todayIsoInTimeZone(timeZone) {
 }
 
 /**
+ * Today's weekday name as observed in the given IANA timezone, not
+ * server-local/UTC and not the requesting visitor's own timezone. Shared by
+ * mutualRoutes.js and providerRoutes.js so that whichever party actually owns
+ * the schedule being written (the mutual session's location, or the
+ * provider's own locationId) decides what "Today" means for their own
+ * mirrored schedule.Today bucket — a provider in one timezone must not have
+ * their "Today" list decided by an anonymous guest's browser timezone
+ * (server.js's generic getTodayDayName() resolves from the *requesting*
+ * user's timezone via its request-scoped AsyncLocalStorage, which is right
+ * for that user's own schedule but wrong here).
+ */
+function getTodayDayNameInTimeZone(timeZone) {
+  const weekday = new Intl.DateTimeFormat('en-US', { timeZone, weekday: 'long' }).format(new Date());
+  return DAY_NAMES.includes(weekday) ? weekday : DAY_NAMES[new Date().getDay()];
+}
+
+/**
  * Strictly validate a 'YYYY-MM-DD' calendar date. A regex + Date.parse check
  * alone isn't enough: `new Date("2026-02-30T00:00:00Z")` doesn't throw or
  * produce NaN, it silently overflows to March 2 — so an invalid date would
@@ -340,6 +357,7 @@ module.exports = {
   getLocalScheduleBusy,
   getLocationTimeZone,
   todayIsoInTimeZone,
+  getTodayDayNameInTimeZone,
   isValidIsoDate,
   getMutualFreeSlots,
   isSlotMutuallyFree,

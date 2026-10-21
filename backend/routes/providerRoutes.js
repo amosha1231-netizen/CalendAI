@@ -21,7 +21,7 @@ const { createOAuth2ClientWithRefresh } = require('../services/googleCalendar');
 const mutualAvailability = require('../services/mutualAvailability');
 const {
   mergeIntervals, sliceIntoSlots, overlapsAny, isValidIsoDate, getLocationTimeZone, todayIsoInTimeZone, FRIDAY_SHABBAT_CUTOFF_MIN,
-  minutesToTime12, currentMinuteOfDay
+  minutesToTime12, currentMinuteOfDay, getTodayDayNameInTimeZone
 } = mutualAvailability;
 const { google } = require('googleapis');
 
@@ -404,8 +404,12 @@ router.post('/bookings/:id/cancel', async (req, res) => {
       }
       if (provider) {
         const pull = { [`schedule.${booking.day}`]: { providerBookingId: booking._id.toString() } };
-        const getTodayDayName = req.app.get('getTodayDayName');
-        if (getTodayDayName && booking.day === getTodayDayName()) {
+        // Same provider-location-timezone decision the booking push used
+        // (see POST /:id/book) — not server.js's generic getTodayDayName(),
+        // which would resolve from this cancelling caller's own timezone
+        // instead of the provider's.
+        const providerTodayDayName = getTodayDayNameInTimeZone(getLocationTimeZone(provider.providerProfile?.locationId));
+        if (booking.day === providerTodayDayName) {
           pull['schedule.Today'] = { providerBookingId: booking._id.toString() };
         }
         await User.updateOne({ _id: provider._id }, { $pull: pull }).catch(() => {});
@@ -657,7 +661,6 @@ router.post('/:id/book', bookLimiter, async (req, res) => {
     }
 
     const DEFAULT_LOCATION_ID = req.app.get('DEFAULT_LOCATION_ID');
-    const getTodayDayName = req.app.get('getTodayDayName');
     const syncEventToGoogleCalendar = req.app.get('syncEventToGoogleCalendar');
 
     const eventToPersist = {
@@ -675,10 +678,17 @@ router.post('/:id/book', bookLimiter, async (req, res) => {
       targetDate: date
     };
 
+    // "Today" must be decided by the PROVIDER's own location timezone, not
+    // server.js's generic getTodayDayName() (which resolves from the
+    // *requesting* visitor's own timezone via its request-scoped
+    // AsyncLocalStorage) — an anonymous guest booking from a different
+    // timezone than the provider must not get to decide whether this event
+    // lands in the provider's own schedule.Today bucket.
+    const providerTodayDayName = getTodayDayNameInTimeZone(getLocationTimeZone(provider.providerProfile?.locationId));
     const observedRevision = Number(provider.scheduleRevision || 0);
     const schedulePath = `schedule.${dayName}`;
     const scheduleUpdate = { $push: { [schedulePath]: eventToPersist } };
-    if (dayName === getTodayDayName()) scheduleUpdate.$push['schedule.Today'] = eventToPersist;
+    if (dayName === providerTodayDayName) scheduleUpdate.$push['schedule.Today'] = eventToPersist;
 
     const saveResult = await User.updateOne({
       _id: provider._id,
@@ -715,7 +725,7 @@ router.post('/:id/book', bookLimiter, async (req, res) => {
       if (cached) {
         if (!cached[dayName]) cached[dayName] = [];
         cached[dayName].push(eventToPersist);
-        if (dayName === getTodayDayName()) {
+        if (dayName === providerTodayDayName) {
           if (!cached.Today) cached.Today = [];
           cached.Today.push(eventToPersist);
         }
@@ -736,8 +746,12 @@ router.post('/:id/book', bookLimiter, async (req, res) => {
       try {
         const dayName = createdBooking.day;
         const pull = { [`schedule.${dayName}`]: { providerBookingId: createdBooking._id.toString() } };
-        const getTodayDayName = req.app.get('getTodayDayName');
-        if (getTodayDayName && dayName === getTodayDayName()) pull['schedule.Today'] = { providerBookingId: createdBooking._id.toString() };
+        // Must undo the exact same "Today" decision the push above made (the
+        // provider's own location timezone), not a fresh guess — otherwise a
+        // rollback right at the provider's own local midnight could fail to
+        // pull the Today-mirrored entry the push actually created.
+        const rollbackTodayDayName = getTodayDayNameInTimeZone(getLocationTimeZone(provider.providerProfile?.locationId));
+        if (dayName === rollbackTodayDayName) pull['schedule.Today'] = { providerBookingId: createdBooking._id.toString() };
         await User.updateOne({ _id: provider._id }, { $pull: pull });
       } catch (rollbackErr) {
         console.error('Failed to roll back provider schedule push:', rollbackErr.message);

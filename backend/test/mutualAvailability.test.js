@@ -13,8 +13,8 @@ const assert = require('node:assert/strict');
 const { test, mock } = require('node:test');
 const { google } = require('googleapis');
 const {
-  intersectFree, mergeIntervals, sliceIntoSlots, overlapsAny, getLocalScheduleBusy, getLocationTimeZone, todayIsoInTimeZone, isValidIsoDate,
-  isSlotMutuallyFree, getMutualFreeSlots, getFreeBusyForDay, FRIDAY_SHABBAT_CUTOFF_MIN
+  intersectFree, mergeIntervals, sliceIntoSlots, overlapsAny, getLocalScheduleBusy, getLocationTimeZone, todayIsoInTimeZone,
+  getTodayDayNameInTimeZone, isValidIsoDate, isSlotMutuallyFree, getMutualFreeSlots, getFreeBusyForDay, FRIDAY_SHABBAT_CUTOFF_MIN
 } = require('../services/mutualAvailability');
 
 // ── intersectFree(): pure interval math ──
@@ -310,6 +310,22 @@ test('todayIsoInTimeZone: resolves the calendar day in the given timezone, not t
   try {
     assert.equal(todayIsoInTimeZone('UTC'), '2026-11-02');
     assert.equal(todayIsoInTimeZone('America/New_York'), '2026-11-01');
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test('getTodayDayNameInTimeZone: resolves the weekday in the given timezone, not the server/UTC day', () => {
+  // Same instant as the todayIsoInTimeZone test above (2026-11-02T02:30:00Z):
+  // already Monday Nov 2 in UTC, but still Sunday Nov 1, 21:30 in
+  // America/New_York (UTC-5 in November) — providerRoutes.js/mutualRoutes.js
+  // rely on exactly this divergence to decide a location's own "Today"
+  // schedule bucket independently of the server's or a requesting visitor's
+  // own timezone.
+  mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-02T02:30:00Z').getTime() });
+  try {
+    assert.equal(getTodayDayNameInTimeZone('UTC'), 'Monday');
+    assert.equal(getTodayDayNameInTimeZone('America/New_York'), 'Sunday');
   } finally {
     mock.timers.reset();
   }
