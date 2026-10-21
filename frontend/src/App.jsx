@@ -491,7 +491,7 @@ function AppRoutes() {
             headers: { "Content-Type": "application/json", ...getAuthHeaders() },
             body: JSON.stringify({
               text: entry.data.text,
-              recurrence: entry.data.recurrence || 'weekly',
+              ...(entry.data.recurrence && { recurrence: entry.data.recurrence }),
               location: entry.data.location || 'jerusalem'
             }),
             credentials: "include"
@@ -1040,7 +1040,10 @@ function AppRoutes() {
     if (handleLoginRequired('parse')) return;
     if (!checkGuestActionLimit()) return;
     saveScheduleState();
-    // Clear input immediately and reset button state for responsive UX
+    // Clear input immediately and reset button state for responsive UX.
+    // Keep the submitted text so a failed request can put it back.
+    const submittedText = inputText;
+    const restoreInput = () => setInputText(prev => prev || submittedText);
     setInputText("");
     setLoading(true);
     setError("");
@@ -1049,14 +1052,14 @@ function AppRoutes() {
       const res = await fetch(`${API_BASE}/api/parse-schedule`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({ text: inputText, recurrence: DEFAULT_RECURRENCE, location: selectedLocation, eventType: DEFAULT_EVENT_TYPE, duration: DEFAULT_DURATION }),
+        body: JSON.stringify({ text: submittedText, location: selectedLocation, eventType: DEFAULT_EVENT_TYPE, duration: DEFAULT_DURATION }),
         credentials: "include"
       });
       if (!res.ok) {
+        restoreInput();
         const errorData = await res.json().catch(() => ({}));
         if (errorData.isBlocked === true) {
           setError(errorData.blockedMessage || errorData.replyMessage || t.shabbatBlockError);
-          setInputText("");
           return;
         }
         if (res.status === 409 && errorData.hasConflict === true) {
@@ -1078,20 +1081,7 @@ function AppRoutes() {
         throw new Error(t.failedRequest + " " + res.status);
       }
       const data = await res.json();
-      if (user && data.events?.length > 0) {
-        const token = safeStorage.getItem('token') || safeStorage.getItem('calendai-jwt');
-        await Promise.allSettled(data.events.map(ev =>
-          fetch(`${API_BASE}/api/add-to-google-calendar`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-            },
-            body: JSON.stringify({ event: ev }),
-            credentials: "include"
-          })
-        ));
-      }
+      // Google Calendar sync happens on the server inside /api/parse-schedule.
       if (data.conflicts?.length > 0) setConflicts(data.conflicts);
       else setConflicts([]);
       if (data.suggestedExpenses?.length > 0) setExpenseSuggestions(data.suggestedExpenses);
@@ -1111,12 +1101,12 @@ function AppRoutes() {
       if (data.reminders?.length > 0) setRemindersRefresh(n => n + 1);
       await fetchSchedule();
       setSuccess(data.replyMessage || `${t.successAdded} ${data.events?.length || 0} ${t.successEvents}`);
-      setInputText("");
       if (!user) {
         incrementGuestUsage();
-        saveGuestTempData('parse', { text: inputText, recurrence: DEFAULT_RECURRENCE, location: selectedLocation });
+        saveGuestTempData('parse', { text: submittedText, location: selectedLocation });
       }
     } catch (err) {
+      restoreInput();
       setError(err.message);
     } finally {
       setLoading(false);
