@@ -426,6 +426,130 @@ test('POST /sessions/:id/confirm: a Google Calendar insertion failure deletes th
   }
 });
 
+// Neither of the two tests above ever reaches pushToSchedule's own
+// optimistic-concurrency check (both calendar events insert fine in the
+// first, and the gcal failure in the second happens before any push is
+// attempted) — so a regression that let a lost scheduleRevision race fall
+// through silently (never throwing, or throwing but leaking the claim/
+// orphaning the already-inserted calendar events) would pass every other
+// test in this suite. Covers both the host's push losing the race (invitee's
+// push never even attempted) and the invitee's push losing it after the
+// host's already landed.
+test('POST /sessions/:id/confirm: the host schedule push losing its optimistic-concurrency race deletes both calendar events and releases the claim back to active', async (t) => {
+  const hostId = new mongoose.Types.ObjectId();
+  const inviteeId = new mongoose.Types.ObjectId();
+  const existing = { sessionId: 'mut_x', duration: 30, locationId: 'jerusalem', hostId, inviteeId };
+  const claimedSession = { ...existing, status: 'processing' };
+
+  t.mock.method(MutualBooking, 'findOne', async () => existing);
+  t.mock.method(MutualBooking, 'findOneAndUpdate', async (filter) => {
+    if (filter.status === 'active') return claimedSession;
+    throw new Error('unexpected findOneAndUpdate filter: ' + JSON.stringify(filter));
+  });
+  const mutualUpdateOneMock = t.mock.method(MutualBooking, 'updateOne', async () => ({}));
+
+  const hostUser = { _id: hostId, email: 'host@test.com', googleAccessToken: 'tok-host', scheduleRevision: 0 };
+  const inviteeUser = { _id: inviteeId, email: 'invitee@test.com', googleAccessToken: 'tok-invitee', scheduleRevision: 0 };
+  t.mock.method(User, 'findById', async (id) => (String(id) === String(hostId) ? hostUser : inviteeUser));
+  // Both calendar inserts succeed before either schedule push is attempted —
+  // the host's push below is the first thing to fail.
+  const userUpdateOneMock = t.mock.method(User, 'updateOne', async () => ({ matchedCount: 0 }));
+
+  t.mock.method(mutualAvailability, 'isSlotMutuallyFree', async () => ({ free: true, timeZone: 'Asia/Jerusalem' }));
+  t.mock.method(googleCalendarService, 'createOAuth2ClientWithRefresh', async () => ({}));
+
+  const insertedEventIds = [];
+  const deletedEventIds = [];
+  t.mock.method(google, 'calendar', () => ({
+    events: {
+      insert: async () => {
+        const id = `evt-${insertedEventIds.length + 1}`;
+        insertedEventIds.push(id);
+        return { data: { id } };
+      },
+      delete: async ({ eventId }) => { deletedEventIds.push(eventId); }
+    }
+  }));
+
+  const { server, base } = startApp(freshMutualRoutes());
+  try {
+    const res = await fetch(`${base}/api/mutual/sessions/mut_x/confirm`, {
+      method: 'POST', headers: authed(hostId),
+      body: JSON.stringify({ date: '2099-12-01', startTime: '10:00 AM', endTime: '10:30 AM' })
+    });
+    const data = await res.json();
+    assert.equal(res.status, 409);
+    assert.match(data.error, /host schedule changed/);
+    assert.equal(insertedEventIds.length, 2, 'both calendar events must already have been inserted before the host push runs');
+    assert.deepEqual(new Set(deletedEventIds), new Set(insertedEventIds), 'both already-inserted calendar events must be rolled back, never left orphaned');
+    assert.equal(userUpdateOneMock.mock.callCount(), 3, '1 failed host push + 2 rollback schedule pulls (host and invitee)');
+    assert.equal(mutualUpdateOneMock.mock.callCount(), 1, 'the claim must be released back to active, not left stuck in processing');
+    assert.deepEqual(mutualUpdateOneMock.mock.calls[0].arguments[1], { $set: { status: 'active' } });
+  } finally {
+    server.close();
+  }
+});
+
+test('POST /sessions/:id/confirm: the invitee schedule push losing its optimistic-concurrency race (after the host\'s already landed) still rolls everything back', async (t) => {
+  const hostId = new mongoose.Types.ObjectId();
+  const inviteeId = new mongoose.Types.ObjectId();
+  const existing = { sessionId: 'mut_x', duration: 30, locationId: 'jerusalem', hostId, inviteeId };
+  const claimedSession = { ...existing, status: 'processing' };
+
+  t.mock.method(MutualBooking, 'findOne', async () => existing);
+  t.mock.method(MutualBooking, 'findOneAndUpdate', async (filter) => {
+    if (filter.status === 'active') return claimedSession;
+    throw new Error('unexpected findOneAndUpdate filter: ' + JSON.stringify(filter));
+  });
+  const mutualUpdateOneMock = t.mock.method(MutualBooking, 'updateOne', async () => ({}));
+
+  const hostUser = { _id: hostId, email: 'host@test.com', googleAccessToken: 'tok-host', scheduleRevision: 0 };
+  const inviteeUser = { _id: inviteeId, email: 'invitee@test.com', googleAccessToken: 'tok-invitee', scheduleRevision: 0 };
+  t.mock.method(User, 'findById', async (id) => (String(id) === String(hostId) ? hostUser : inviteeUser));
+
+  let updateOneCallCount = 0;
+  const userUpdateOneMock = t.mock.method(User, 'updateOne', async () => {
+    updateOneCallCount += 1;
+    // 1st call: the host's own push, succeeds. 2nd call: the invitee's push,
+    // loses its race. Later calls are the rollback's schedule pulls.
+    if (updateOneCallCount === 2) return { matchedCount: 0 };
+    return { matchedCount: 1 };
+  });
+
+  t.mock.method(mutualAvailability, 'isSlotMutuallyFree', async () => ({ free: true, timeZone: 'Asia/Jerusalem' }));
+  t.mock.method(googleCalendarService, 'createOAuth2ClientWithRefresh', async () => ({}));
+
+  const insertedEventIds = [];
+  const deletedEventIds = [];
+  t.mock.method(google, 'calendar', () => ({
+    events: {
+      insert: async () => {
+        const id = `evt-${insertedEventIds.length + 1}`;
+        insertedEventIds.push(id);
+        return { data: { id } };
+      },
+      delete: async ({ eventId }) => { deletedEventIds.push(eventId); }
+    }
+  }));
+
+  const { server, base } = startApp(freshMutualRoutes());
+  try {
+    const res = await fetch(`${base}/api/mutual/sessions/mut_x/confirm`, {
+      method: 'POST', headers: authed(hostId),
+      body: JSON.stringify({ date: '2099-12-01', startTime: '10:00 AM', endTime: '10:30 AM' })
+    });
+    const data = await res.json();
+    assert.equal(res.status, 409);
+    assert.match(data.error, /invitee schedule changed/);
+    assert.deepEqual(new Set(deletedEventIds), new Set(insertedEventIds), 'both already-inserted calendar events must be rolled back, even though the host\'s own push had already succeeded');
+    assert.equal(userUpdateOneMock.mock.callCount(), 4, '1 successful host push + 1 failed invitee push + 2 rollback schedule pulls');
+    assert.equal(mutualUpdateOneMock.mock.callCount(), 1, 'the claim must be released back to active, not left stuck in processing');
+    assert.deepEqual(mutualUpdateOneMock.mock.calls[0].arguments[1], { $set: { status: 'active' } });
+  } finally {
+    server.close();
+  }
+});
+
 // ── GET /api/mutual/lookup ──
 // No test file touches this route directly today: rateLimiting.test.js only
 // exercises its abuse limiter (unauthenticated, so every request it sends

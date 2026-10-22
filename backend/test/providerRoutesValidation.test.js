@@ -29,6 +29,7 @@ const mongoose = require('mongoose');
 const providerRoutesPath = require.resolve('../routes/providerRoutes');
 const User = require('../models/User');
 const ProviderBooking = require('../models/ProviderBooking');
+const mutualAvailability = require('../services/mutualAvailability');
 const { selfLosesOverlapRace } = require('../routes/providerRoutes');
 
 function freshProviderRoutes() {
@@ -52,14 +53,18 @@ function timeToMinutes(timeStr) {
   return hours * 60 + minutes;
 }
 
-function startApp(router, { userId = null, getTodayDayName = () => 'Monday' } = {}) {
+function startApp(router, {
+  userId = null,
+  getTodayDayName = () => 'Monday',
+  syncEventToGoogleCalendar = async () => ({ success: true, eventId: 'gcal-evt-test' })
+} = {}) {
   const app = express();
   app.use(express.json());
   app.set('timeToMinutes', timeToMinutes);
   app.set('getAuthenticatedUserId', () => userId);
   app.set('getDefaultSchedule', () => ({}));
   app.set('getTodayDayName', getTodayDayName);
-  app.set('syncEventToGoogleCalendar', async () => ({ success: true, eventId: 'gcal-evt-test' }));
+  app.set('syncEventToGoogleCalendar', syncEventToGoogleCalendar);
   app.set('DEFAULT_LOCATION_ID', 'jerusalem');
   app.set('getUserSchedule', () => null);
   app.set('saveSchedulesNow', () => {});
@@ -637,6 +642,100 @@ test('POST /:id/book: a successful booking\'s "Today" push is decided by the pro
   } finally {
     server.close();
     mock.timers.reset();
+  }
+});
+
+// Neither test above ever reaches these two failure branches: the schedule
+// push's own optimistic-concurrency check (saveResult.matchedCount === 0,
+// i.e. the provider's schedule changed between the availability read and
+// this write), and a Google Calendar sync failure after the schedule push
+// already landed. Both must undo whatever already happened (the booking
+// document, and — for the second — the schedule push too) rather than
+// leaving an orphaned booking/schedule entry with no calendar event. Without
+// coverage, a regression that skipped either rollback would pass every
+// other test in this suite.
+test('POST /:id/book: the schedule push losing its optimistic-concurrency race deletes the booking and surfaces a 409', async (t) => {
+  const serviceId = new mongoose.Types.ObjectId();
+  const providerId = new mongoose.Types.ObjectId();
+  t.mock.method(User, 'findOne', () => Promise.resolve({
+    _id: providerId,
+    googleAccessToken: null,
+    schedule: {},
+    scheduleRevision: 0,
+    providerProfile: {
+      locationId: 'jerusalem',
+      services: [{ _id: serviceId, name: 'Haircut', duration: 30, active: true }],
+      availability: [{ day: 'Monday', startTime: '09:00 AM', endTime: '11:00 AM' }]
+    }
+  }));
+  t.mock.method(ProviderBooking, 'find', () => ({ select: () => ({ lean: async () => [] }) }));
+  const createdBooking = { _id: new mongoose.Types.ObjectId(), day: 'Monday', createdAt: new Date('2026-12-07T09:00:00.000Z') };
+  t.mock.method(ProviderBooking, 'create', () => Promise.resolve(createdBooking));
+  const deleteMock = t.mock.method(ProviderBooking, 'deleteOne', () => Promise.resolve({ deletedCount: 1 }));
+  // The provider's schedule changed (another write bumped scheduleRevision)
+  // between the availability read and this push, so the conditional update
+  // below matches nothing.
+  const updateOneMock = t.mock.method(User, 'updateOne', () => Promise.resolve({ matchedCount: 0 }));
+
+  const { server, base } = startApp(freshProviderRoutes());
+  try {
+    const res = await fetch(`${base}/api/providers/${providerId}/book`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ serviceId: serviceId.toString(), date: '2026-12-07', startTime: '09:00 AM', guestName: 'Guest' })
+    });
+    const data = await res.json();
+    assert.equal(res.status, 409);
+    assert.match(data.error, /לוח הזמנים של נותן השירות השתנה/);
+    assert.equal(updateOneMock.mock.callCount(), 1, 'only the one failed push — no rollback pull is needed since nothing was ever persisted');
+    assert.equal(deleteMock.mock.callCount(), 1, 'the orphaned booking document must be deleted, never left dangling with no schedule entry');
+    assert.equal(deleteMock.mock.calls[0].arguments[0]._id, createdBooking._id);
+  } finally {
+    server.close();
+  }
+});
+
+test('POST /:id/book: a Google Calendar sync failure after the schedule push already landed rolls back both the push and the booking', async (t) => {
+  const serviceId = new mongoose.Types.ObjectId();
+  const providerId = new mongoose.Types.ObjectId();
+  t.mock.method(User, 'findOne', () => Promise.resolve({
+    _id: providerId,
+    googleAccessToken: 'tok-provider',
+    schedule: {},
+    scheduleRevision: 0,
+    providerProfile: {
+      locationId: 'jerusalem',
+      services: [{ _id: serviceId, name: 'Haircut', duration: 30, active: true }],
+      availability: [{ day: 'Monday', startTime: '09:00 AM', endTime: '11:00 AM' }]
+    }
+  }));
+  t.mock.method(ProviderBooking, 'find', () => ({ select: () => ({ lean: async () => [] }) }));
+  // The provider has Google connected, so computeAvailableSlots' own
+  // freebusy cross-check must be stubbed too — otherwise it throws its own
+  // 502 ("can't check the provider's Google Calendar") before this test
+  // ever reaches the sync-failure branch it's actually targeting.
+  t.mock.method(mutualAvailability, 'getFreeBusyForDay', async () => []);
+  const createdBooking = { _id: new mongoose.Types.ObjectId(), day: 'Monday', createdAt: new Date('2026-12-07T09:00:00.000Z') };
+  t.mock.method(ProviderBooking, 'create', () => Promise.resolve(createdBooking));
+  const deleteMock = t.mock.method(ProviderBooking, 'deleteOne', () => Promise.resolve({ deletedCount: 1 }));
+  const updateOneMock = t.mock.method(User, 'updateOne', () => Promise.resolve({ matchedCount: 1 }));
+
+  const { server, base } = startApp(freshProviderRoutes(), {
+    syncEventToGoogleCalendar: async () => ({ success: false, error: 'Quota exceeded' })
+  });
+  try {
+    const res = await fetch(`${base}/api/providers/${providerId}/book`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ serviceId: serviceId.toString(), date: '2026-12-07', startTime: '09:00 AM', guestName: 'Guest' })
+    });
+    const data = await res.json();
+    assert.equal(res.status, 502);
+    assert.match(data.error, /הוספה ליומן Google נכשלה/);
+    assert.equal(updateOneMock.mock.callCount(), 2, '1 successful push + 1 rollback pull undoing it');
+    assert.deepEqual(updateOneMock.mock.calls[1].arguments[1], { $pull: { 'schedule.Monday': { providerBookingId: createdBooking._id.toString() } } });
+    assert.equal(deleteMock.mock.callCount(), 1, 'the booking document must still be deleted even though the failure happened after the push');
+    assert.equal(deleteMock.mock.calls[0].arguments[0]._id, createdBooking._id);
+  } finally {
+    server.close();
   }
 });
 
