@@ -328,6 +328,104 @@ test('POST /sessions/:id/confirm: a fully successful confirmation inserts both c
   }
 });
 
+// Neither the success test above nor mutualBooking.test.js' atomic-claim
+// tests ever drive /confirm into its own failure/rollback branch — the one
+// that re-checks isSlotMutuallyFree right before writing anything, and the
+// claimed-session cleanup in the outer catch (rollbackCompletedSession +
+// resetting status back to 'active'). Without this, a regression that made
+// the race-guard rejection leak the claim (leaving the session stuck in
+// 'processing' forever) would pass every other test in this suite.
+test('POST /sessions/:id/confirm: the server-side race guard finding the slot no longer free surfaces as 409 and releases the claim back to active', async (t) => {
+  const hostId = new mongoose.Types.ObjectId();
+  const inviteeId = new mongoose.Types.ObjectId();
+  const existing = { sessionId: 'mut_x', duration: 30, locationId: 'jerusalem', hostId, inviteeId };
+  const claimedSession = { ...existing, status: 'processing' };
+
+  t.mock.method(MutualBooking, 'findOne', async () => existing);
+  t.mock.method(MutualBooking, 'findOneAndUpdate', async (filter) => {
+    if (filter.status === 'active') return claimedSession;
+    throw new Error('unexpected findOneAndUpdate filter: ' + JSON.stringify(filter));
+  });
+  const mutualUpdateOneMock = t.mock.method(MutualBooking, 'updateOne', async () => ({}));
+
+  const hostUser = { _id: hostId, email: 'host@test.com', googleAccessToken: 'tok-host' };
+  const inviteeUser = { _id: inviteeId, email: 'invitee@test.com', googleAccessToken: 'tok-invitee' };
+  t.mock.method(User, 'findById', async (id) => (String(id) === String(hostId) ? hostUser : inviteeUser));
+  const userUpdateOneMock = t.mock.method(User, 'updateOne', async () => ({ matchedCount: 1 }));
+
+  t.mock.method(mutualAvailability, 'isSlotMutuallyFree', async () => ({ free: false, timeZone: 'Asia/Jerusalem' }));
+  const insertMock = t.mock.fn(async () => { throw new Error('must not insert a Google Calendar event once the race guard rejects the slot'); });
+  t.mock.method(google, 'calendar', () => ({ events: { insert: insertMock } }));
+
+  const { server, base } = startApp(freshMutualRoutes());
+  try {
+    const res = await fetch(`${base}/api/mutual/sessions/mut_x/confirm`, {
+      method: 'POST', headers: authed(hostId),
+      body: JSON.stringify({ date: '2099-12-01', startTime: '10:00 AM', endTime: '10:30 AM' })
+    });
+    const data = await res.json();
+    assert.equal(res.status, 409);
+    assert.match(data.error, /no longer available on both calendars/);
+    assert.equal(insertMock.mock.callCount(), 0, 'no calendar event must be inserted once the race guard rejects the slot');
+    assert.equal(mutualUpdateOneMock.mock.callCount(), 1, 'the claim must be released back to active, not left stuck in processing');
+    assert.deepEqual(mutualUpdateOneMock.mock.calls[0].arguments[1], { $set: { status: 'active' } });
+    assert.equal(userUpdateOneMock.mock.callCount(), 2, 'rollback must still attempt the schedule pull on both sides (a no-op here, since neither was ever pushed)');
+  } finally {
+    server.close();
+  }
+});
+
+test('POST /sessions/:id/confirm: a Google Calendar insertion failure deletes the already-inserted host event and releases the claim back to active', async (t) => {
+  const hostId = new mongoose.Types.ObjectId();
+  const inviteeId = new mongoose.Types.ObjectId();
+  const existing = { sessionId: 'mut_x', duration: 30, locationId: 'jerusalem', hostId, inviteeId };
+  const claimedSession = { ...existing, status: 'processing' };
+
+  t.mock.method(MutualBooking, 'findOne', async () => existing);
+  t.mock.method(MutualBooking, 'findOneAndUpdate', async (filter) => {
+    if (filter.status === 'active') return claimedSession;
+    throw new Error('unexpected findOneAndUpdate filter: ' + JSON.stringify(filter));
+  });
+  const mutualUpdateOneMock = t.mock.method(MutualBooking, 'updateOne', async () => ({}));
+
+  const hostUser = { _id: hostId, email: 'host@test.com', googleAccessToken: 'tok-host' };
+  const inviteeUser = { _id: inviteeId, email: 'invitee@test.com', googleAccessToken: 'tok-invitee' };
+  t.mock.method(User, 'findById', async (id) => (String(id) === String(hostId) ? hostUser : inviteeUser));
+  t.mock.method(User, 'updateOne', async () => ({ matchedCount: 1 }));
+
+  t.mock.method(mutualAvailability, 'isSlotMutuallyFree', async () => ({ free: true, timeZone: 'Asia/Jerusalem' }));
+  t.mock.method(googleCalendarService, 'createOAuth2ClientWithRefresh', async () => ({}));
+
+  const deletedEventIds = [];
+  let insertCallCount = 0;
+  t.mock.method(google, 'calendar', () => ({
+    events: {
+      insert: async () => {
+        insertCallCount += 1;
+        if (insertCallCount === 1) return { data: { id: 'evt-host-1' } }; // host's insert succeeds
+        throw new Error('Google API rate limit exceeded'); // invitee's insert fails
+      },
+      delete: async ({ eventId }) => { deletedEventIds.push(eventId); }
+    }
+  }));
+
+  const { server, base } = startApp(freshMutualRoutes());
+  try {
+    const res = await fetch(`${base}/api/mutual/sessions/mut_x/confirm`, {
+      method: 'POST', headers: authed(hostId),
+      body: JSON.stringify({ date: '2099-12-01', startTime: '10:00 AM', endTime: '10:30 AM' })
+    });
+    const data = await res.json();
+    assert.equal(res.status, 502);
+    assert.match(data.error, /Google Calendar insertion failed/);
+    assert.deepEqual(deletedEventIds, ['evt-host-1'], 'the host event that was already inserted must be rolled back, never left orphaned on their calendar');
+    assert.equal(mutualUpdateOneMock.mock.callCount(), 1, 'the claim must be released back to active, not left stuck in processing');
+    assert.deepEqual(mutualUpdateOneMock.mock.calls[0].arguments[1], { $set: { status: 'active' } });
+  } finally {
+    server.close();
+  }
+});
+
 // ── GET /api/mutual/lookup ──
 // No test file touches this route directly today: rateLimiting.test.js only
 // exercises its abuse limiter (unauthenticated, so every request it sends
