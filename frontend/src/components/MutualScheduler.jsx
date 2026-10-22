@@ -50,6 +50,11 @@ export default function MutualScheduler({ lang, t, onClose, onFallbackToShareLin
   const [confirming, setConfirming] = useState(false);
   const [confirmError, setConfirmError] = useState("");
   const [confirmedSession, setConfirmedSession] = useState(null);
+  // Set when handleConfirm's 409 branch bounces the user back to
+  // 'select-slot' — that step doesn't render confirmError, and the refresh it
+  // triggers (fetchAvailability) would otherwise make the error disappear
+  // before it was ever shown. Cleared on the next slot pick or restart.
+  const [slotTakenNotice, setSlotTakenNotice] = useState("");
 
   const dayLabel = (dayKey) => (lang === 'he' ? (DAY_NAMES_HE[dayKey] || dayKey) : dayKey);
 
@@ -111,6 +116,7 @@ export default function MutualScheduler({ lang, t, onClose, onFallbackToShareLin
     setLookupLoading(true);
     setLookupError("");
     setNotFound(false);
+    setSlotTakenNotice("");
     try {
       const lookupRes = await fetch(`${API_BASE}/api/mutual/lookup?email=${encodeURIComponent(email)}`, {
         headers: authHeaders(),
@@ -151,12 +157,14 @@ export default function MutualScheduler({ lang, t, onClose, onFallbackToShareLin
     setSelectedSlot(null);
     setDays([]);
     setAvailabilityError("");
+    setSlotTakenNotice("");
     setStep('invitee-email');
   };
 
   const handlePickSlot = (date, day, slot) => {
     setSelectedSlot({ date, day, startTime: slot.startTime, endTime: slot.endTime });
     setConfirmError("");
+    setSlotTakenNotice("");
     setStep('confirm');
   };
 
@@ -178,10 +186,12 @@ export default function MutualScheduler({ lang, t, onClose, onFallbackToShareLin
       const data = await res.json();
       if (!res.ok) {
         // The slot may have just been taken on either calendar — refresh and go back.
-        setConfirmError(data.error || "Failed to confirm the mutual meeting.");
         if (res.status === 409) {
+          setSlotTakenNotice(data.error || "Failed to confirm the mutual meeting.");
           setStep('select-slot');
           fetchAvailability(sessionId);
+        } else {
+          setConfirmError(data.error || "Failed to confirm the mutual meeting.");
         }
         return;
       }
@@ -316,6 +326,13 @@ export default function MutualScheduler({ lang, t, onClose, onFallbackToShareLin
             </div>
           </div>
         </div>
+
+        {slotTakenNotice && (
+          <div className="booking-slot-error">
+            <AlertCircle className="w-4 h-4" />
+            <span>{slotTakenNotice}</span>
+          </div>
+        )}
 
         {availabilityLoading && (
           <div className="booking-ai-result">
