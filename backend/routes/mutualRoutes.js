@@ -29,8 +29,14 @@ const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Frid
 // invitee's lookup on every call. `/sessions/:id/availability` calls Google's
 // freebusy.query for BOTH host and invitee, once per day in range (up to 14
 // days = ~28 Google API calls per request) — unmetered, a tight retry loop
-// could burn through Google API quota fast. None of these routes are
-// AI-metered, so the server.js aiLimiter doesn't cover them.
+// could burn through Google API quota fast. `/sessions/:id/confirm` has the
+// same freebusy.query-for-both-parties cost via isSlotMutuallyFree (plus two
+// calendar inserts on success) — and unlike availability, a losing confirm
+// (stale slot, optimistic-concurrency loss, Google error) resets the session
+// back to 'active', so nothing stops the same caller from immediately
+// retrying and burning quota just as fast as hammering availability would.
+// None of these routes are AI-metered, so the server.js aiLimiter doesn't
+// cover them.
 const mutualAbuseLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 20,
@@ -259,7 +265,7 @@ router.get('/sessions/:id/availability', mutualAbuseLimiter, requireAuth, async 
 // mirroring the exact claim→verify→insert→persist→rollback skeleton used by
 // the existing /api/booking/:id/confirm (anonymous-guest) flow.
 // ──────────────────────────────────────────────
-router.post('/sessions/:id/confirm', requireAuth, async (req, res) => {
+router.post('/sessions/:id/confirm', mutualAbuseLimiter, requireAuth, async (req, res) => {
   let claimed = false;
   let hostEventId = null;
   let inviteeEventId = null;

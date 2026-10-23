@@ -4,7 +4,10 @@
 // anything (lookup is an email-enumeration oracle; book is open to
 // anonymous guests; availability fans out to ~2 Google freebusy.query calls
 // per day in range): mutualRoutes.js' mutualAbuseLimiter (GET /lookup,
-// POST /sessions, GET /sessions/:id/availability) and providerRoutes.js'
+// POST /sessions, GET /sessions/:id/availability, POST /sessions/:id/confirm
+// — confirm pays the same per-party freebusy.query cost as availability via
+// isSlotMutuallyFree, and a losing confirm resets the session back to
+// 'active' so it's just as retryable) and providerRoutes.js'
 // bookLimiter (POST /:id/book) and availabilityLimiter (GET /:id/availability
 // — also able to trigger a live Google freebusy call, once computeAvailableSlots
 // started cross-checking the provider's own Google Calendar).
@@ -69,6 +72,25 @@ test('mutual /sessions/:id/availability: the 21st request in a minute (no auth) 
     const statuses = [];
     for (let i = 0; i < 21; i++) {
       const res = await fetch(`${base}/api/mutual/sessions/does-not-exist/availability`);
+      statuses.push(res.status);
+    }
+    assert.ok(statuses.slice(0, 20).every(s => s === 401), 'the first 20 requests should all reach requireAuth and get 401');
+    assert.equal(statuses[20], 429, 'the 21st request within the window must be rate-limited');
+  } finally {
+    server.close();
+  }
+});
+
+test('mutual /sessions/:id/confirm: the 21st request in a minute (no auth) is rate-limited, not just unauthorized', async () => {
+  const { server, base } = startApp('/api/mutual', freshMutualRoutes());
+  try {
+    const statuses = [];
+    for (let i = 0; i < 21; i++) {
+      const res = await fetch(`${base}/api/mutual/sessions/does-not-exist/confirm`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date: '2026-12-01', startTime: '10:00 AM', endTime: '10:30 AM' })
+      });
       statuses.push(res.status);
     }
     assert.ok(statuses.slice(0, 20).every(s => s === 401), 'the first 20 requests should all reach requireAuth and get 401');
