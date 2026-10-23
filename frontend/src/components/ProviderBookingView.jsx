@@ -325,6 +325,14 @@ export default function ProviderBookingView({ providerId, lang, user, onClose })
               {/* Guest details */}
               {selectedSlot && (
                 <div className="space-y-3 border-t border-gray-200 dark:border-gray-700 pt-4">
+                  {selectedService && (
+                    <div className="bg-indigo-50 dark:bg-indigo-900/20 rounded-lg p-3 text-xs text-gray-700 dark:text-gray-300">
+                      <div className="font-medium text-gray-900 dark:text-white">
+                        {selectedService.name} · {selectedService.duration} {lang === "he" ? "דק׳" : "min"}{selectedService.price ? ` · ₪${selectedService.price}` : ""}
+                      </div>
+                      <div>{selectedDate} · {selectedSlot.startTime}</div>
+                    </div>
+                  )}
                   <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">
                     {lang === "he" ? "הפרטים שלך" : "Your details"}
                   </h3>
