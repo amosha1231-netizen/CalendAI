@@ -14,7 +14,8 @@ const { test, mock } = require('node:test');
 const { google } = require('googleapis');
 const {
   intersectFree, mergeIntervals, sliceIntoSlots, overlapsAny, getLocalScheduleBusy, getLocationTimeZone, todayIsoInTimeZone,
-  getTodayDayNameInTimeZone, isValidIsoDate, isSlotMutuallyFree, getMutualFreeSlots, getFreeBusyForDay, FRIDAY_SHABBAT_CUTOFF_MIN
+  getTodayDayNameInTimeZone, isValidIsoDate, isSlotMutuallyFree, getMutualFreeSlots, getFreeBusyForDay, FRIDAY_SHABBAT_CUTOFF_MIN,
+  minutesToTime12, parseClock12
 } = require('../services/mutualAvailability');
 
 // ── intersectFree(): pure interval math ──
@@ -468,4 +469,49 @@ test('getFreeBusyForDay: queries Google with the window expressed as absolute in
   } finally {
     calendarMock.mock.restore();
   }
+});
+
+// ── minutesToTime12() / parseClock12(): pure 12-hour clock conversion ──
+// Load-bearing for every slot label shown to users and every startTime
+// match done server-side (provider booking's unique-index claim, the post-
+// insert overlap recheck, mutual availability slicing) — worth pinning down
+// directly rather than only indirectly through the higher-level tests above.
+test('minutesToTime12: midnight, noon and one-minute-to-midnight', () => {
+  assert.equal(minutesToTime12(0), '12:00 AM');
+  assert.equal(minutesToTime12(720), '12:00 PM');
+  assert.equal(minutesToTime12(1439), '11:59 PM');
+});
+
+test('minutesToTime12: morning and afternoon hours convert correctly', () => {
+  assert.equal(minutesToTime12(9 * 60 + 5), '09:05 AM');
+  assert.equal(minutesToTime12(13 * 60 + 30), '01:30 PM');
+  assert.equal(minutesToTime12(23 * 60 + 59), '11:59 PM');
+});
+
+test('minutesToTime12: wraps negative and >=1440 totals into a valid day', () => {
+  assert.equal(minutesToTime12(-30), '11:30 PM'); // 30 min before midnight
+  assert.equal(minutesToTime12(1440), '12:00 AM'); // exactly one day over
+  assert.equal(minutesToTime12(1440 + 60), '01:00 AM');
+});
+
+test('parseClock12: round-trips every minute of the day through minutesToTime12', () => {
+  for (let m = 0; m < 1440; m += 17) { // sample, not exhaustive — still covers every hour and both AM/PM
+    assert.equal(parseClock12(minutesToTime12(m)), m, `round-trip failed for minute ${m}`);
+  }
+});
+
+test('parseClock12: rejects malformed or out-of-range input instead of guessing', () => {
+  assert.equal(parseClock12(''), null);
+  assert.equal(parseClock12(null), null);
+  assert.equal(parseClock12('13:00 AM'), null); // hour out of 1-12 range
+  assert.equal(parseClock12('00:00 AM'), null); // hour must be 1-12, not 0
+  assert.equal(parseClock12('09:60 AM'), null); // minutes out of range
+  assert.equal(parseClock12('not a time'), null);
+});
+
+test('parseClock12: 12 AM is midnight and 12 PM is noon', () => {
+  assert.equal(parseClock12('12:00 AM'), 0);
+  assert.equal(parseClock12('12:00 PM'), 720);
+  assert.equal(parseClock12('12:30 AM'), 30);
+  assert.equal(parseClock12('12:30 PM'), 750);
 });
