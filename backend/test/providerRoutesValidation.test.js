@@ -256,6 +256,68 @@ test('GET /me: an existing profile round-trips as-is', async (t) => {
   }
 });
 
+// ── GET /api/providers/my-bookings ──
+// Nothing else in test/ exercises this route: it's the provider-side list
+// ProviderProfileEditor.jsx's "Upcoming bookings" panel reads.
+test('GET /my-bookings: unauthenticated request is rejected before any DB lookup', async (t) => {
+  t.mock.method(User, 'findById', () => { throw new Error('must not be reached'); });
+  t.mock.method(ProviderBooking, 'find', () => { throw new Error('must not be reached'); });
+  const { server, base } = startApp(freshProviderRoutes(), { userId: null });
+  try {
+    const res = await fetch(`${base}/api/providers/my-bookings`);
+    assert.equal(res.status, 401);
+  } finally {
+    server.close();
+  }
+});
+
+test('GET /my-bookings: queries by providerId, excludes cancelled, filters to today-or-later, and sorts by date/startTime', async (t) => {
+  const userId = new mongoose.Types.ObjectId();
+  t.mock.method(User, 'findById', () => ({ select: () => ({ lean: async () => ({ _id: userId, providerProfile: { locationId: 'jerusalem' } }) }) }));
+  let capturedQuery = null;
+  let capturedSort = null;
+  const bookings = [{ _id: new mongoose.Types.ObjectId(), date: '2026-12-01', startTime: '10:00 AM' }];
+  t.mock.method(ProviderBooking, 'find', (query) => {
+    capturedQuery = query;
+    return {
+      sort: (sortArg) => {
+        capturedSort = sortArg;
+        return { lean: async () => bookings };
+      }
+    };
+  });
+  const { server, base } = startApp(freshProviderRoutes(), { userId });
+  try {
+    const res = await fetch(`${base}/api/providers/my-bookings`);
+    const data = await res.json();
+    assert.equal(res.status, 200);
+    assert.deepEqual(data.bookings, JSON.parse(JSON.stringify(bookings)));
+    assert.equal(data.count, 1);
+    assert.equal(capturedQuery.providerId, userId);
+    assert.deepEqual(capturedQuery.status, { $ne: 'cancelled' });
+    assert.ok(/^\d{4}-\d{2}-\d{2}$/.test(capturedQuery.date.$gte), 'date.$gte must be a YYYY-MM-DD string');
+    assert.deepEqual(capturedSort, { date: 1, startTime: 1 });
+  } finally {
+    server.close();
+  }
+});
+
+test('GET /my-bookings: an account that no longer exists still resolves (falls back to the default location timezone) instead of 500ing', async (t) => {
+  const userId = new mongoose.Types.ObjectId();
+  t.mock.method(User, 'findById', () => ({ select: () => ({ lean: async () => null }) }));
+  t.mock.method(ProviderBooking, 'find', () => ({ sort: () => ({ lean: async () => [] }) }));
+  const { server, base } = startApp(freshProviderRoutes(), { userId });
+  try {
+    const res = await fetch(`${base}/api/providers/my-bookings`);
+    const data = await res.json();
+    assert.equal(res.status, 200);
+    assert.deepEqual(data.bookings, []);
+    assert.equal(data.count, 0);
+  } finally {
+    server.close();
+  }
+});
+
 // ── GET /api/providers/:id ──
 // providerSearch.test.js only covers the browse list (GET /); the single
 // public-profile route (used by ProviderBookingView.jsx to load a provider

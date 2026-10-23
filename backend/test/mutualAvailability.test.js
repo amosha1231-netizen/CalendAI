@@ -303,6 +303,89 @@ test('isSlotMutuallyFree: a Friday slot that ends exactly at the Shabbat-start c
   }
 });
 
+// ── isSlotMutuallyFree(): the actual freebusy-based decision. Every test
+// above only exercises the short-circuit guards (Shabbat, already-started,
+// Friday cutoff) via deliberately-invalid credentials that would blow up if
+// the function ever reached the freebusy.query call — none of them actually
+// prove the function correctly grants or denies a slot once it gets there.
+// These mock google.calendar() (the same shared `googleapis` singleton
+// getFreeBusyForDay() calls internally, per getFreeBusyForDay's own tests
+// above) to exercise that real decision end-to-end. ──
+test('isSlotMutuallyFree: both calendars fully free resolves free:true', async (t) => {
+  const calendarMock = t.mock.method(google, 'calendar', () => ({
+    freebusy: { query: async () => ({ data: { calendars: { primary: { busy: [] } } } }) }
+  }));
+  try {
+    const host = { _id: 'host-1', googleAccessToken: 'fake' };
+    const invitee = { _id: 'invitee-1', googleAccessToken: 'fake' };
+    const result = await isSlotMutuallyFree(host, invitee, {
+      locationId: 'jerusalem',
+      date: '2026-11-09', // a Monday
+      startTime: '10:00 AM',
+      endTime: '10:30 AM'
+    });
+    assert.deepEqual(result, { free: true, timeZone: 'Asia/Jerusalem' });
+  } finally {
+    calendarMock.mock.restore();
+  }
+});
+
+test('isSlotMutuallyFree: a busy block on just one side (the invitee\'s) still rejects the slot', async (t) => {
+  let callCount = 0;
+  const calendarMock = t.mock.method(google, 'calendar', () => ({
+    freebusy: {
+      query: async () => {
+        callCount++;
+        // First call is the host's freebusy, second is the invitee's (see
+        // isSlotMutuallyFree's Promise.all([getFreeBusyForDay(host, ...),
+        // getFreeBusyForDay(invitee, ...)])) — busy only on the second.
+        const busy = callCount === 2 ? [{ start: '2026-11-09T08:00:00Z', end: '2026-11-09T08:30:00Z' }] : [];
+        return { data: { calendars: { primary: { busy } } } };
+      }
+    }
+  }));
+  try {
+    const host = { _id: 'host-1', googleAccessToken: 'fake' };
+    const invitee = { _id: 'invitee-1', googleAccessToken: 'fake' };
+    // 08:00-08:30 Asia/Jerusalem (UTC+2) is 10:00-10:30 local — matches the
+    // invitee's busy block above exactly.
+    const result = await isSlotMutuallyFree(host, invitee, {
+      locationId: 'jerusalem',
+      date: '2026-11-09',
+      startTime: '10:00 AM',
+      endTime: '10:30 AM'
+    });
+    assert.deepEqual(result, { free: false, timeZone: 'Asia/Jerusalem' });
+  } finally {
+    calendarMock.mock.restore();
+  }
+});
+
+test('isSlotMutuallyFree: a conflict confined to the host\'s own local `schedule` (never synced to Google) still rejects the slot', async (t) => {
+  const calendarMock = t.mock.method(google, 'calendar', () => ({
+    freebusy: { query: async () => ({ data: { calendars: { primary: { busy: [] } } } }) }
+  }));
+  try {
+    // Nothing on either Google calendar, but the host already has this exact
+    // window booked locally (e.g. via /api/schedule/add-to-free-slot, which
+    // never syncs to Google) — getLocalScheduleBusy must still catch it.
+    const host = {
+      _id: 'host-1', googleAccessToken: 'fake',
+      schedule: { Monday: [{ startTime: '10:00 AM', endTime: '10:30 AM' }] }
+    };
+    const invitee = { _id: 'invitee-1', googleAccessToken: 'fake' };
+    const result = await isSlotMutuallyFree(host, invitee, {
+      locationId: 'jerusalem',
+      date: '2026-11-09', // a Monday
+      startTime: '10:00 AM',
+      endTime: '10:30 AM'
+    });
+    assert.deepEqual(result, { free: false, timeZone: 'Asia/Jerusalem' });
+  } finally {
+    calendarMock.mock.restore();
+  }
+});
+
 test('todayIsoInTimeZone: resolves the calendar day in the given timezone, not the server/UTC day', () => {
   // 2026-11-02T02:30:00Z is already Nov 2 in UTC, but still 21:30 on Nov 1
   // in America/New_York (UTC-5 in November) — a UTC-day check would wrongly
