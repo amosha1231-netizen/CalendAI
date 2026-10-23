@@ -28,7 +28,7 @@ function authHeaders() {
  * both calendars at once. If the invitee isn't a connected CalendAI user,
  * `onFallbackToShareLink` hands off to the existing guest-link flow.
  */
-export default function MutualScheduler({ lang, t, onClose, onFallbackToShareLink }) {
+export default function MutualScheduler({ lang, t, locationId, onClose, onFallbackToShareLink }) {
   const isRTL = lang === 'he';
 
   const [step, setStep] = useState('invitee-email'); // 'invitee-email' | 'select-slot' | 'confirm' | 'success'
@@ -136,7 +136,7 @@ export default function MutualScheduler({ lang, t, onClose, onFallbackToShareLin
         method: "POST",
         headers: authHeaders(),
         credentials: "include",
-        body: JSON.stringify({ inviteeEmail: email, subject: subject || undefined, duration })
+        body: JSON.stringify({ inviteeEmail: email, subject: subject || undefined, duration, locationId })
       });
       const sessionData = await sessionRes.json();
       if (!sessionRes.ok) throw new Error(sessionData.error || "Could not start a mutual scheduling session.");

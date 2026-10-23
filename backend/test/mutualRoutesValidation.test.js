@@ -144,6 +144,38 @@ test('POST /sessions: an invitee with no Google Calendar connected is refused', 
   }
 });
 
+test("POST /sessions: the host's own selected locationId is forwarded to the created session; omitted falls back to the default", async (t) => {
+  const hostId = new mongoose.Types.ObjectId();
+  const inviteeId = new mongoose.Types.ObjectId();
+  t.mock.method(User, 'findById', async () => ({ _id: hostId, email: 'host@test.com', googleAccessToken: 'tok' }));
+  t.mock.method(User, 'findOne', async () => ({ _id: inviteeId, email: 'invitee@test.com', googleAccessToken: 'tok' }));
+  const createCalls = [];
+  t.mock.method(MutualBooking, 'create', async (doc) => { createCalls.push(doc); return doc; });
+
+  const { server, base } = startApp(freshMutualRoutes());
+  try {
+    // The client (MutualScheduler.jsx) sends the host's own selectedLocation
+    // preference as `locationId` — without that wiring, every mutual session
+    // would silently use the 'jerusalem' default regardless of where either
+    // party actually is, misjudging "today"/Shabbat cutoffs for both.
+    const res1 = await fetch(`${base}/api/mutual/sessions`, {
+      method: 'POST', headers: authed(hostId),
+      body: JSON.stringify({ inviteeEmail: 'invitee@test.com', duration: 30, locationId: 'newyork' })
+    });
+    assert.equal(res1.status, 200);
+    assert.equal(createCalls[0].locationId, 'newyork');
+
+    const res2 = await fetch(`${base}/api/mutual/sessions`, {
+      method: 'POST', headers: authed(hostId),
+      body: JSON.stringify({ inviteeEmail: 'invitee@test.com', duration: 30 })
+    });
+    assert.equal(res2.status, 200);
+    assert.equal(createCalls[1].locationId, 'jerusalem', 'an omitted locationId must still fall back to the default');
+  } finally {
+    server.close();
+  }
+});
+
 // ── POST /api/mutual/sessions/:id/confirm ──
 test('POST /sessions/:id/confirm: an invalid date is rejected before any DB lookup', async (t) => {
   const userId = new mongoose.Types.ObjectId();

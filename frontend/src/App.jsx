@@ -1528,6 +1528,7 @@ function AppRoutes() {
       <MutualScheduler
         lang={lang}
         t={t}
+        locationId={selectedLocation}
         onClose={() => setCurrentView('dashboard')}
         onFallbackToShareLink={() => setCurrentView('booking')}
       />
