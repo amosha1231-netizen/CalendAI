@@ -43,24 +43,35 @@ function escapeRegex(str) {
 }
 
 /**
- * Deterministic tiebreak for a booking whose time range overlaps one or more
- * other non-cancelled bookings discovered by the post-insert recheck below
- * (the unique index only catches an exact-startTime collision). The earlier
- * createdAt wins; ties (same millisecond) are broken by _id. Pure and
- * symmetric, so whichever of two concurrently-created, mutually-overlapping
- * bookings runs this check, both land on the same single winner — without
- * it, two requests that both insert before either runs its recheck would
- * each see only the other as "the" conflict and both self-delete, leaving
- * the slot with zero bookings instead of one.
+ * Resolve a create-time race among concurrently-inserted provider bookings
+ * discovered by the post-insert recheck below (the unique index only catches
+ * an exact-startTime collision — two different-duration services slice to
+ * different startTimes and can still spatially overlap). Each of `self` and
+ * `others` needs {_id, createdAt, start, end}.
+ *
+ * Resolving `self` against only its own *direct* overlaps isn't enough for a
+ * 3+-way chain: if A overlaps B, B overlaps C, but A and C do not overlap
+ * each other, A and C can both legitimately stand once B is gone — yet C's
+ * own recheck, running concurrently with B's, can still see B (not yet
+ * deleted) as a blocking conflict and wrongly self-delete too. Sorting every
+ * candidate oldest-first (ties broken by _id) and greedily keeping each one
+ * only if it doesn't overlap anything already kept resolves the whole group
+ * in one deterministic pass, the same way from any candidate's point of
+ * view: A (oldest) is kept, B loses to A, and C — no longer blocked once B
+ * is excluded — is kept too.
  */
-function selfLosesOverlapRace(self, overlappingOthers) {
-  const selfCreatedAt = self.createdAt.getTime();
-  const selfId = self._id.toString();
-  return overlappingOthers.some(other => {
-    const otherCreatedAt = other.createdAt.getTime();
-    if (otherCreatedAt !== selfCreatedAt) return otherCreatedAt < selfCreatedAt;
-    return other._id.toString() < selfId;
+function winsOverlapRace(self, others) {
+  const all = [self, ...others].slice().sort((a, b) => {
+    const diff = a.createdAt.getTime() - b.createdAt.getTime();
+    if (diff !== 0) return diff;
+    return a._id.toString() < b._id.toString() ? -1 : 1;
   });
+  const kept = [];
+  for (const candidate of all) {
+    const blocked = kept.some(k => overlapsAny(candidate.start, candidate.end, [k]));
+    if (!blocked) kept.push(candidate);
+  }
+  return kept.some(k => k._id.toString() === self._id.toString());
 }
 
 // POST /:id/book is reachable by anonymous guests (no auth required) and
@@ -218,9 +229,14 @@ async function computeAvailableSlots(req, provider, service, dateStr) {
   // actually has calendar conflicts to avoid.
   let googleBusyRanges = [];
   if (provider.googleAccessToken) {
+    // Use slotRanges (post-Shabbat-cutoff), not mergedRanges — on a Friday
+    // whose raw availability extends past FRIDAY_SHABBAT_CUTOFF_MIN, querying
+    // Google for the uncapped window would fetch freebusy data for time past
+    // candle-lighting that candidates (sliced from slotRanges) never offers
+    // anyway. candidates.length > 0 here guarantees slotRanges is non-empty.
     const toHHMM = min => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
-    const windowStartMin = mergedRanges[0].start;
-    const windowEndMin = mergedRanges[mergedRanges.length - 1].end;
+    const windowStartMin = slotRanges[0].start;
+    const windowEndMin = slotRanges[slotRanges.length - 1].end;
     try {
       googleBusyRanges = await mutualAvailability.getFreeBusyForDay(
         provider, dateStr, toHHMM(windowStartMin), toHHMM(windowEndMin), timeZone
@@ -654,8 +670,8 @@ router.post('/:id/book', bookLimiter, async (req, res) => {
     const otherRanges = otherBookings
       .map(b => ({ _id: b._id, createdAt: b.createdAt, start: timeToMinutes(b.startTime), end: timeToMinutes(b.endTime) }))
       .filter(r => r.start !== null && r.end !== null);
-    const overlappingOthers = otherRanges.filter(r => overlapsAny(claimedStartMin, claimedEndMin, [r]));
-    if (overlappingOthers.length > 0 && selfLosesOverlapRace(createdBooking, overlappingOthers)) {
+    const selfRange = { _id: createdBooking._id, createdAt: createdBooking.createdAt, start: claimedStartMin, end: claimedEndMin };
+    if (!winsOverlapRace(selfRange, otherRanges)) {
       await ProviderBooking.deleteOne({ _id: createdBooking._id }).catch(() => {});
       return res.status(409).json({ error: 'השעה שנבחרה הוזמנה הרגע על ידי מישהו אחר. בחר שעה אחרת.' });
     }
@@ -778,4 +794,4 @@ module.exports = router;
 module.exports.mapServicesForSave = mapServicesForSave;
 module.exports.computeAvailableSlots = computeAvailableSlots;
 module.exports.escapeRegex = escapeRegex;
-module.exports.selfLosesOverlapRace = selfLosesOverlapRace;
+module.exports.winsOverlapRace = winsOverlapRace;

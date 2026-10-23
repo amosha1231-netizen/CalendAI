@@ -30,7 +30,7 @@ const providerRoutesPath = require.resolve('../routes/providerRoutes');
 const User = require('../models/User');
 const ProviderBooking = require('../models/ProviderBooking');
 const mutualAvailability = require('../services/mutualAvailability');
-const { selfLosesOverlapRace } = require('../routes/providerRoutes');
+const { winsOverlapRace } = require('../routes/providerRoutes');
 
 function freshProviderRoutes() {
   delete require.cache[providerRoutesPath];
@@ -496,43 +496,80 @@ test('POST /:id/book: a slot that is no longer available is a 409, not a silent 
   }
 });
 
-// ── selfLosesOverlapRace: deterministic tiebreak for the post-insert overlap recheck ──
+// ── winsOverlapRace: deterministic resolution for the post-insert overlap recheck ──
 // Two different-duration services can slice to different startTimes, so the
 // unique providerId+date+startTime index alone can't stop two concurrent
-// bookings from overlapping. Without a deterministic tiebreak, two requests
-// that both insert before either runs its recheck would each see only the
-// other as "the" conflict and both self-delete, losing the slot entirely
-// instead of leaving exactly one booking standing.
-test('selfLosesOverlapRace: a booking with a later createdAt than its overlapping conflict loses', () => {
+// bookings from overlapping. Without a deterministic, whole-group resolution,
+// two requests that both insert before either runs its recheck would each see
+// only the other as "the" conflict and both self-delete, losing the slot
+// entirely instead of leaving exactly one booking standing.
+test('winsOverlapRace: a booking with a later createdAt than its overlapping conflict loses', () => {
   const selfId = new mongoose.Types.ObjectId();
   const otherId = new mongoose.Types.ObjectId();
-  const loses = selfLosesOverlapRace(
-    { _id: selfId, createdAt: new Date('2026-01-01T00:00:01.000Z') },
-    [{ _id: otherId, createdAt: new Date('2026-01-01T00:00:00.000Z') }]
+  const wins = winsOverlapRace(
+    { _id: selfId, createdAt: new Date('2026-01-01T00:00:01.000Z'), start: 600, end: 630 },
+    [{ _id: otherId, createdAt: new Date('2026-01-01T00:00:00.000Z'), start: 600, end: 630 }]
   );
-  assert.equal(loses, true, 'the booking created after its conflict must be the one that self-deletes');
+  assert.equal(wins, false, 'the booking created after its conflict must be the one that self-deletes');
 });
 
-test('selfLosesOverlapRace: a booking with an earlier createdAt than its overlapping conflict wins (survives)', () => {
+test('winsOverlapRace: a booking with an earlier createdAt than its overlapping conflict wins (survives)', () => {
   const selfId = new mongoose.Types.ObjectId();
   const otherId = new mongoose.Types.ObjectId();
-  const loses = selfLosesOverlapRace(
-    { _id: selfId, createdAt: new Date('2026-01-01T00:00:00.000Z') },
-    [{ _id: otherId, createdAt: new Date('2026-01-01T00:00:01.000Z') }]
+  const wins = winsOverlapRace(
+    { _id: selfId, createdAt: new Date('2026-01-01T00:00:00.000Z'), start: 600, end: 630 },
+    [{ _id: otherId, createdAt: new Date('2026-01-01T00:00:01.000Z'), start: 600, end: 630 }]
   );
-  assert.equal(loses, false, 'the booking created before its conflict must not self-delete');
+  assert.equal(wins, true, 'the booking created before its conflict must not self-delete');
 });
 
-test('selfLosesOverlapRace: a tie on createdAt is broken by _id, and both sides of the comparison agree', () => {
+test('winsOverlapRace: a tie on createdAt is broken by _id, and both sides of the comparison agree', () => {
   const idA = new mongoose.Types.ObjectId('000000000000000000000001');
   const idB = new mongoose.Types.ObjectId('000000000000000000000002');
   const sameInstant = new Date('2026-01-01T00:00:00.000Z');
 
-  const aLoses = selfLosesOverlapRace({ _id: idA, createdAt: sameInstant }, [{ _id: idB, createdAt: sameInstant }]);
-  const bLoses = selfLosesOverlapRace({ _id: idB, createdAt: sameInstant }, [{ _id: idA, createdAt: sameInstant }]);
+  const aWins = winsOverlapRace(
+    { _id: idA, createdAt: sameInstant, start: 600, end: 630 },
+    [{ _id: idB, createdAt: sameInstant, start: 600, end: 630 }]
+  );
+  const bWins = winsOverlapRace(
+    { _id: idB, createdAt: sameInstant, start: 600, end: 630 },
+    [{ _id: idA, createdAt: sameInstant, start: 600, end: 630 }]
+  );
 
-  assert.notEqual(aLoses, bLoses, 'exactly one side of a tied race must lose so exactly one booking survives');
-  assert.equal(bLoses, true, 'the larger _id loses the tiebreak (smaller _id wins)');
+  assert.notEqual(aWins, bWins, 'exactly one side of a tied race must win so exactly one booking survives');
+  assert.equal(bWins, false, 'the larger _id loses the tiebreak (smaller _id wins)');
+});
+
+test('winsOverlapRace: a booking with no overlapping others always wins, regardless of createdAt', () => {
+  const selfId = new mongoose.Types.ObjectId();
+  const otherId = new mongoose.Types.ObjectId();
+  const wins = winsOverlapRace(
+    { _id: selfId, createdAt: new Date('2026-01-01T00:00:05.000Z'), start: 600, end: 630 },
+    [{ _id: otherId, createdAt: new Date('2026-01-01T00:00:00.000Z'), start: 700, end: 730 }]
+  );
+  assert.equal(wins, true, 'bookings that never overlap in time must never affect each other\'s outcome');
+});
+
+// A overlaps B, B overlaps C, but A and C do not overlap each other — a chain,
+// not a clique. B (youngest-conflicting... here oldest wins, so B loses to A)
+// must lose, but C — once B is gone — never actually conflicted with anyone
+// that survives, so C must win too. A pairwise-only check (resolving each
+// candidate only against its own *direct* overlaps) gets this wrong: C's
+// recheck can still see B as a live conflict (B hasn't self-deleted yet) and
+// wrongly concludes it must lose as well, leaving the provider with only A
+// booked instead of both A and C.
+test('winsOverlapRace: a 3-way overlap chain (A-B, B-C, not A-C) keeps both ends and drops only the middle', () => {
+  const idA = new mongoose.Types.ObjectId('000000000000000000000001');
+  const idB = new mongoose.Types.ObjectId('000000000000000000000002');
+  const idC = new mongoose.Types.ObjectId('000000000000000000000003');
+  const a = { _id: idA, createdAt: new Date('2026-01-01T00:00:00.000Z'), start: 540, end: 600 }; // 09:00-10:00
+  const b = { _id: idB, createdAt: new Date('2026-01-01T00:00:01.000Z'), start: 570, end: 630 }; // 09:30-10:30, overlaps A and C
+  const c = { _id: idC, createdAt: new Date('2026-01-01T00:00:02.000Z'), start: 600, end: 660 }; // 10:00-11:00
+
+  assert.equal(winsOverlapRace(a, [b, c]), true, 'the oldest booking in the chain must survive');
+  assert.equal(winsOverlapRace(b, [a, c]), false, 'the middle booking, conflicting with both ends, must lose');
+  assert.equal(winsOverlapRace(c, [a, b]), true, 'the newest booking must survive once the middle is excluded — it never conflicted with the survivor');
 });
 
 test('POST /:id/book: a booking that slips in between the availability read and this request\'s own insert — the later-created one self-deletes with a 409', async (t) => {
