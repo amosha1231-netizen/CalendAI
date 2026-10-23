@@ -372,6 +372,34 @@ router.post('/sessions/:id/confirm', requireAuth, async (req, res) => {
     );
     if (!completed) throw Object.assign(new Error('Could not finalize this session.'), { status: 503 });
 
+    // Best-effort in-memory schedule cache sync (mirrors the legacy
+    // /api/booking/:id/confirm host-side sync and providerRoutes.js' POST
+    // /:id/book) — both schedule pushes above already landed in MongoDB via
+    // pushToSchedule, but a route that reads server.js' in-memory
+    // getUserSchedule() cache without first reloading from MongoDB (e.g. GET
+    // /api/schedule/expanded, which MonthlyCalendar.jsx calls directly) would
+    // otherwise keep serving a stale schedule — missing this just-confirmed
+    // meeting for either party — until something else happens to refresh
+    // that user's cache entry (e.g. their next GET /api/schedule, which
+    // always reloads from Mongo).
+    const getUserSchedule = req.app.get('getUserSchedule');
+    const saveSchedulesNow = req.app.get('saveSchedulesNow');
+    if (getUserSchedule) {
+      const isTodayBucket = dayOfWeek === getTodayDayNameInTimeZone(timeZone);
+      for (const [user, event] of [[host, hostEvent], [invitee, inviteeEvent]]) {
+        const cached = getUserSchedule(user._id.toString());
+        if (cached) {
+          if (!cached[dayOfWeek]) cached[dayOfWeek] = [];
+          cached[dayOfWeek].push(event);
+          if (isTodayBucket) {
+            if (!cached.Today) cached.Today = [];
+            cached.Today.push(event);
+          }
+        }
+      }
+    }
+    if (saveSchedulesNow) saveSchedulesNow();
+
     res.json({ ok: true, message: 'Mutual meeting confirmed on both calendars!', session: completed });
   } catch (err) {
     console.error('Confirm mutual session error:', err);

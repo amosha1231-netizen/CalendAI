@@ -34,9 +34,11 @@ function freshMutualRoutes() {
   return require(mutualRoutesPath);
 }
 
-function startApp(router) {
+function startApp(router, { getUserSchedule, saveSchedulesNow } = {}) {
   const app = express();
   app.use(express.json());
+  if (getUserSchedule) app.set('getUserSchedule', getUserSchedule);
+  if (saveSchedulesNow) app.set('saveSchedulesNow', saveSchedulesNow);
   app.use('/api/mutual', router);
   const server = app.listen(0);
   const { port } = server.address();
@@ -323,6 +325,60 @@ test('POST /sessions/:id/confirm: a fully successful confirmation inserts both c
     assert.equal(data.session.status, 'completed');
     assert.equal(insertedEventIds.length, 2, 'both the host and invitee calendar events must be inserted');
     assert.equal(updateOneMock.mock.callCount(), 2, 'both the host and invitee schedules must be pushed');
+  } finally {
+    server.close();
+  }
+});
+
+// providerRoutes.js' POST /:id/book and the legacy /api/booking/:id/confirm
+// both mirror their MongoDB schedule push into server.js' in-memory
+// getUserSchedule() cache (so a route that reads it without first reloading
+// from Mongo, e.g. GET /api/schedule/expanded, doesn't serve stale data) —
+// confirm must do the same for BOTH the host and the invitee, not just one.
+test('POST /sessions/:id/confirm: a fully successful confirmation also syncs both the host\'s and invitee\'s in-memory schedule cache', async (t) => {
+  const hostId = new mongoose.Types.ObjectId();
+  const inviteeId = new mongoose.Types.ObjectId();
+  const existing = { sessionId: 'mut_cache', duration: 30, locationId: 'jerusalem', hostId, inviteeId, subject: 'Sync' };
+  const claimedSession = { ...existing, status: 'processing' };
+
+  t.mock.method(MutualBooking, 'findOne', async () => existing);
+  t.mock.method(MutualBooking, 'findOneAndUpdate', async (filter, update) => {
+    if (filter.status === 'active') return claimedSession;
+    if (filter.status === 'processing') {
+      return { ...claimedSession, status: 'completed', hostEventId: update.$set.hostEventId, inviteeEventId: update.$set.inviteeEventId, confirmedAt: update.$set.confirmedAt, lockedSlot: update.$set.lockedSlot };
+    }
+    throw new Error('unexpected findOneAndUpdate filter: ' + JSON.stringify(filter));
+  });
+
+  const hostUser = { _id: hostId, email: 'host@test.com', displayName: 'Host', googleAccessToken: 'tok-host', scheduleRevision: 0 };
+  const inviteeUser = { _id: inviteeId, email: 'invitee@test.com', displayName: 'Invitee', googleAccessToken: 'tok-invitee', scheduleRevision: 0 };
+  t.mock.method(User, 'findById', async (id) => (String(id) === String(hostId) ? hostUser : inviteeUser));
+  t.mock.method(User, 'updateOne', async () => ({ matchedCount: 1 }));
+  t.mock.method(mutualAvailability, 'isSlotMutuallyFree', async () => ({ free: true, timeZone: 'Asia/Jerusalem' }));
+  t.mock.method(googleCalendarService, 'createOAuth2ClientWithRefresh', async () => ({}));
+  t.mock.method(google, 'calendar', () => ({ events: { insert: async () => ({ data: { id: 'evt-cache' } }) } }));
+
+  const cacheByUser = { [String(hostId)]: { Tuesday: [] }, [String(inviteeId)]: { Tuesday: [] } };
+  const getUserSchedule = (id) => cacheByUser[String(id)];
+  let saveCalls = 0;
+  const saveSchedulesNow = () => { saveCalls++; };
+
+  const { server, base } = startApp(freshMutualRoutes(), { getUserSchedule, saveSchedulesNow });
+  try {
+    // 2099-12-01 is a Tuesday — the shared dayOfWeek pushToSchedule computes
+    // from the ISO date, matching the cache entries seeded above.
+    const res = await fetch(`${base}/api/mutual/sessions/mut_cache/confirm`, {
+      method: 'POST', headers: authed(hostId),
+      body: JSON.stringify({ date: '2099-12-01', startTime: '10:00 AM', endTime: '10:30 AM' })
+    });
+    const data = await res.json();
+    assert.equal(res.status, 200);
+    assert.equal(data.ok, true);
+    assert.equal(cacheByUser[String(hostId)].Tuesday.length, 1, 'the host\'s cached Tuesday bucket must get the new event');
+    assert.equal(cacheByUser[String(inviteeId)].Tuesday.length, 1, 'the invitee\'s cached Tuesday bucket must get the new event');
+    assert.ok(cacheByUser[String(hostId)].Tuesday[0].title.includes('Invitee'), 'the host sees the invitee\'s name in the event title');
+    assert.ok(cacheByUser[String(inviteeId)].Tuesday[0].title.includes('Host'), 'the invitee sees the host\'s name in the event title');
+    assert.ok(saveCalls >= 1, 'saveSchedulesNow must be called after syncing the cache');
   } finally {
     server.close();
   }
