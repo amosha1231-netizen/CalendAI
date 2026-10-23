@@ -70,6 +70,7 @@ export default function ProviderBookingView({ providerId, lang, user, onClose })
         if (cancelled) return;
 
         setProvider(data.provider);
+        dateTouchedRef.current = false;
         if (data.provider.services?.length) setSelectedServiceId(data.provider.services[0]._id);
 
         // "Today" must match the provider's own location timezone, not the
@@ -229,6 +230,16 @@ export default function ProviderBookingView({ providerId, lang, user, onClose })
                 <div>{lang === "he" ? "עם" : "with"} {provider.businessName}</div>
               </div>
               <button onClick={onClose} className="px-6 py-2.5 bg-indigo-600 text-white rounded-xl font-medium text-sm hover:bg-indigo-700 transition">
+                {lang === "he" ? "סגור" : "Close"}
+              </button>
+            </div>
+          ) : !(provider.services || []).length ? (
+            /* ── No bookable services — nothing to pick a date/slot for ── */
+            <div className="text-center py-6">
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                {lang === "he" ? "נותן השירות אינו מציע כרגע שירותים להזמנה." : "This provider currently has no bookable services."}
+              </p>
+              <button onClick={onClose} className="mt-4 px-4 py-2 bg-gray-200 dark:bg-gray-600 rounded-lg text-sm">
                 {lang === "he" ? "סגור" : "Close"}
               </button>
             </div>
