@@ -109,6 +109,14 @@ test('getLocalScheduleBusy: malformed or missing schedule yields no busy interva
   assert.deepEqual(getLocalScheduleBusy(user, '2026-11-02', 'Monday'), []);
 });
 
+test('getLocalScheduleBusy: a bare 24-hour AI-parsed event (no AM/PM marker) still counts as busy', () => {
+  // aiService.js instructs the model to always return startTime/endTime in 24-hour
+  // format ("17:00", not "05:00 PM"), and /api/parse-schedule stores that as-is —
+  // without a 24-hour fallback these events were silently invisible to mutual scheduling.
+  const user = { schedule: { Monday: [{ startTime: '17:00', endTime: '18:00', targetDate: '2026-11-02' }] } };
+  assert.deepEqual(getLocalScheduleBusy(user, '2026-11-02', 'Monday'), [{ start: 1020, end: 1080 }]);
+});
+
 // ── sliceIntoSlots(): shared slot-slicing rule used by both mutual free-time
 // gaps (getMutualFreeSlots) and provider weekly-availability rows
 // (providerRoutes.js' computeAvailableSlots) ──
@@ -597,4 +605,13 @@ test('parseClock12: 12 AM is midnight and 12 PM is noon', () => {
   assert.equal(parseClock12('12:00 PM'), 720);
   assert.equal(parseClock12('12:30 AM'), 30);
   assert.equal(parseClock12('12:30 PM'), 750);
+});
+
+test('parseClock12: falls back to 24-hour format when no AM/PM marker is present', () => {
+  assert.equal(parseClock12('17:00'), 17 * 60);
+  assert.equal(parseClock12('00:00'), 0);
+  assert.equal(parseClock12('23:59'), 23 * 60 + 59);
+  assert.equal(parseClock12('09:05'), 9 * 60 + 5);
+  assert.equal(parseClock12('24:00'), null); // hour out of 0-23 range
+  assert.equal(parseClock12('12:60'), null); // minutes out of range
 });

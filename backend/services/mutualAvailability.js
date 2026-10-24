@@ -105,15 +105,28 @@ function minutesToTime12(totalMinutes) {
 
 function parseClock12(timeStr) {
   if (!timeStr) return null;
-  const match = String(timeStr).match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
-  if (!match) return null;
-  let hours = parseInt(match[1], 10);
-  const minutes = parseInt(match[2], 10);
-  if (hours < 1 || hours > 12 || minutes > 59) return null;
-  const meridiem = match[3].toUpperCase();
-  if (meridiem === 'PM' && hours !== 12) hours += 12;
-  if (meridiem === 'AM' && hours === 12) hours = 0;
-  return hours * 60 + minutes;
+  const str = String(timeStr);
+  const match = str.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+  if (match) {
+    let hours = parseInt(match[1], 10);
+    const minutes = parseInt(match[2], 10);
+    if (hours < 1 || hours > 12 || minutes > 59) return null;
+    const meridiem = match[3].toUpperCase();
+    if (meridiem === 'PM' && hours !== 12) hours += 12;
+    if (meridiem === 'AM' && hours === 12) hours = 0;
+    return hours * 60 + minutes;
+  }
+  // No AM/PM marker — AI-parsed schedule events are stored in 24-hour format
+  // (aiService.js instructs the model to always return 24-hour startTime/endTime),
+  // so fall back to that instead of dropping the event as unparseable.
+  const h24Match = str.match(/(\d{1,2}):(\d{2})/);
+  if (h24Match) {
+    const hours = parseInt(h24Match[1], 10);
+    const minutes = parseInt(h24Match[2], 10);
+    if (hours > 23 || minutes > 59) return null;
+    return hours * 60 + minutes;
+  }
+  return null;
 }
 
 function currentMinuteOfDay(timeZone) {
