@@ -484,7 +484,7 @@ router.get('/', browseLimiter, async (req, res) => {
 // ──────────────────────────────────────────────
 // GET /api/providers/:id — single public provider profile
 // ──────────────────────────────────────────────
-router.get('/:id', async (req, res) => {
+router.get('/:id', browseLimiter, async (req, res) => {
   try {
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
       return res.status(400).json({ error: 'מזהה נותן שירות לא תקין.' });
