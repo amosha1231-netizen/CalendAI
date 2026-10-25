@@ -91,6 +91,12 @@ export default function MutualScheduler({ lang, t, locationId, onClose, onFallba
   const fetchAvailability = useCallback(async (sid) => {
     setAvailabilityLoading(true);
     setAvailabilityError("");
+    // Clear any slots from a previous fetch (e.g. the pre-conflict list a
+    // 409 confirm failure bounced back from) — the day list below renders
+    // unconditionally, not gated on availabilityLoading like the spinner/
+    // error/empty-state messages are, so a stale list would otherwise stay
+    // visible and clickable until this fetch resolves.
+    setDays([]);
     try {
       const res = await fetch(`${API_BASE}/api/mutual/sessions/${sid}/availability`, {
         headers: authHeaders(),
