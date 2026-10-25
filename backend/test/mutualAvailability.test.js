@@ -541,6 +541,29 @@ test('getFreeBusyForDay: no busy blocks at all resolves to an empty array', asyn
   }
 });
 
+test('getFreeBusyForDay: a per-calendar `errors` field in an HTTP-200 response fails closed instead of reading as "nothing busy"', async (t) => {
+  // Google's freebusy.query can return 200 OK with no `busy` array but an
+  // `errors` array on the calendar entry (e.g. a revoked grant) — this must
+  // throw, not silently resolve to [], or every caller (isSlotMutuallyFree,
+  // getMutualFreeSlots, providerRoutes.js' computeAvailableSlots) would treat
+  // this user as fully free and risk double-booking their real calendar.
+  const calendarMock = t.mock.method(google, 'calendar', () => ({
+    freebusy: {
+      query: async () => ({
+        data: { calendars: { primary: { errors: [{ domain: 'global', reason: 'notFound' }] } } }
+      })
+    }
+  }));
+  try {
+    await assert.rejects(
+      () => getFreeBusyForDay(user, '2026-11-02', '06:00', '23:00', 'Asia/Jerusalem'),
+      /notFound/
+    );
+  } finally {
+    calendarMock.mock.restore();
+  }
+});
+
 test('getFreeBusyForDay: queries Google with the window expressed as absolute instants in the right timezone', async (t) => {
   let capturedRequestBody = null;
   const calendarMock = t.mock.method(google, 'calendar', () => ({

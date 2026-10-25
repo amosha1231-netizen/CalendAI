@@ -227,7 +227,19 @@ async function getFreeBusyForDay(user, isoDate, dayStartHHMM, dayEndHHMM, timeZo
     }
   });
 
-  const busy = result.data?.calendars?.primary?.busy || [];
+  // Google's freebusy.query can come back HTTP 200 with a per-calendar
+  // `errors` array instead of `busy` (e.g. a revoked grant, or a transient
+  // Google-side failure on just this calendar) — falling through to `|| []`
+  // in that case would tell every caller this user has nothing busy, which
+  // is exactly backwards for a function whose whole job is a race guard
+  // against double-booking. Fail closed instead, same as providerRoutes.js'
+  // computeAvailableSlots does for its own Google-fetch-failure case.
+  const primaryCalendar = result.data?.calendars?.primary;
+  if (primaryCalendar?.errors?.length) {
+    const reasons = primaryCalendar.errors.map(e => e.reason || 'unknown').join(', ');
+    throw new Error(`Google freebusy query failed for ${isoDate}: ${reasons}`);
+  }
+  const busy = primaryCalendar?.busy || [];
   const toClockMinutes = (ms) => {
     const parts = new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date(ms));
     return Number(parts.find(p => p.type === 'hour').value) * 60 + Number(parts.find(p => p.type === 'minute').value);
