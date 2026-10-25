@@ -586,7 +586,9 @@ function AppRoutes() {
   }, [pwaDismissed]);
 
   useEffect(() => {
-    if (!isStandalone() && !pwaDismissed && !installPrompt) {
+    // Without a browser install prompt, the popup only has content (manual
+    // steps) on iOS; elsewhere it would open empty.
+    if (!isStandalone() && !pwaDismissed && !installPrompt && (isIosSafari() || isIosNonSafari())) {
       const timer = setTimeout(() => {
         setShowPwaPopup(true);
       }, 5000);
@@ -2455,7 +2457,7 @@ function AppRoutes() {
       )}
 
       {/* PWA Install Popup */}
-      {showPwaPopup && !isStandalone() && (
+      {showPwaPopup && !isStandalone() && !isNativeApp() && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[9999]" onClick={handleDismissPwa}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
             {installPrompt && (
@@ -2513,7 +2515,7 @@ function AppRoutes() {
       )}
 
       {/* Smart PWA Install Banner */}
-      {showPwaBanner && !isStandalone() && (
+      {showPwaBanner && !isStandalone() && !isNativeApp() && (
         <div className="fixed bottom-0 left-0 right-0 z-[9999] p-4 animate-slide-up" style={{ marginBottom: '60px' }}>
           <div className="max-w-md mx-auto bg-white rounded-xl shadow-2xl border border-slate-200 p-4 flex items-center gap-3">
             <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center shrink-0">
