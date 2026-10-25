@@ -2,7 +2,6 @@ node_modules/
 .env
 frontend/dist/
 backend/data/schedules.json
-android/
 .DS_Store
 *.log
 *.apk
