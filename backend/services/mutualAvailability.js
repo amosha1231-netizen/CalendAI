@@ -234,12 +234,23 @@ async function getFreeBusyForDay(user, isoDate, dayStartHHMM, dayEndHHMM, timeZo
   // is exactly backwards for a function whose whole job is a race guard
   // against double-booking. Fail closed instead, same as providerRoutes.js'
   // computeAvailableSlots does for its own Google-fetch-failure case.
+  //
+  // Same fail-closed treatment applies if `calendars.primary` is missing
+  // from the response altogether — every requested item id is supposed to
+  // get its own entry (with `busy` or `errors`), so an absent entry means
+  // the response itself didn't answer "is primary busy?". The old `?.`
+  // chain here silently read that as `undefined?.busy || []` = "nothing
+  // busy", which is the same double-booking risk the `errors` check above
+  // exists to close, just via a different-shaped bad response.
   const primaryCalendar = result.data?.calendars?.primary;
-  if (primaryCalendar?.errors?.length) {
+  if (!primaryCalendar) {
+    throw new Error(`Google freebusy query returned no result for ${isoDate} (missing calendars.primary)`);
+  }
+  if (primaryCalendar.errors?.length) {
     const reasons = primaryCalendar.errors.map(e => e.reason || 'unknown').join(', ');
     throw new Error(`Google freebusy query failed for ${isoDate}: ${reasons}`);
   }
-  const busy = primaryCalendar?.busy || [];
+  const busy = primaryCalendar.busy || [];
   const toClockMinutes = (ms) => {
     const parts = new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date(ms));
     return Number(parts.find(p => p.type === 'hour').value) * 60 + Number(parts.find(p => p.type === 'minute').value);

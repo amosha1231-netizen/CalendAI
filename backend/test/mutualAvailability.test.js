@@ -564,6 +564,24 @@ test('getFreeBusyForDay: a per-calendar `errors` field in an HTTP-200 response f
   }
 });
 
+test('getFreeBusyForDay: a response missing calendars.primary entirely fails closed instead of reading as "nothing busy"', async (t) => {
+  // Every requested item id is supposed to get its own entry back (with
+  // `busy` or `errors`) — an HTTP-200 response that omits `primary`
+  // altogether is just as unusable as the explicit-`errors` case above, and
+  // must not silently resolve to [] either.
+  const calendarMock = t.mock.method(google, 'calendar', () => ({
+    freebusy: { query: async () => ({ data: { calendars: {} } }) }
+  }));
+  try {
+    await assert.rejects(
+      () => getFreeBusyForDay(user, '2026-11-02', '06:00', '23:00', 'Asia/Jerusalem'),
+      /missing calendars\.primary/
+    );
+  } finally {
+    calendarMock.mock.restore();
+  }
+});
+
 test('getFreeBusyForDay: queries Google with the window expressed as absolute instants in the right timezone', async (t) => {
   let capturedRequestBody = null;
   const calendarMock = t.mock.method(google, 'calendar', () => ({
