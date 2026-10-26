@@ -796,6 +796,12 @@ test('POST /:id/book: the schedule push losing its optimistic-concurrency race d
 test('POST /:id/book: a Google Calendar sync failure after the schedule push already landed rolls back both the push and the booking', async (t) => {
   const serviceId = new mongoose.Types.ObjectId();
   const providerId = new mongoose.Types.ObjectId();
+  // Pin "today" to a Wednesday before the booked Monday (not the day being
+  // booked, and not in the past relative to it) so the schedule.Today
+  // push/pull never enters this test's assertions — without this, the test
+  // only passed by coincidence on real-world days that weren't Monday in
+  // Asia/Jerusalem.
+  mock.timers.enable({ apis: ['Date'], now: new Date('2026-12-02T08:00:00Z').getTime() });
   t.mock.method(User, 'findOne', () => Promise.resolve({
     _id: providerId,
     googleAccessToken: 'tok-provider',
@@ -835,6 +841,7 @@ test('POST /:id/book: a Google Calendar sync failure after the schedule push alr
     assert.equal(deleteMock.mock.calls[0].arguments[0]._id, createdBooking._id);
   } finally {
     server.close();
+    mock.timers.reset();
   }
 });
 
