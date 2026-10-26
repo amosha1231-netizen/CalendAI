@@ -24,6 +24,7 @@ These files **must stay in git** — `server.js` requires them at boot:
 - `backend/models/OAuthHandoff.js`
 - `backend/models/ProcessedPaymentEvent.js`
 - `backend/models/MutualBooking.js`
+- `backend/models/ProviderBooking.js`
 
 Do not treat `frontend/dist/` as source of truth (gitignored; build from `frontend/src`).
 
