@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { X, ChevronLeft, ChevronRight } from 'lucide-react';
 
 // Labels for the bottom bar and its category sheets.
@@ -79,31 +79,120 @@ function Badge({ value, dot }) {
 
 /**
  * Floating, rounded bottom bar in the style of WhatsApp's tab bar.
+ * A finger can slide along it: the highlight follows, and lifting it opens that tab.
  * tabs: [{ id, label, icon, badge?, dot?, photo? }]
  */
-export default function BottomNav({ tabs, activeId, onSelect, isRTL }) {
+export default function BottomNav({ tabs, activeId, onSelect, isRTL, screenOpen = false }) {
+  const barRef = useRef(null);
+  const tabRefs = useRef({});
+  const drag = useRef(null); // { startX, moved, pointerId }
+  const suppressClick = useRef(false);
+  const [dragId, setDragId] = useState(null);
+  const [pill, setPill] = useState(null); // { left, width }
+  const highlightId = dragId || activeId;
+
+  // While the bar is on screen, full-screen layers stop above it (see index.css).
+  useEffect(() => {
+    if (typeof document === 'undefined') return undefined;
+    document.body.classList.add('has-bottom-nav');
+    return () => document.body.classList.remove('has-bottom-nav');
+  }, []);
+
+  // Slide the highlight pill to the highlighted tab.
+  useLayoutEffect(() => {
+    const measure = () => {
+      const el = tabRefs.current[highlightId];
+      setPill(el ? { left: el.offsetLeft, width: el.offsetWidth } : null);
+    };
+    measure();
+    if (typeof window === 'undefined') return undefined;
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [highlightId, tabs.length]);
+
+  const tabAt = (clientX) => {
+    for (const tab of tabs) {
+      const el = tabRefs.current[tab.id];
+      if (!el) continue;
+      const r = el.getBoundingClientRect();
+      if (clientX >= r.left && clientX <= r.right) return tab.id;
+    }
+    return null;
+  };
+
+  const onPointerDown = (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    drag.current = { startX: e.clientX, moved: false, pointerId: e.pointerId };
+  };
+  const onPointerMove = (e) => {
+    const d = drag.current;
+    if (!d || d.pointerId !== e.pointerId) return;
+    if (!d.moved && Math.abs(e.clientX - d.startX) < 8) return;
+    if (!d.moved) {
+      d.moved = true;
+      try { barRef.current?.setPointerCapture(e.pointerId); } catch (err) {}
+    }
+    const id = tabAt(e.clientX);
+    if (id) setDragId(id);
+  };
+  const endDrag = (e, commit) => {
+    const d = drag.current;
+    drag.current = null;
+    if (!d || !d.moved) return;
+    // Swallow the click the browser may fire after a drag, but only that one.
+    suppressClick.current = true;
+    setTimeout(() => { suppressClick.current = false; }, 0);
+    const id = commit ? (tabAt(e.clientX) || dragId) : null;
+    setDragId(null);
+    if (id) onSelect(id);
+  };
+
   return (
+    <>
+    {/* When a screen is open above the bar, fill the strip under it so the page behind doesn't peek through */}
+    {screenOpen && (
+      <div aria-hidden="true" className="fixed inset-x-0 bottom-0 z-[9985] bg-slate-50 border-t border-slate-200/60" style={{ height: 'var(--bottom-nav-space)' }} />
+    )}
     <nav
-      className="fixed z-50 inset-x-3 mx-auto max-w-md"
+      className="bottom-nav fixed z-[9990] inset-x-3 mx-auto max-w-md"
       style={{ bottom: 'calc(0.75rem + env(safe-area-inset-bottom, 0px))' }}
       dir={isRTL ? 'rtl' : 'ltr'}
     >
-      <div className="flex items-stretch justify-between gap-1 p-1.5 rounded-[2rem] bg-white/90 backdrop-blur-xl border border-slate-200/70 shadow-[0_8px_30px_rgba(15,23,42,0.12)]">
+      <div
+        ref={barRef}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={e => endDrag(e, true)}
+        onPointerCancel={e => endDrag(e, false)}
+        className="relative flex items-stretch justify-between gap-1 p-1.5 rounded-[2rem] bg-white/90 backdrop-blur-xl border border-slate-200/70 shadow-[0_8px_30px_rgba(15,23,42,0.12)] select-none"
+        style={{ touchAction: 'pan-y' }}
+      >
+        {pill && (
+          <span
+            aria-hidden="true"
+            className={`absolute top-1.5 bottom-1.5 rounded-[1.6rem] transition-all duration-300 ease-out ${dragId ? 'bg-slate-200/80 scale-105' : 'bg-slate-100'}`}
+            style={{ left: pill.left, width: pill.width }}
+          />
+        )}
         {tabs.map(tab => {
           const Icon = tab.icon;
-          const active = tab.id === activeId;
+          const active = tab.id === highlightId;
           return (
             <button
               key={tab.id}
-              onClick={() => onSelect(tab.id)}
-              aria-current={active ? 'page' : undefined}
-              className={`flex-1 min-w-0 flex flex-col items-center justify-center gap-1 py-2 min-h-[56px] rounded-[1.6rem] transition ${
-                active ? 'bg-slate-100 text-slate-900' : 'text-slate-500 hover:text-slate-800'
+              ref={el => { tabRefs.current[tab.id] = el; }}
+              onClick={() => {
+                if (suppressClick.current) { suppressClick.current = false; return; }
+                onSelect(tab.id);
+              }}
+              aria-current={tab.id === activeId ? 'page' : undefined}
+              className={`relative flex-1 min-w-0 flex flex-col items-center justify-center gap-1 py-2 min-h-[56px] rounded-[1.6rem] transition-colors ${
+                active ? 'text-slate-900' : 'text-slate-500 hover:text-slate-800'
               }`}
             >
               <span className="relative">
                 {tab.photo ? (
-                  <img src={tab.photo} alt="" className={`w-6 h-6 rounded-full object-cover ${active ? 'ring-2 ring-slate-900' : ''}`} />
+                  <img src={tab.photo} alt="" draggable="false" className={`w-6 h-6 rounded-full object-cover ${active ? 'ring-2 ring-slate-900' : ''}`} />
                 ) : (
                   <Icon className="w-6 h-6" strokeWidth={active ? 2.3 : 1.8} />
                 )}
@@ -115,6 +204,7 @@ export default function BottomNav({ tabs, activeId, onSelect, isRTL }) {
         })}
       </div>
     </nav>
+    </>
   );
 }
 

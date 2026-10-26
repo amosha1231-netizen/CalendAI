@@ -156,10 +156,12 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangC
   const [upgradeLoading, setUpgradeLoading] = useState(false);
   const [upgradeError, setUpgradeError] = useState("");
   const [showSiriModal, setShowSiriModal] = useState(false);
+  const [confirmLogout, setConfirmLogout] = useState(false);
 
   // Each opening lands on the tab it was opened for (e.g. Analytics from the Tools sheet).
   useEffect(() => {
     if (isOpen) setActiveTab(initialTab);
+    setConfirmLogout(false);
   }, [isOpen, initialTab]);
 
   useEffect(() => {
@@ -759,9 +761,21 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangC
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-medium text-slate-700 truncate">{user.displayName || user.email}</div>
               </div>
-              <button onClick={onLogout} className="text-xs text-red-500 hover:text-red-700 font-medium">
-                {t.logout}
-              </button>
+              {/* Two taps to log out, so a stray tap doesn't end the session */}
+              {confirmLogout ? (
+                <span className="flex items-center gap-2">
+                  <button onClick={() => setConfirmLogout(false)} className="text-xs text-slate-500 hover:text-slate-700 font-medium px-2 py-1.5">
+                    {t.cancel || (lang === 'he' ? 'ביטול' : 'Cancel')}
+                  </button>
+                  <button onClick={onLogout} className="text-xs text-white bg-red-500 hover:bg-red-600 font-medium px-3 py-1.5 rounded-full">
+                    {lang === 'he' ? 'כן, להתנתק' : `${t.logout}?`}
+                  </button>
+                </span>
+              ) : (
+                <button onClick={() => setConfirmLogout(true)} className="text-xs text-red-500 hover:text-red-700 font-medium px-2 py-1.5">
+                  {t.logout}
+                </button>
+              )}
             </div>
           </div>
         )}

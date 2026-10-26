@@ -1525,14 +1525,109 @@ function AppRoutes() {
     );
   }
 
+  // ── Bottom navigation bar: shown on the dashboard and on every screen opened from it ──
+  const renderBottomNav = () => {
+    const nl = getNavLabels(lang);
+    const credits = user ? normalizeCredits(user.aiCredits) : undefined;
+    const meetOpen = currentView === 'mutual' || showWizard || showProviderDirectory || showProviderProfileEditor;
+    const toolsOpen = showAlarmSettings || showExpenses || showJournal || showPublicGoals || showChallengeDetail || showHistoryModal;
+    const activeNav = isSidebarOpen ? 'me'
+      : navSheet || (routinesView ? 'routines' : meetOpen ? 'meet' : toolsOpen ? 'tools' : 'home');
+    const tabs = [
+      { id: 'home', label: nl.home, icon: Home, badge: schedule.Today?.length || 0 },
+      { id: 'routines', label: nl.routines, icon: ListChecks },
+      { id: 'meet', label: nl.meet, icon: Users },
+      { id: 'tools', label: nl.tools, icon: LayoutGrid },
+      { id: 'me', label: nl.me, icon: User, photo: user?.photo, dot: credits === 0 },
+    ];
+    // Moving to another tab leaves whatever screen is open, like switching tabs in WhatsApp.
+    const closeOpenScreens = () => {
+      setNavSheet(null);
+      setIsSidebarOpen(false);
+      setRoutinesView(null);
+      setShowReminders(false);
+      setShowWizard(false);
+      setShowManualEvent(false);
+      setShowProviderDirectory(false);
+      setShowProviderProfileEditor(false);
+      setShowAlarmSettings(false);
+      setShowExpenses(false);
+      setShowJournal(false);
+      setShowPublicGoals(false);
+      setShowChallengeDetail(false);
+      setShowHistoryModal(false);
+      setDayDetailModal(null);
+      setEditModalData(null);
+      setIsRescheduleOpen(false);
+      setIsFreeSlotsOpen(false);
+      if (currentView === 'mutual') setCurrentView('dashboard');
+    };
+    const selectTab = (id) => {
+      if (id === activeNav && id !== 'home') return;
+      closeOpenScreens();
+      if (id === 'home') {
+        setDayOffset(0);
+        try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (e) {}
+      } else if (id === 'routines') {
+        setRoutinesView('today');
+      } else if (id === 'me') {
+        setDrawerTab('settings');
+        setIsSidebarOpen(true);
+      } else {
+        setNavSheet(id);
+      }
+    };
+    const run = (fn) => () => { setNavSheet(null); fn(); };
+    const sheetItems = {
+      meet: [
+        { id: 'mutual', label: nl.mutual, sub: nl.mutualSub, icon: Users, tone: 'bg-blue-50 text-blue-600', onClick: run(() => setCurrentView('mutual')) },
+        { id: 'link', label: nl.shareLink, sub: nl.shareLinkSub, icon: Link2, tone: 'bg-emerald-50 text-emerald-600', onClick: run(() => setShowWizard(true)) },
+        { id: 'providers', label: nl.providers, sub: nl.providersSub, icon: Briefcase, tone: 'bg-purple-50 text-purple-600', onClick: run(() => setShowProviderDirectory(true)) },
+        ...(user ? [{ id: 'providerProfile', label: nl.providerProfile, sub: nl.providerProfileSub, icon: Settings, tone: 'bg-amber-50 text-amber-600', onClick: run(() => setShowProviderProfileEditor(true)) }] : []),
+      ],
+      tools: [
+        { id: 'alarm', label: nl.alarm, sub: nl.alarmSub, icon: AlarmClock, tone: 'bg-amber-50 text-amber-600', onClick: run(() => setShowAlarmSettings(true)) },
+        { id: 'expenses', label: nl.expenses, sub: nl.expensesSub, icon: Wallet, tone: 'bg-emerald-50 text-emerald-600', onClick: run(() => setShowExpenses(true)) },
+        { id: 'journal', label: nl.journal, sub: nl.journalSub, icon: BookOpen, tone: 'bg-indigo-50 text-indigo-600', onClick: run(() => setShowJournal(true)) },
+        { id: 'challenges', label: nl.challenges, sub: nl.challengesSub, icon: Trophy, tone: 'bg-orange-50 text-orange-600', onClick: run(() => setRoutinesView('discover')) },
+        { id: 'history', label: nl.history, sub: nl.historySub, icon: Clock, tone: 'bg-slate-100 text-slate-600', onClick: run(() => setShowHistoryModal(true)) },
+        { id: 'analytics', label: nl.analytics, sub: nl.analyticsSub, icon: BarChart3, tone: 'bg-sky-50 text-sky-600', onClick: run(() => { setDrawerTab('analytics'); setIsSidebarOpen(true); }) },
+      ],
+    };
+    const rtl = lang === 'he';
+    return (
+      <>
+        <BottomNav
+          tabs={tabs}
+          activeId={activeNav}
+          onSelect={selectTab}
+          isRTL={rtl}
+          screenOpen={activeNav !== 'home' || showManualEvent || showReminders || !!dayDetailModal || !!editModalData || isRescheduleOpen || isFreeSlotsOpen}
+        />
+        {navSheet && (
+          <NavSheet
+            title={navSheet === 'meet' ? nl.meetTitle : nl.toolsTitle}
+            items={sheetItems[navSheet]}
+            onClose={() => setNavSheet(null)}
+            isRTL={rtl}
+            closeLabel={nl.close}
+          />
+        )}
+      </>
+    );
+  };
+
   if (currentView === 'mutual') {
     return (
-      <MutualScheduler
-        lang={lang}
-        t={t}
-        onClose={() => setCurrentView('dashboard')}
-        onFallbackToShareLink={() => setCurrentView('booking')}
-      />
+      <div className="pb-[calc(6.5rem+env(safe-area-inset-bottom))]">
+        <MutualScheduler
+          lang={lang}
+          t={t}
+          onClose={() => setCurrentView('dashboard')}
+          onFallbackToShareLink={() => setCurrentView('booking')}
+        />
+        {renderBottomNav()}
+      </div>
     );
   }
 
@@ -2060,70 +2155,7 @@ function AppRoutes() {
 
 
         {/* ── Bottom Navigation Bar (floating, WhatsApp-style) ── */}
-        {(() => {
-          const nl = getNavLabels(lang);
-          const credits = user ? normalizeCredits(user.aiCredits) : undefined;
-          const activeNav = isSidebarOpen ? 'me' : navSheet || (routinesView ? 'routines' : 'home');
-          const tabs = [
-            { id: 'home', label: nl.home, icon: Home, badge: schedule.Today?.length || 0 },
-            { id: 'routines', label: nl.routines, icon: ListChecks },
-            { id: 'meet', label: nl.meet, icon: Users },
-            { id: 'tools', label: nl.tools, icon: LayoutGrid },
-            { id: 'me', label: nl.me, icon: User, photo: user?.photo, dot: credits === 0 },
-          ];
-          const selectTab = (id) => {
-            setNavSheet(null);
-            setIsSidebarOpen(false);
-            if (id === 'home') {
-              setRoutinesView(null);
-              setDayOffset(0);
-              try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (e) {}
-            } else if (id === 'routines') {
-              setRoutinesView('today');
-            } else if (id === 'me') {
-              setDrawerTab('settings');
-              setIsSidebarOpen(true);
-            } else {
-              setNavSheet(id);
-            }
-          };
-          const run = (fn) => () => { setNavSheet(null); fn(); };
-          const sheetItems = {
-            meet: [
-              { id: 'mutual', label: nl.mutual, sub: nl.mutualSub, icon: Users, tone: 'bg-blue-50 text-blue-600', onClick: run(() => setCurrentView('mutual')) },
-              { id: 'link', label: nl.shareLink, sub: nl.shareLinkSub, icon: Link2, tone: 'bg-emerald-50 text-emerald-600', onClick: run(() => setShowWizard(true)) },
-              { id: 'providers', label: nl.providers, sub: nl.providersSub, icon: Briefcase, tone: 'bg-purple-50 text-purple-600', onClick: run(() => setShowProviderDirectory(true)) },
-              ...(user ? [{ id: 'providerProfile', label: nl.providerProfile, sub: nl.providerProfileSub, icon: Settings, tone: 'bg-amber-50 text-amber-600', onClick: run(() => setShowProviderProfileEditor(true)) }] : []),
-            ],
-            tools: [
-              { id: 'alarm', label: nl.alarm, sub: nl.alarmSub, icon: AlarmClock, tone: 'bg-amber-50 text-amber-600', onClick: run(() => setShowAlarmSettings(true)) },
-              { id: 'expenses', label: nl.expenses, sub: nl.expensesSub, icon: Wallet, tone: 'bg-emerald-50 text-emerald-600', onClick: run(() => setShowExpenses(true)) },
-              { id: 'journal', label: nl.journal, sub: nl.journalSub, icon: BookOpen, tone: 'bg-indigo-50 text-indigo-600', onClick: run(() => setShowJournal(true)) },
-              { id: 'challenges', label: nl.challenges, sub: nl.challengesSub, icon: Trophy, tone: 'bg-orange-50 text-orange-600', onClick: run(() => setRoutinesView('discover')) },
-              { id: 'history', label: nl.history, sub: nl.historySub, icon: Clock, tone: 'bg-slate-100 text-slate-600', onClick: run(() => setShowHistoryModal(true)) },
-              { id: 'analytics', label: nl.analytics, sub: nl.analyticsSub, icon: BarChart3, tone: 'bg-sky-50 text-sky-600', onClick: run(() => { setDrawerTab('analytics'); setIsSidebarOpen(true); }) },
-            ],
-          };
-          return (
-            <>
-              <BottomNav
-                tabs={tabs}
-                activeId={activeNav}
-                onSelect={selectTab}
-                isRTL={isRTL}
-              />
-              {navSheet && (
-                <NavSheet
-                  title={navSheet === 'meet' ? nl.meetTitle : nl.toolsTitle}
-                  items={sheetItems[navSheet]}
-                  onClose={() => setNavSheet(null)}
-                  isRTL={isRTL}
-                  closeLabel={nl.close}
-                />
-              )}
-            </>
-          );
-        })()}
+        {renderBottomNav()}
       </div>
 
       {/* Reschedule Modal */}
