@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, Suspense, lazy } from 
 import { motion } from "framer-motion";
 import { BrowserRouter } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
-import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Menu, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff, Home, Plus, Zap, ChevronDown, ChevronUp, FileText, Layout, Trophy, Image, Upload, Search, CalendarPlus, BookOpen, Users, ListChecks } from "lucide-react";
+import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff, Home, Plus, Zap, ChevronDown, ChevronUp, FileText, Layout, Trophy, Image, Upload, Search, CalendarPlus, BookOpen, Users, ListChecks, LayoutGrid, Link2, Briefcase, Settings, AlarmClock, Wallet, BarChart3 } from "lucide-react";
 import { staggerContainerVariants, staggerItemVariants } from "./hooks/useStaggeredAnimation";
 import GlobalSearch from "./components/GlobalSearch";
 import MonthlyCalendar from "./components/MonthlyCalendar";
@@ -12,6 +12,7 @@ import LocationSelector from "./components/LocationSelector";
 import Privacy from "./components/Privacy";
 import ErrorBoundary from "./components/ErrorBoundary";
 import SidebarDrawer from "./components/SidebarDrawer";
+import BottomNav, { NavSheet, getNavLabels } from "./components/BottomNav";
 import MeetingWizard from "./components/MeetingWizard";
 import LuxuryLoader from "./components/LuxuryLoader";
 import ManualEventForm from "./components/ManualEventForm";
@@ -148,12 +149,6 @@ function setJwtToken(token) {
 
 // ── Language configuration ──
 const LANGUAGE_CYCLE = ['he', 'en', 'fr', 'es'];
-const LANGUAGE_NEXT_LABELS = {
-  he: '🌐 EN',
-  en: '🌐 FR',
-  fr: '🌐 ES',
-  es: '🌐 HE'
-};
 
 // ── Timezone options ──
 const TIMEZONE_OPTIONS = [
@@ -354,7 +349,8 @@ function AppRoutes() {
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   // ── Bottom Nav Active Tab ──
-  const [activeTab, setActiveTab] = useState('home');
+  const [navSheet, setNavSheet] = useState(null); // null | 'meet' | 'tools'
+  const [drawerTab, setDrawerTab] = useState('settings');
 
   const handleBuyCredits = useCallback(async () => {
     // App Store rules: digital purchases inside the iOS app must use Apple's
@@ -1581,7 +1577,7 @@ function AppRoutes() {
         </div>
       )}
 
-      <div className={`min-h-screen bg-[#F8FAFC] font-sans pb-[calc(6rem+env(safe-area-inset-bottom))]`} dir={isRTL ? 'rtl' : 'ltr'}>
+      <div className={`min-h-screen bg-[#F8FAFC] font-sans pb-[calc(6.5rem+env(safe-area-inset-bottom))]`} dir={isRTL ? 'rtl' : 'ltr'}>
         {/* iOS In-App Browser Banner */}
         {isIosWhatsApp() && (
           <div className="fixed top-0 left-0 right-0 z-[99999] bg-amber-50 border-b border-amber-200 px-3 py-2 text-xs text-amber-800 flex items-center justify-between gap-2 shadow-sm" dir="rtl">
@@ -1641,11 +1637,8 @@ function AppRoutes() {
 
         {/* ── Minimal Header ── */}
         <header className="px-4 py-3 flex flex-wrap items-center gap-2 max-w-6xl mx-auto">
-          {/* Left: Hamburger + Logo */}
+          {/* Left: Logo (navigation lives in the bottom bar) */}
           <div className="flex items-center gap-2 shrink-0">
-            <button onClick={() => setIsSidebarOpen(true)} aria-label={lang === 'he' ? 'תפריט' : 'Menu'} aria-expanded={isSidebarOpen} className="flex items-center justify-center w-11 h-11 -ms-2 rounded-lg hover:bg-slate-100 transition text-slate-600">
-              <Menu className="w-5 h-5" />
-            </button>
             <Calendar className="w-6 h-6 text-blue-600" />
             <h1 className="text-lg font-bold text-slate-900">CalendAI</h1>
           </div>
@@ -1687,33 +1680,6 @@ function AppRoutes() {
                 </button>
               );
             })()}
-            {/* Daily Journal Button - hide on very small screens, show icon only */}
-            <button
-              onClick={() => setShowJournal(true)}
-              className="hidden xs:flex items-center gap-1 text-xs font-medium px-1.5 sm:px-2.5 py-1.5 rounded-full border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition"
-              title={lang === "he" ? "📖 יומן אישי" : "📖 Daily Journal"}
-            >
-              <BookOpen className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">{lang === "he" ? "יומן" : "Journal"}</span>
-            </button>
-            {/* Public Goals & Challenges Button - hide on very small screens */}
-            <button
-              onClick={() => setShowPublicGoals(true)}
-              className="hidden xs:flex items-center gap-1 text-xs font-medium px-1.5 sm:px-2.5 py-1.5 rounded-full border border-amber-200 text-amber-700 bg-amber-50 hover:bg-amber-100 transition"
-              title={lang === "he" ? "🎯 אתגרים ומטרות משותפות" : "🎯 Public Goals & Challenges"}
-            >
-              <Trophy className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">{lang === "he" ? "אתגרים" : "Goals"}</span>
-            </button>
-            {/* Mutual Scheduling Button — pick slots, share a link, the other person picks what works */}
-            <button
-              onClick={() => setShowWizard(true)}
-              className="hidden xs:flex items-center gap-1 text-xs font-medium px-1.5 sm:px-2.5 py-1.5 rounded-full border border-blue-200 text-blue-700 bg-blue-50 hover:bg-blue-100 transition"
-              title={lang === "he" ? "🤝 תיאום פגישה הדדי" : "🤝 Mutual Scheduling"}
-            >
-              <Users className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">{lang === "he" ? "תיאום" : "Meet"}</span>
-            </button>
             {/* Mobile Search Icon Toggle */}
             <button
               onClick={() => setShowMobileSearch(prev => !prev)}
@@ -1722,17 +1688,18 @@ function AppRoutes() {
             >
               <Search className="w-4 h-4" />
             </button>
-            {/* Language Toggle */}
-            <button onClick={toggleLanguage} className="text-[10px] sm:text-xs font-medium px-1 sm:px-2.5 py-1.5 rounded-full border border-slate-200 text-slate-600 hover:bg-slate-50 transition whitespace-nowrap">
-              {LANGUAGE_NEXT_LABELS[lang] || '🌐 EN'}
-            </button>
             {/* Auth */}
-            {user ? (
-              <button onClick={handleLogout} className="flex items-center gap-1 text-xs font-medium px-1.5 sm:px-2.5 py-1.5 rounded-full border border-slate-200 text-slate-600 hover:bg-slate-50 transition">
-                {user?.photo ? <img src={user.photo} alt="" className="w-5 h-5 rounded-full" /> : <User className="w-4 h-4" />}
-                <span className="hidden sm:inline">{t.logout}</span>
-              </button>
-            ) : (
+            {/* Add event — top-corner "+" like WhatsApp's new-chat button */}
+            <button
+              onClick={() => setShowManualEvent(true)}
+              aria-label={getNavLabels(lang).add}
+              title={getNavLabels(lang).add}
+              className="flex items-center justify-center w-9 h-9 rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 text-white shadow-md shadow-blue-200 hover:shadow-lg transition"
+            >
+              <Plus className="w-5 h-5" />
+            </button>
+            {/* Auth — signed-in users log out from the "You" tab */}
+            {!user && (
               <button onClick={() => handleLogin(lang)} className="flex items-center gap-1 text-xs font-medium px-1.5 sm:px-3 py-1.5 rounded-full bg-blue-600 text-white hover:bg-blue-700 transition shadow-sm">
                 <LogIn className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline">{t.loginWithGoogle}</span>
@@ -2092,74 +2059,71 @@ function AppRoutes() {
         </footer>
 
 
-        {/* ── Bottom Navigation Bar ── */}
-        <nav className="fixed bottom-0 left-0 right-0 z-50 bg-white/80 backdrop-blur-lg border-t border-slate-200/60 safe-area-bottom">
-          <div className="max-w-lg mx-auto flex items-center justify-around py-2 px-2">
-            {/* Home Tab */}
-            <button
-              onClick={() => {
-                setActiveTab('home');
-                setDayOffset(0);
-                try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (e) {}
-              }}
-              className={`flex flex-col items-center gap-0.5 px-2 py-1 min-h-[44px] rounded-xl transition ${
-                activeTab === 'home' ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'
-              }`}
-            >
-              <Home className="w-5 h-5" />
-              <span className="text-[11px] font-medium">{t.home}</span>
-            </button>
-
-            {/* Routines Tab */}
-            <button
-              onClick={() => setRoutinesView('today')}
-              className={`flex flex-col items-center gap-0.5 px-2 py-1 min-h-[44px] rounded-xl transition ${
-                routinesView ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'
-              }`}
-            >
-              <ListChecks className="w-5 h-5" />
-              <span className="text-[11px] font-medium">{lang === 'he' ? 'רוטינות' : 'Routines'}</span>
-            </button>
-
-            {/* Center Add Button - opens manual event form */}
-            <button
-              onClick={() => setShowManualEvent(true)}
-              className="flex flex-col items-center -mt-5"
-            >
-              <div className="w-12 h-12 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-full flex items-center justify-center shadow-lg shadow-blue-200 hover:shadow-xl hover:-translate-y-0.5 transition-all active:translate-y-0">
-                <Plus className="w-6 h-6 text-white" />
-              </div>
-              <span className="text-[11px] font-medium text-slate-500 mt-0.5">{t.addEvent}</span>
-            </button>
-
-            {/* Shared challenges */}
-            <button
-              onClick={() => setRoutinesView('discover')}
-              className="flex flex-col items-center gap-0.5 px-2 py-1 min-h-[44px] rounded-xl transition text-slate-400 hover:text-slate-600"
-            >
-              <Trophy className="w-5 h-5" />
-              <span className="text-[11px] font-medium">{lang === 'he' ? 'אתגרים' : 'Challenges'}</span>
-            </button>
-
-            {/* Credits Tab */}
-            <button
-              onClick={() => {
-                // Show balance and packages first instead of jumping straight to payment.
-                if (user) {
-                  setIsSidebarOpen(true);
-                } else {
-                  setShowLoginPrompt(true);
-                }
-              }}
-              className={`flex flex-col items-center gap-0.5 px-2 py-1 min-h-[44px] rounded-xl transition ${
-                activeTab === 'credits' ? 'text-amber-600' : 'text-slate-400 hover:text-slate-600'
-              }`}
-            >
-              <Zap className="w-5 h-5" />
-              <span className="text-[11px] font-medium">{t.credits}</span>
-            </button>
-          </div>
-        </nav>
+        {/* ── Bottom Navigation Bar (floating, WhatsApp-style) ── */}
+        {(() => {
+          const nl = getNavLabels(lang);
+          const credits = user ? normalizeCredits(user.aiCredits) : undefined;
+          const activeNav = isSidebarOpen ? 'me' : navSheet || (routinesView ? 'routines' : 'home');
+          const tabs = [
+            { id: 'home', label: nl.home, icon: Home, badge: schedule.Today?.length || 0 },
+            { id: 'routines', label: nl.routines, icon: ListChecks },
+            { id: 'meet', label: nl.meet, icon: Users },
+            { id: 'tools', label: nl.tools, icon: LayoutGrid },
+            { id: 'me', label: nl.me, icon: User, photo: user?.photo, dot: credits === 0 },
+          ];
+          const selectTab = (id) => {
+            setNavSheet(null);
+            setIsSidebarOpen(false);
+            if (id === 'home') {
+              setRoutinesView(null);
+              setDayOffset(0);
+              try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (e) {}
+            } else if (id === 'routines') {
+              setRoutinesView('today');
+            } else if (id === 'me') {
+              setDrawerTab('settings');
+              setIsSidebarOpen(true);
+            } else {
+              setNavSheet(id);
+            }
+          };
+          const run = (fn) => () => { setNavSheet(null); fn(); };
+          const sheetItems = {
+            meet: [
+              { id: 'mutual', label: nl.mutual, sub: nl.mutualSub, icon: Users, tone: 'bg-blue-50 text-blue-600', onClick: run(() => setCurrentView('mutual')) },
+              { id: 'link', label: nl.shareLink, sub: nl.shareLinkSub, icon: Link2, tone: 'bg-emerald-50 text-emerald-600', onClick: run(() => setShowWizard(true)) },
+              { id: 'providers', label: nl.providers, sub: nl.providersSub, icon: Briefcase, tone: 'bg-purple-50 text-purple-600', onClick: run(() => setShowProviderDirectory(true)) },
+              ...(user ? [{ id: 'providerProfile', label: nl.providerProfile, sub: nl.providerProfileSub, icon: Settings, tone: 'bg-amber-50 text-amber-600', onClick: run(() => setShowProviderProfileEditor(true)) }] : []),
+            ],
+            tools: [
+              { id: 'alarm', label: nl.alarm, sub: nl.alarmSub, icon: AlarmClock, tone: 'bg-amber-50 text-amber-600', onClick: run(() => setShowAlarmSettings(true)) },
+              { id: 'expenses', label: nl.expenses, sub: nl.expensesSub, icon: Wallet, tone: 'bg-emerald-50 text-emerald-600', onClick: run(() => setShowExpenses(true)) },
+              { id: 'journal', label: nl.journal, sub: nl.journalSub, icon: BookOpen, tone: 'bg-indigo-50 text-indigo-600', onClick: run(() => setShowJournal(true)) },
+              { id: 'challenges', label: nl.challenges, sub: nl.challengesSub, icon: Trophy, tone: 'bg-orange-50 text-orange-600', onClick: run(() => setRoutinesView('discover')) },
+              { id: 'history', label: nl.history, sub: nl.historySub, icon: Clock, tone: 'bg-slate-100 text-slate-600', onClick: run(() => setShowHistoryModal(true)) },
+              { id: 'analytics', label: nl.analytics, sub: nl.analyticsSub, icon: BarChart3, tone: 'bg-sky-50 text-sky-600', onClick: run(() => { setDrawerTab('analytics'); setIsSidebarOpen(true); }) },
+            ],
+          };
+          return (
+            <>
+              <BottomNav
+                tabs={tabs}
+                activeId={activeNav}
+                onSelect={selectTab}
+                isRTL={isRTL}
+              />
+              {navSheet && (
+                <NavSheet
+                  title={navSheet === 'meet' ? nl.meetTitle : nl.toolsTitle}
+                  items={sheetItems[navSheet]}
+                  onClose={() => setNavSheet(null)}
+                  isRTL={isRTL}
+                  closeLabel={nl.close}
+                />
+              )}
+            </>
+          );
+        })()}
       </div>
 
       {/* Reschedule Modal */}
@@ -2630,13 +2594,8 @@ function AppRoutes() {
         user={user}
         isPro={isPro}
         onLogout={handleLogout}
-        onOpenShareModal={() => setShowWizard(true)}
-        onOpenHistory={() => setShowHistoryModal(true)}
-        onOpenMutualScheduler={() => setCurrentView('mutual')}
-        onOpenProviderDirectory={() => setShowProviderDirectory(true)}
-        onOpenProviderProfile={() => setShowProviderProfileEditor(true)}
-        onOpenExpenses={() => setShowExpenses(true)}
-        onOpenAlarm={() => setShowAlarmSettings(true)}
+        initialTab={drawerTab}
+        title={drawerTab === 'analytics' ? getNavLabels(lang).analytics : getNavLabels(lang).me}
         selectedLocation={profileLocation !== 'none' ? profileLocation : selectedLocation}
         onLocationChange={(loc) => {
           setProfileLocation(loc);
