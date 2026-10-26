@@ -452,6 +452,37 @@ test('getMutualFreeSlots: clips today\'s window to the current time but leaves l
   }
 });
 
+test('getMutualFreeSlots: skips Saturday entirely and caps Friday at the Shabbat-start cutoff', async () => {
+  // 2026-01-01T08:00:00Z is 10:00 AM in Asia/Jerusalem, a Thursday, so with
+  // rangeDays=3 the window covers Thu 1/1, Fri 1/2 and Sat 1/3 — exactly the
+  // Friday-cutoff/Saturday-skip combination isSlotMutuallyFree enforces
+  // server-side, but which getMutualFreeSlots' own listing had no direct
+  // coverage for until now (only the plain weekday-clipping test above did).
+  mock.timers.enable({ apis: ['Date'], now: new Date('2026-01-01T08:00:00Z').getTime() });
+  const calendarMock = mock.method(google, 'calendar', () => ({
+    freebusy: { query: async () => ({ data: { calendars: { primary: { busy: [] } } } }) }
+  }));
+  try {
+    const host = { _id: 'host-1', googleAccessToken: 'fake', googleRefreshToken: 'fake', schedule: {} };
+    const invitee = { _id: 'invitee-1', googleAccessToken: 'fake', googleRefreshToken: 'fake', schedule: {} };
+
+    const results = await getMutualFreeSlots(host, invitee, { locationId: 'jerusalem', duration: 30, rangeDays: 3 });
+
+    assert.ok(!results.some(r => r.date === '2026-01-03'), 'Saturday (Shabbat) must never appear in the results');
+
+    const friday = results.find(r => r.date === '2026-01-02');
+    assert.ok(friday && friday.freeSlots.length, 'Friday should still offer slots before the Shabbat-start cutoff');
+    const lastSlot = friday.freeSlots[friday.freeSlots.length - 1];
+    const [h, m] = lastSlot.endTime.replace(/\s*(AM|PM)/i, '').split(':').map(Number);
+    const isPM = /PM/i.test(lastSlot.endTime);
+    const endMin = ((isPM && h !== 12 ? h + 12 : (!isPM && h === 12 ? 0 : h)) * 60) + m;
+    assert.ok(endMin <= FRIDAY_SHABBAT_CUTOFF_MIN, `Friday's last slot must end by the 16:00 cutoff, got ${lastSlot.endTime}`);
+  } finally {
+    mock.timers.reset();
+    calendarMock.mock.restore();
+  }
+});
+
 // ── getFreeBusyForDay(): the actual Google freebusy.query integration —
 // every other test file (providerGoogleAvailability.test.js,
 // getMutualFreeSlots' own test above) stubs this function out entirely, so
