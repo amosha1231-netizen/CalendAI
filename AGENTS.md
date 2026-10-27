@@ -38,3 +38,17 @@ Do not treat `frontend/dist/` as source of truth (gitignored; build from `fronte
 
 ## When touching god-files
 Prefer new files under `backend/routes|services|models` and `frontend/src/components|pages|hooks`. Import from `server.js` / `App.jsx`; do not duplicate User/Event schemas.
+
+## Known sandbox limitation: `node --test` in backend/
+Tests that spin up `mongodb-memory-server` (`mutualBooking.test.js` and any
+other file importing `MongoMemoryReplSet`/`MongoMemoryServer`) download a
+MongoDB binary from `fastdl.mongodb.org` on first run. In the cloud-session
+sandbox this host is denied by the outbound network policy (403 at the agent
+proxy — confirmed via `curl $HTTPS_PROXY/__agentproxy/status`, not a code
+bug). Expect `node --test` to report ~16 failures from exactly those files
+even on a fully green branch; everything else (the other ~200 tests,
+including all `*RoutesValidation`/`*Availability` pure-logic and mocked-route
+tests) must still pass. Don't try to "fix" this by weakening/skipping those
+tests — it's an environment gap, not a regression. If a future run has real
+network access (e.g. a cached binary or an unblocked host), treat any
+failure in those files as real and investigate normally.
