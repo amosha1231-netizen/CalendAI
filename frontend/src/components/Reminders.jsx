@@ -514,13 +514,22 @@ export default function Reminders({ lang = 'he', user, onClose, onChanged, onReq
  * push subscription). Push, when on, is sent by the server even if the app is
  * closed; this covers the app being open, and devices without Web Push.
  */
-export function RemindersCard({ lang = 'he', user, refreshKey, onOpen, onTryExample }) {
+/**
+ * Keeps the reminders list fresh, hands it to the calendar (onReminders) and
+ * shows the in-app ping when one is due. Renders nothing else: reminders live
+ * in the calendar, not in a card at the top of the home screen.
+ */
+export function RemindersPinger({ lang = 'he', user, refreshKey, onReminders }) {
   const s = getStrings(lang);
   const isRtl = lang === 'he';
   const { reminders, push, load } = useReminders(user, refreshKey);
   const [pings, setPings] = useState([]);
   const firedRef = useRef(new Set());
   const hasPushRef = useRef(false);
+
+  useEffect(() => {
+    if (onReminders) onReminders(user ? (reminders || []) : []);
+  }, [user, reminders, onReminders]);
 
   useEffect(() => {
     let alive = true;
@@ -570,38 +579,9 @@ export function RemindersCard({ lang = 'he', user, refreshKey, onOpen, onTryExam
   }, [user, reminders, load]);
 
   if (!user || !reminders) return null;
-  const upcoming = reminders.filter(r => r.active && r.nextFireAt).slice(0, 2);
 
   return (
     <>
-      {reminders.length === 0 ? (
-        <button onClick={() => (onTryExample ? onTryExample(s.tryExample) : onOpen())}
-          className="w-full flex items-center gap-3 bg-white rounded-2xl border border-dashed border-amber-300 p-3 text-start">
-          <span className="text-2xl">⏰</span>
-          <span className="flex-1 min-w-0">
-            <span className="block font-semibold text-slate-800">{s.title}</span>
-            <span className="block text-sm text-slate-500 truncate">“{s.tryExample}”</span>
-          </span>
-          <Plus className="w-5 h-5 text-amber-600 shrink-0" />
-        </button>
-      ) : (
-        <button onClick={() => onOpen()} className="w-full bg-white rounded-2xl border border-slate-200 p-3 text-start shadow-sm">
-          <span className="flex items-center justify-between mb-1.5">
-            <span className="font-semibold text-slate-800 flex items-center gap-1.5"><Bell className="w-4 h-4 text-amber-500" />{s.title}</span>
-            <span className="text-sm text-indigo-600">{reminders.length} {s.count}</span>
-          </span>
-          {upcoming.length === 0 ? (
-            <span className="block text-sm text-slate-500">{s.paused}</span>
-          ) : upcoming.map(r => (
-            <span key={r.id} className="flex items-center gap-2 text-sm py-0.5 min-w-0">
-              <span className="shrink-0">{r.emoji}</span>
-              <span className="flex-1 min-w-0 truncate text-slate-700">{r.title}</span>
-              <span className="shrink-0 text-slate-500" dir="ltr">{describeNext(r.nextFireAt, lang)}</span>
-            </span>
-          ))}
-        </button>
-      )}
-
       {/* In-app ping banner */}
       <div className="fixed inset-x-0 z-[95] flex flex-col items-center gap-2 px-4 pointer-events-none" style={{ top: 'max(0.75rem, env(safe-area-inset-top))' }}>
         <AnimatePresence>
@@ -621,5 +601,45 @@ export function RemindersCard({ lang = 'he', user, refreshKey, onOpen, onTryExam
         </AnimatePresence>
       </div>
     </>
+  );
+}
+
+function localDayKey(date) {
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${date.getFullYear()}-${m}-${d}`;
+}
+
+/** Active reminders that ping on the given local date, sorted by time. */
+export function remindersOnDate(reminders, date) {
+  if (!reminders || !reminders.length || !date || isNaN(date.getTime())) return [];
+  const weekday = date.getDay();
+  // The server never pings on Shabbat.
+  if (weekday === 6) return [];
+  const key = localDayKey(date);
+  return reminders.filter(r => {
+    if (!r.active) return false;
+    switch (r.frequency) {
+      case 'daily': return true;
+      case 'weekly': return (r.daysOfWeek || []).includes(weekday);
+      case 'monthly': return Number(r.dayOfMonth) === date.getDate();
+      case 'once': return r.date === key;
+      default: return false;
+    }
+  }).sort((a, b) => String(a.time).localeCompare(String(b.time)));
+}
+
+/** A reminder as a small amber line inside a calendar day. */
+export function ReminderChip({ reminder, lang = 'he', onClick }) {
+  const s = getStrings(lang);
+  return (
+    <button type="button" onClick={e => { e.stopPropagation(); if (onClick) onClick(reminder); }}
+      title={`${s.reminder}: ${reminder.title}`}
+      className="w-full flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800 hover:bg-amber-100 transition text-start min-w-0">
+      <span className="shrink-0">{reminder.emoji || '🔔'}</span>
+      <span className="shrink-0 font-semibold" dir="ltr">{reminder.time}</span>
+      <span className="flex-1 min-w-0 truncate">{reminder.title}</span>
+      <Bell className="w-3 h-3 text-amber-500 shrink-0" />
+    </button>
   );
 }
