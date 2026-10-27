@@ -28,7 +28,7 @@ function authHeaders() {
  * both calendars at once. If the invitee isn't a connected CalendAI user,
  * `onFallbackToShareLink` hands off to the existing guest-link flow.
  */
-export default function MutualScheduler({ lang, t, locationId, onClose, onFallbackToShareLink }) {
+export default function MutualScheduler({ lang, t, locationId, onClose, onFallbackToShareLink, onMeetingConfirmed }) {
   const isRTL = lang === 'he';
 
   const [step, setStep] = useState('invitee-email'); // 'invitee-email' | 'select-slot' | 'confirm' | 'success'
@@ -203,6 +203,10 @@ export default function MutualScheduler({ lang, t, locationId, onClose, onFallba
       }
       setConfirmedSession(data.session);
       setStep('success');
+      // The confirmed meeting was just pushed into the host's own `schedule`
+      // document server-side — the dashboard's in-memory schedule state has
+      // no way to know that happened unless told to refetch.
+      if (onMeetingConfirmed) onMeetingConfirmed();
     } catch (err) {
       setConfirmError(err.message);
     } finally {

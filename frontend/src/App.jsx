@@ -1531,6 +1531,7 @@ function AppRoutes() {
         locationId={selectedLocation}
         onClose={() => setCurrentView('dashboard')}
         onFallbackToShareLink={() => setCurrentView('booking')}
+        onMeetingConfirmed={fetchSchedule}
       />
     );
   }
@@ -2713,6 +2714,7 @@ function AppRoutes() {
               setShowProviderBooking(false);
               setSelectedProviderId(null);
             }}
+            onBookingConfirmed={fetchSchedule}
           />
         </Suspense>
       )}
@@ -2724,6 +2726,7 @@ function AppRoutes() {
             lang={lang}
             user={user}
             onClose={() => setShowProviderProfileEditor(false)}
+            onBookingCancelled={fetchSchedule}
           />
         </Suspense>
       )}

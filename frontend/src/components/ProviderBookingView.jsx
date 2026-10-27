@@ -23,7 +23,7 @@ function todayIsoInTimeZone(timeZone) {
   }
 }
 
-export default function ProviderBookingView({ providerId, lang, user, onClose }) {
+export default function ProviderBookingView({ providerId, lang, user, onClose, onBookingConfirmed }) {
   const isRtl = lang === "he";
 
   const [provider, setProvider] = useState(null);
@@ -161,6 +161,11 @@ export default function ProviderBookingView({ providerId, lang, user, onClose })
       setConfirmedBooking(data.booking);
       // Refresh slots so the just-taken one disappears if the user books again.
       fetchSlots(selectedServiceId, selectedDate);
+      // If the signed-in booker is the provider themselves (e.g. testing their
+      // own public page), this booking just landed in their own `schedule`
+      // document server-side — let the caller refetch it. A no-op prop for
+      // every other (normal) booker.
+      if (onBookingConfirmed) onBookingConfirmed();
     } catch (err) {
       setConfirmError(err.message);
     } finally {

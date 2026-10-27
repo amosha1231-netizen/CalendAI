@@ -18,7 +18,7 @@ const CATEGORY_OPTIONS = ['general', 'barber', 'trainer', 'consultant', 'therapi
 const CATEGORY_LABELS_HE = { general: "⭐ כללי", barber: "💇 מספרה", trainer: "🏋️ מאמן", consultant: "💼 יועץ", therapist: "🧘 מטפל" };
 const CATEGORY_LABELS_EN = { general: "⭐ General", barber: "💇 Barber", trainer: "🏋️ Trainer", consultant: "💼 Consultant", therapist: "🧘 Therapist" };
 
-export default function ProviderProfileEditor({ lang, user, onClose }) {
+export default function ProviderProfileEditor({ lang, user, onClose, onBookingCancelled }) {
   const isRtl = lang === "he";
   const dayLabels = lang === "he" ? DAY_LABELS_HE : DAY_LABELS_EN;
   const categoryLabels = lang === "he" ? CATEGORY_LABELS_HE : CATEGORY_LABELS_EN;
@@ -113,6 +113,10 @@ export default function ProviderProfileEditor({ lang, user, onClose }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to cancel booking");
       setBookings(bookings.filter(b => b._id !== bookingId));
+      // Cancelling pulls the mirrored event out of the provider's (this
+      // user's) own `schedule` document server-side — tell the dashboard to
+      // refetch so a stale cancelled meeting doesn't linger in its calendar view.
+      if (onBookingCancelled) onBookingCancelled();
     } catch (err) {
       setBookingsError(err.message);
     } finally {
