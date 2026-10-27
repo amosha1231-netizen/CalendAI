@@ -1383,6 +1383,7 @@ app.get('/api/auth/me', async (req, res) => {
   // Support both session-based auth (passport) and JWT token auth (Authorization: Bearer)
   const authHeader = req.headers.authorization;
   let userId = null;
+  let renewedToken = null;
 
   if (authHeader && authHeader.startsWith('Bearer ')) {
     // JWT token-based authentication
@@ -1390,6 +1391,11 @@ app.get('/api/auth/me', async (req, res) => {
     try {
       const decoded = jwt.verify(token, JWT_SECRET);
       userId = decoded.id;
+      // Sliding expiry: a token older than a day is swapped for a fresh 30-day one,
+      // so anyone who opens the app at least once a month stays signed in.
+      if (userId && decoded.iat && Date.now() / 1000 - decoded.iat > 24 * 60 * 60) {
+        renewedToken = jwt.sign({ id: String(userId) }, JWT_SECRET, { expiresIn: '30d' });
+      }
     } catch (err) {
       // Return 401 Unauthorized for invalid/expired tokens so the frontend
       // can distinguish between "no user" and "invalid token" and clear storage accordingly.
@@ -1437,7 +1443,7 @@ app.get('/api/auth/me', async (req, res) => {
     console.error('Failed to fetch fresh user data:', err.message);
   }
 
-  res.json({ user: freshUser });
+  res.json(freshUser && renewedToken ? { user: freshUser, token: renewedToken } : { user: freshUser });
 });
 
 app.post('/api/auth/logout', (req, res) => {

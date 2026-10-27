@@ -318,7 +318,7 @@
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.4);
-  z-index: 9998;
+  z-index: 9980;
   backdrop-filter: blur(2px);
   animation: fade-in 0.2s ease-out;
 }
@@ -430,7 +430,7 @@ html, body {
   padding-top: env(safe-area-inset-top, 0px);
   padding-bottom: env(safe-area-inset-bottom, 0px);
   background: white;
-  z-index: 9999;
+  z-index: 9981;
   box-shadow: -4px 0 24px rgba(0, 0, 0, 0.15);
   display: flex;
   flex-direction: column;
@@ -1749,4 +1749,24 @@ html, body {
 
 .booking-footer {
   padding-top: 0.5rem;
+}
+/* ──────────────────────────────────────────── */
+/* Bottom navigation bar                        */
+/* ──────────────────────────────────────────── */
+/* While the floating bar is shown (z 9990), screens and sheets opened under it
+   end just above it, so the bar stays visible and nothing hides behind it.
+   Dialogs at z 9999+ (login, alarm ringing, Shabbat) still cover everything. */
+body.has-bottom-nav {
+  --bottom-nav-space: calc(5.75rem + env(safe-area-inset-bottom, 0px));
+}
+
+body.has-bottom-nav .fixed.inset-0:not(.z-\[9999\]):not(.z-\[10000\]):not(.z-\[10001\]),
+body.has-bottom-nav .sidebar-overlay {
+  bottom: var(--bottom-nav-space);
+}
+
+body.has-bottom-nav .sidebar-drawer {
+  bottom: var(--bottom-nav-space);
+  height: auto;
+  padding-bottom: 0;
 }

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { X, BarChart3, Zap, Settings, Download, Moon, Sun, Target, Clock, Trophy, Activity, Share2, MapPin, Loader2, ExternalLink, CheckCircle, Mic, Globe, Users, Briefcase, Wallet } from 'lucide-react';
+import { X, BarChart3, Zap, Settings, Download, Moon, Sun, Target, Trophy, Activity, Share2, MapPin, Loader2, ExternalLink, CheckCircle, Mic, Globe } from 'lucide-react';
 import safeStorage from '../utils/safeStorage';
 import { getDeviceTimeZone, setDetectedLocation, presetLocationForTimeZone } from '../utils/userLocation';
 import SiriSetupModal from './SiriSetupModal';
@@ -138,8 +138,8 @@ function isDesktopDevice() {
   }
 }
 
-export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangChange, t, user, isPro, onUpgradeToPro, onLogout, onOpenShareModal, selectedLocation, onLocationChange, selectedTimezone, onTimezoneChange, timezoneOptions, onOpenHistory, onOpenMutualScheduler, onOpenProviderDirectory, onOpenProviderProfile, onOpenExpenses, onOpenAlarm }) {
-  const [activeTab, setActiveTab] = useState('settings');
+export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangChange, t, user, isPro, onUpgradeToPro, onLogout, onOpenShareModal, selectedLocation, onLocationChange, selectedTimezone, onTimezoneChange, timezoneOptions, initialTab = 'settings', title }) {
+  const [activeTab, setActiveTab] = useState(initialTab);
   const [settingsData, setSettingsData] = useState({
     lang: lang,
     defaultStart: '06:00',
@@ -156,6 +156,13 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangC
   const [upgradeLoading, setUpgradeLoading] = useState(false);
   const [upgradeError, setUpgradeError] = useState("");
   const [showSiriModal, setShowSiriModal] = useState(false);
+  const [confirmLogout, setConfirmLogout] = useState(false);
+
+  // Each opening lands on the tab it was opened for (e.g. Analytics from the Tools sheet).
+  useEffect(() => {
+    if (isOpen) setActiveTab(initialTab);
+    setConfirmLogout(false);
+  }, [isOpen, initialTab]);
 
   useEffect(() => {
     window.addEventListener('beforeinstallprompt', (e) => {
@@ -347,7 +354,7 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangC
       {/* Drawer */}
       <div className={`sidebar-drawer ${isOpen ? 'open' : ''} w-full max-w-full box-border`} dir={isRTL ? 'rtl' : 'ltr'}>
         <div className="sidebar-header">
-          <h2 className="sidebar-title">{t.sidebarTitle}</h2>
+          <h2 className="sidebar-title">{title || t.sidebarTitle}</h2>
           <button onClick={onClose} className="sidebar-close-btn">
             <X className="w-5 h-5" />
           </button>
@@ -389,89 +396,6 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangC
             </button>
           )}
         </div>
-
-        {/* History Button — triggers modal instead of tab */}
-        <div className="px-4 mb-2">
-          <button
-            onClick={() => {
-              onClose();
-              if (onOpenHistory) onOpenHistory();
-            }}
-            className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 transition"
-          >
-            <Clock className="w-5 h-5" />
-            <span>{lang === 'he' ? '📜 היסטוריית פעולות ובקשות' : '📜 Action & Request History'}</span>
-          </button>
-          {onOpenAlarm && (
-            <button
-              onClick={() => {
-                onClose();
-                onOpenAlarm();
-              }}
-              className="w-full mt-2 flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200 transition"
-            >
-              <span>{t.alarmMenuButton || '⏰ Smart alarm'}</span>
-            </button>
-          )}
-        </div>
-
-        {/* Mutual Scheduling Button — pick slots, share a link, the other person picks what works */}
-        <div className="px-4 mb-2">
-          <button
-            onClick={() => {
-              onClose();
-              if (onOpenMutualScheduler) onOpenMutualScheduler();
-            }}
-            className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 transition"
-          >
-            <Users className="w-5 h-5" />
-            <span>{lang === 'he' ? '🤝 תיאום פגישה הדדי' : '🤝 Mutual Scheduling'}</span>
-          </button>
-        </div>
-
-        {/* Expected Expenses Button */}
-        <div className="px-4 mb-2">
-          <button
-            onClick={() => {
-              onClose();
-              if (onOpenExpenses) onOpenExpenses();
-            }}
-            className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 transition"
-          >
-            <Wallet className="w-5 h-5" />
-            <span>{lang === 'he' ? '💰 הוצאות צפויות' : '💰 Expected Expenses'}</span>
-          </button>
-        </div>
-
-        {/* Find a Provider Button */}
-        <div className="px-4 mb-2">
-          <button
-            onClick={() => {
-              onClose();
-              if (onOpenProviderDirectory) onOpenProviderDirectory();
-            }}
-            className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200 transition"
-          >
-            <Briefcase className="w-5 h-5" />
-            <span>{lang === 'he' ? '💼 מצא נותן שירות' : '💼 Find a Provider'}</span>
-          </button>
-        </div>
-
-        {/* My Provider Profile Button — only when signed in */}
-        {user && (
-          <div className="px-4 mb-2">
-            <button
-              onClick={() => {
-                onClose();
-                if (onOpenProviderProfile) onOpenProviderProfile();
-              }}
-              className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200 transition"
-            >
-              <Settings className="w-5 h-5" />
-              <span>{lang === 'he' ? '⚙️ הפרופיל שלי כנותן שירות' : '⚙️ My Provider Profile'}</span>
-            </button>
-          </div>
-        )}
 
         {/* Content Area */}
         <div className="sidebar-content">
@@ -837,9 +761,21 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangC
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-medium text-slate-700 truncate">{user.displayName || user.email}</div>
               </div>
-              <button onClick={onLogout} className="text-xs text-red-500 hover:text-red-700 font-medium">
-                {t.logout}
-              </button>
+              {/* Two taps to log out, so a stray tap doesn't end the session */}
+              {confirmLogout ? (
+                <span className="flex items-center gap-2">
+                  <button onClick={() => setConfirmLogout(false)} className="text-xs text-slate-500 hover:text-slate-700 font-medium px-2 py-1.5">
+                    {t.cancel || (lang === 'he' ? 'ביטול' : 'Cancel')}
+                  </button>
+                  <button onClick={onLogout} className="text-xs text-white bg-red-500 hover:bg-red-600 font-medium px-3 py-1.5 rounded-full">
+                    {lang === 'he' ? 'כן, להתנתק' : `${t.logout}?`}
+                  </button>
+                </span>
+              ) : (
+                <button onClick={() => setConfirmLogout(true)} className="text-xs text-red-500 hover:text-red-700 font-medium px-2 py-1.5">
+                  {t.logout}
+                </button>
+              )}
             </div>
           </div>
         )}
