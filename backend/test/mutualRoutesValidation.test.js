@@ -912,3 +912,53 @@ test('POST /sessions/:id/cancel: the invitee (not just the host) is authorized t
     server.close();
   }
 });
+
+// mutualBooking.test.js' "cancelMutualSession: cancelling an already-completed
+// session rolls back its mirrored schedule entries on both sides" exercises
+// this same rollback, but with no googleAccessToken on either fixture user —
+// so rollbackCompletedSession's two `if (eventId && user?.googleAccessToken)`
+// branches (the actual Google Calendar event deletions) never run there.
+// Nothing else in this suite drives POST /:id/cancel against a *completed*
+// session either — every other /cancel test above uses 'active' or
+// 'cancelled'. Without this test, a regression that stopped the cancel route
+// from deleting a completed session's Google Calendar events (e.g. passing
+// the wrong doc shape into rollbackCompletedSession, or losing the
+// hostEventId/inviteeEventId off the pre-image) would pass every other test
+// in this file.
+test('POST /sessions/:id/cancel: cancelling a completed session deletes both Google Calendar events', async (t) => {
+  const hostId = new mongoose.Types.ObjectId();
+  const inviteeId = new mongoose.Types.ObjectId();
+  const session = {
+    sessionId: 'mut_x', status: 'completed', hostId, inviteeId,
+    hostEventId: 'h-evt-1', inviteeEventId: 'i-evt-1'
+  };
+  t.mock.method(MutualBooking, 'findOne', async () => session);
+  t.mock.method(MutualBooking, 'findOneAndUpdate', async (filter) => {
+    assert.deepEqual(filter, { sessionId: 'mut_x', status: { $ne: 'cancelled' } });
+    return session; // pre-image: still 'completed' the instant the update applied
+  });
+
+  const hostUser = { _id: hostId, googleAccessToken: 'tok-host' };
+  const inviteeUser = { _id: inviteeId, googleAccessToken: 'tok-invitee' };
+  t.mock.method(User, 'findById', async (id) => (String(id) === String(hostId) ? hostUser : inviteeUser));
+  const userUpdateOneMock = t.mock.method(User, 'updateOne', async () => ({}));
+  t.mock.method(googleCalendarService, 'createOAuth2ClientWithRefresh', async () => ({}));
+
+  const deletedEventIds = [];
+  t.mock.method(google, 'calendar', () => ({
+    events: { delete: async ({ eventId }) => { deletedEventIds.push(eventId); } }
+  }));
+
+  const { server, base } = startApp(freshMutualRoutes());
+  try {
+    const res = await fetch(`${base}/api/mutual/sessions/mut_x/cancel`, { method: 'POST', headers: authed(hostId) });
+    const data = await res.json();
+    assert.equal(res.status, 200);
+    assert.equal(data.ok, true);
+    assert.equal(data.alreadyCancelled, false);
+    assert.deepEqual(deletedEventIds, ['h-evt-1', 'i-evt-1'], 'both the host\'s and invitee\'s Google Calendar events must be deleted, not left orphaned');
+    assert.equal(userUpdateOneMock.mock.callCount(), 2, 'the mirrored schedule entry must be pulled from both the host\'s and invitee\'s User docs');
+  } finally {
+    server.close();
+  }
+});
