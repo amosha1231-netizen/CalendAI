@@ -48,3 +48,27 @@ No other correctness bugs found. Noted but not acted on (test-coverage gap,
 not a bug): `providerRoutes.js`'s `winsOverlapRace` 3+-way chain-resolution
 case (A/B/C, documented in its own comment) has no direct unit test for 3
 simultaneous overlapping candidates — only the 2-party race is tested.
+
+## 2026-10-28 run notes (second run, same day)
+Correction to the note directly above: it was already stale when written.
+The 3-way `winsOverlapRace` chain case *does* have a direct unit test —
+`backend/test/providerRoutesValidation.test.js:624` (`winsOverlapRace: a
+3-way overlap chain (A-B, B-C, not A-C) keeps both ends and drops only the
+middle`), added together with the fix itself in commit `8e84146` ("Fix
+provider-booking 3-way overlap race losing a non-conflicting booking"),
+predating the note. Verified the test and the fix are in the tree and the
+logic is correct for both the chain and a fully-connected clique shape.
+No remaining coverage gap here.
+
+Re-ran this run's own `npm install` (fresh clone, no persisted
+`node_modules`), `npm run build` (frontend, clean) and
+`node --test "test/**/*.test.js"` (backend, 204/220 pass — the same 16
+`mongodb-memory-server` sandbox-network failures, confirmed by error text
+to be the known 403 from `fastdl.mongodb.org`, not regressions).
+
+Ran a full independent adversarial re-read of all 10 mutual/provider files,
+their test coverage, and `App.jsx` wiring (races on status transitions,
+timezone/DST and Shabbat-guard edges, Google freebusy partial failures,
+input validation, frontend stale-closure/race bugs). Found nothing new to
+fix — the feature set remains in the mature state left by the prior ~25
+hardening commits. No code changes this run beyond this file.
