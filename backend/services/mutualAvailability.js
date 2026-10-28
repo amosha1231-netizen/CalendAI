@@ -315,6 +315,23 @@ async function isSlotMutuallyFree(host, invitee, { locationId, date, startTime, 
     return { free: false, timeZone };
   }
 
+  // HARD DAY-WINDOW GUARD: getMutualFreeSlots() never lists a slot outside
+  // [dayStartHHMM, dayEndHHMM), but this function is the server-side source
+  // of truth /confirm relies on to re-verify a client-supplied window — and
+  // the freebusy query just below is itself windowed to exactly
+  // [dayStartHHMM, dayEndHHMM). Without this check, a direct API call
+  // requesting a window outside that range (e.g. a slot that was never
+  // actually offered) would have its "busy" data silently come back empty
+  // (freebusy.query was never asked about that time), reading as free
+  // regardless of any real conflict there — and getting locked in as a
+  // genuine double-booking on both calendars. Same failure shape the
+  // Shabbat/Friday guards above already close for a different bypass.
+  const dayStartMin = minutesSinceMidnight(dayStartHHMM);
+  const dayEndMin = minutesSinceMidnight(dayEndHHMM);
+  if (startMin < dayStartMin || endMin > dayEndMin) {
+    return { free: false, timeZone };
+  }
+
   const [busyHost, busyInvitee] = await Promise.all([
     getFreeBusyForDay(host, date, dayStartHHMM, dayEndHHMM, timeZone),
     getFreeBusyForDay(invitee, date, dayStartHHMM, dayEndHHMM, timeZone)

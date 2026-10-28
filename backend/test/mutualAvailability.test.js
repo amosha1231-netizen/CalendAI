@@ -311,6 +311,38 @@ test('isSlotMutuallyFree: a Friday slot that ends exactly at the Shabbat-start c
   }
 });
 
+// ── isSlotMutuallyFree(): HARD DAY-WINDOW GUARD. getFreeBusyForDay windows
+// its freebusy.query to exactly [defaultDayStart, defaultDayEnd) — a request
+// for a window outside that range would never have real conflicts fetched
+// for it at all (not merely skipped by a Shabbat/Friday guard), so it must be
+// rejected outright before ever reaching Google, the same short-circuit
+// proof technique (fake credentials) used by the guards above. ──
+test('isSlotMutuallyFree: rejects a slot starting before the location\'s day-start, without even checking the calendars', async () => {
+  const host = { _id: 'host-1', googleAccessToken: 'fake' };
+  const invitee = { _id: 'invitee-1', googleAccessToken: 'fake' };
+  // Jerusalem's defaultDayStart is 06:00; 2026-11-09 is a Monday (no other guard applies).
+  const result = await isSlotMutuallyFree(host, invitee, {
+    locationId: 'jerusalem',
+    date: '2026-11-09',
+    startTime: '05:30 AM',
+    endTime: '06:00 AM'
+  });
+  assert.deepEqual(result, { free: false, timeZone: 'Asia/Jerusalem' });
+});
+
+test('isSlotMutuallyFree: rejects a slot ending after the location\'s day-end, without even checking the calendars', async () => {
+  const host = { _id: 'host-1', googleAccessToken: 'fake' };
+  const invitee = { _id: 'invitee-1', googleAccessToken: 'fake' };
+  // Jerusalem's defaultDayEnd is 23:00; 2026-11-09 is a Monday (no other guard applies).
+  const result = await isSlotMutuallyFree(host, invitee, {
+    locationId: 'jerusalem',
+    date: '2026-11-09',
+    startTime: '11:00 PM',
+    endTime: '11:30 PM'
+  });
+  assert.deepEqual(result, { free: false, timeZone: 'Asia/Jerusalem' });
+});
+
 // ── isSlotMutuallyFree(): the actual freebusy-based decision. Every test
 // above only exercises the short-circuit guards (Shabbat, already-started,
 // Friday cutoff) via deliberately-invalid credentials that would blow up if
