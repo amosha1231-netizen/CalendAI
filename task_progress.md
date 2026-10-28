@@ -108,3 +108,31 @@ and the frontend staleness guards (request-id refs, unmount-cleanup
 mutual/provider hardening) is done.** Four consecutive runs across two days
 have independently re-read the full feature set and found nothing left to
 fix. No ambiguous UX decision or open question for the human at this time.
+
+## 2026-10-28 run notes (fourth run, same day)
+Fresh clone, so `npm install` in both `frontend/` and `backend/` first.
+`npm run build` (frontend) clean. `node --test` (backend, default discovery
+— `node --test "test/**/*.test.js"` with the glob quoted finds 0 tests since
+node's own recursive discovery needs no args): 204/220 pass, 16 failures all
+confirmed by error text to be the known `fastdl.mongodb.org` 403 sandbox-network
+limitation (`criticalPaths.test.js`, `mutualBooking.test.js`,
+`ownerCredits.test.js`, `providerRoutesValidation` overlap in that same
+set) — not regressions.
+
+Delegated a fifth independent adversarial review of all 10 mutual/provider
+files plus `App.jsx`/`server.js` wiring, and a direct re-check of
+task_progress.md items 1-5 against current code, to a sub-agent with
+explicit instructions not to trust prior "no bugs" notes. It re-verified the
+claim/verify/insert/rollback skeletons in both route files, the day-window/
+Shabbat/Friday-cutoff guards, `winsOverlapRace`'s 3-way chain resolution,
+`providerBookingSchema`'s `pre('save')` `activeSlot` recompute, Google
+freebusy fail-closed handling, and the frontend stale-closure/request-id
+guards. Also re-confirmed `handleParse`'s `setInputText("")` ordering is
+correct (closure captures the pre-clear value for the in-flight request,
+not a bug), and that image upload (multer + `/api/parse-image` +
+`parseImageWithVision`) is fully wired. Found no new bugs. No code changes
+this run beyond this file.
+
+Five consecutive runs (four today, one yesterday) have now independently
+re-read the full feature set and found nothing left to fix. Confirming the
+status above still holds.
