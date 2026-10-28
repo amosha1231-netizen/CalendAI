@@ -72,3 +72,39 @@ timezone/DST and Shabbat-guard edges, Google freebusy partial failures,
 input validation, frontend stale-closure/race bugs). Found nothing new to
 fix — the feature set remains in the mature state left by the prior ~25
 hardening commits. No code changes this run beyond this file.
+
+## 2026-10-28 run notes (third run, same day)
+Re-verified the image-upload and input-clearing items from the top of this
+file directly against current code rather than trusting the checkmarks:
+`setInputText("")` fires immediately in `handleParse`
+(`frontend/src/App.jsx:1040`); `multer` + `POST /api/parse-image` +
+`parseImageWithVision` are all present and wired
+(`backend/server.js:37,2329`, `backend/services/aiService.js:1027`); the
+frontend upload button calls `handleParseImage` →
+`${API_BASE}/api/parse-image` (`frontend/src/App.jsx:986,1002`). All items 1-5
+genuinely hold — nothing left to implement there.
+
+Fresh clone again this run (no persisted `node_modules`): `npm install` in
+both `frontend/` and `backend/`, `npm run build` (frontend) clean,
+`npm test` / `node --test` (backend) 204/220 pass — confirmed by error text
+that all 16 failures are the known `fastdl.mongodb.org` 403 sandbox-network
+limitation (`criticalPaths.test.js`, `mutualBooking.test.js`,
+`ownerCredits.test.js`), not regressions.
+
+Delegated a full independent adversarial review of all 10 mutual/provider
+files + `App.jsx` wiring to a sub-agent (races on status transitions,
+rollback/cleanup logic, timezone/DST/Shabbat edges, Google freebusy
+partial-failure handling, input validation, frontend stale-closure/race
+bugs, test-coverage gaps) with explicit instructions not to trust prior
+runs' "no new bugs" notes at face value. It confirmed correctness of the
+day-window/Shabbat/Friday-cutoff guards, the `winsOverlapRace` 3-way chain
+resolution, `scheduleRevision` optimistic-concurrency writes in both
+mutual and provider confirm routes, Google freebusy fail-closed handling,
+timezone-correct "today" resolution using each location's own IANA zone,
+and the frontend staleness guards (request-id refs, unmount-cleanup
+`liveRef`). Found no new bugs. No code changes this run beyond this file.
+
+**Status: all in-scope work for this WIP branch (task_progress.md items +
+mutual/provider hardening) is done.** Four consecutive runs across two days
+have independently re-read the full feature set and found nothing left to
+fix. No ambiguous UX decision or open question for the human at this time.
