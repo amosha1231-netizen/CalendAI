@@ -19,3 +19,32 @@ Did a full adversarial read of all 10 mutual/provider files
 rollbacks, Shabbat guards, timezone edge cases, and rate limits, and test
 coverage for all of that is already in place (161 non-Mongo tests green).
 No code changes this run beyond this file and the AGENTS.md note.
+
+## 2026-10-28 run notes
+Fresh clone, so `npm install` in both `frontend/` and `backend/` first (the
+prior run's green test numbers assumed deps already present — the sandbox
+does not persist `node_modules` between runs). After install: `npm run
+build` (frontend) clean; `node --test` (backend) 204/220 pass, 16 known
+mongodb-memory-server sandbox failures (see AGENTS.md).
+
+Did another independent adversarial read of the same 10 mutual/provider
+files plus wiring, deliberately not trusting the prior run's "no new bugs"
+note at face value. Found and fixed one real gap this time:
+`isSlotMutuallyFree` (`backend/services/mutualAvailability.js`) never
+bounded the client-submitted start/end time to the location's
+`[defaultDayStart, defaultDayEnd)` window, while the freebusy.query it runs
+is itself windowed to exactly that range. A direct API call to
+`POST /api/mutual/sessions/:id/confirm` with a time outside that window
+(the UI never offers one) would have "busy" data silently come back empty
+for that range — not because it's actually free, but because Google was
+never asked about it — and get confirmed as a genuine double-booking on
+both calendars. Added a day-window guard mirroring the existing
+Shabbat/Friday guards right above it, plus two regression tests in
+`backend/test/mutualAvailability.test.js` (before day-start, after
+day-end), using the file's existing fake-credentials short-circuit-proof
+pattern. All 53 tests in that file pass.
+
+No other correctness bugs found. Noted but not acted on (test-coverage gap,
+not a bug): `providerRoutes.js`'s `winsOverlapRace` 3+-way chain-resolution
+case (A/B/C, documented in its own comment) has no direct unit test for 3
+simultaneous overlapping candidates — only the 2-party race is tested.
