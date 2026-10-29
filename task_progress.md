@@ -136,3 +136,53 @@ this run beyond this file.
 Five consecutive runs (four today, one yesterday) have now independently
 re-read the full feature set and found nothing left to fix. Confirming the
 status above still holds.
+
+## 2026-10-29 run notes
+Fresh clone, so `npm install` in both `frontend/` and `backend/` first.
+`npm run build` (frontend) clean. `node --test` (backend): 204/220 pass
+before this run's fix, 16 known `fastdl.mongodb.org` sandbox-network
+failures confirmed by error text (not regressions) — see AGENTS.md.
+
+Delegated a sixth independent adversarial review (same 10 mutual/provider
+files + wiring, explicit instructions not to trust prior "no bugs" notes)
+to a sub-agent. This time it found a real, previously-missed bug:
+
+**NoSQL/regex-operator injection via `category` on `GET /api/providers`**
+(`backend/routes/providerRoutes.js`, the public/unauthenticated provider
+browse route). Unlike `q` a few lines below — which is deliberately run
+through `escapeRegex()` per that function's own comment, specifically to
+stop a Mongo `$regex` catastrophic-backtracking (ReDoS) attack — `category`
+was dropped straight into the `User.find` filter object with no type
+check. Express's default query parser turns bracket-notation query strings
+into nested objects, so `GET /api/providers?category[$regex]=(a+)+$&category[$options]=i`
+made `req.query.category` become `{ $regex: "(a+)+$", $options: "i" }`,
+which flowed unchanged into the live Mongo query — handing an anonymous
+caller the same ReDoS primitive `escapeRegex` exists to block, plus
+arbitrary-operator injection (`$ne`, `$gt`, `$exists`, `$in`, ...) on this
+field. The write-side counterpart (`PUT /me`) already cast `category` to a
+string (`String(category).trim().slice(0, 50) || 'general'`), showing the
+sanitization need was recognized there but missed on this read path.
+
+Fixed by mirroring that same cast-to-string pattern on the read side
+(`typeof category === 'string' ? category.trim().slice(0, 50) : ''`) so a
+non-string `category` is silently ignored rather than reaching Mongo as an
+object. Added two regression tests to `backend/test/providerSearch.test.js`:
+one asserting the bracket-notation injection never reaches the Mongo filter
+as an object, one asserting a plain string `category` still works as a
+literal equality filter. Confirmed both pass (`node --test
+test/providerSearch.test.js`, 6/6), then reran the full suite: 222 tests
+total (2 new), 206 pass, the same 16 known sandbox-network failures.
+`npm run build` (frontend) still clean after the fix (no frontend code
+touched).
+
+The sub-agent's review also covered day-window/DST/cross-midnight
+interactions with the 3-way overlap-race resolution, every ordering of
+Google Calendar partial-failure rollback in both confirm/book routes, and
+frontend double-submit/stale-availability guards — all re-derived as
+correct, nothing else to report. One pre-existing test-coverage gap noted
+but not acted on (not a bug): `POST /bookings/:id/cancel` has no
+route-level test for deleting a synced Google Calendar event on a
+*confirmed* booking (only a model-level test exists).
+
+No other correctness bugs found this run. No ambiguous UX decision or open
+question for the human.
