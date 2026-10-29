@@ -81,6 +81,52 @@ test('GET /api/providers?q=...: a regex-metacharacter search term is escaped bef
   }
 });
 
+// ── GET / (browse): `category` is cast to a string before reaching Mongo ──
+// Regression: category was dropped into the Mongo filter with no type check.
+// Express's query parser turns bracket syntax like
+// ?category[$regex]=(a+)+$&category[$options]=i into a nested object
+// ({ $regex: '(a+)+$', $options: 'i' }), which would otherwise be handed
+// straight to Mongo as a live query operator — the same NoSQL/ReDoS
+// injection class escapeRegex() guards against for `q`, just via `category`.
+test('GET /api/providers?category[$regex]=...: an object-shaped category is never passed through as a Mongo operator', async (t) => {
+  let capturedFilter = null;
+  t.mock.method(User, 'find', (filter) => {
+    capturedFilter = filter;
+    return { select: () => ({ limit: () => ({ lean: async () => [] }) }) };
+  });
+
+  const { server, base } = startApp(freshProviderRoutes());
+  try {
+    const res = await fetch(`${base}/api/providers?${new URLSearchParams({ 'category[$regex]': '(a+)+$', 'category[$options]': 'i' })}`);
+    assert.equal(res.status, 200);
+    assert.ok(capturedFilter, 'the route must have reached User.find');
+    assert.equal(
+      typeof capturedFilter['providerProfile.category'],
+      'undefined',
+      'an object-shaped category must not be forwarded into the Mongo filter at all'
+    );
+  } finally {
+    server.close();
+  }
+});
+
+test('GET /api/providers?category=...: a plain string category is forwarded as a literal equality match', async (t) => {
+  let capturedFilter = null;
+  t.mock.method(User, 'find', (filter) => {
+    capturedFilter = filter;
+    return { select: () => ({ limit: () => ({ lean: async () => [] }) }) };
+  });
+
+  const { server, base } = startApp(freshProviderRoutes());
+  try {
+    const res = await fetch(`${base}/api/providers?${new URLSearchParams({ category: 'barber' })}`);
+    assert.equal(res.status, 200);
+    assert.equal(capturedFilter['providerProfile.category'], 'barber');
+  } finally {
+    server.close();
+  }
+});
+
 test('GET /api/providers: the 31st request in a minute is rate-limited', async (t) => {
   t.mock.method(User, 'find', () => ({ select: () => ({ limit: () => ({ lean: async () => [] }) }) }));
 

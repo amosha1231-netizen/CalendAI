@@ -449,7 +449,13 @@ router.get('/', browseLimiter, async (req, res) => {
   try {
     const { q, category } = req.query;
     const filter = { 'providerProfile.enabled': true };
-    if (category && category !== 'all') filter['providerProfile.category'] = category;
+    // category must be cast to a plain string before use: Express's query
+    // parser turns bracket syntax like ?category[$regex]=... into a nested
+    // object, which would otherwise be handed straight to Mongo as a live
+    // query operator (NoSQL/ReDoS injection) — same risk escapeRegex() above
+    // guards against for `q`, just via a different field.
+    const safeCategory = typeof category === 'string' ? category.trim().slice(0, 50) : '';
+    if (safeCategory && safeCategory !== 'all') filter['providerProfile.category'] = safeCategory;
     if (q && q.trim()) {
       const safe = escapeRegex(q.trim().slice(0, 100));
       filter.$or = [
