@@ -186,3 +186,68 @@ route-level test for deleting a synced Google Calendar event on a
 
 No other correctness bugs found this run. No ambiguous UX decision or open
 question for the human.
+
+## 2026-10-29 run notes (second run, same day)
+Fresh clone, so `npm install` in both `frontend/` and `backend/` first.
+`npm run build` (frontend) clean. `node --test "test/**/*.test.js"` (backend):
+206/222 pass before this run's fix, 16 known `fastdl.mongodb.org`
+sandbox-network failures confirmed by error text (not regressions) — see
+AGENTS.md.
+
+Delegated a seventh independent adversarial review (same 10 mutual/provider
+files + wiring, explicit instructions not to trust prior "no bugs" notes,
+with a pointer at the `category`-injection bug class from the run right
+before this one in case a sibling existed elsewhere) to a sub-agent. It
+found a second real, previously-missed bug:
+
+**Silent lost-update: cancelling a `processing` `ProviderBooking` could race
+`POST /:id/book`'s own confirm step and resurrect a "cancelled" booking as
+confirmed, orphaning its Google Calendar event.**
+`POST /bookings/:id/cancel` (`backend/routes/providerRoutes.js`) did a plain
+`findById` → mutate `.status` → `.save()`, unlike every other status
+transition in this codebase (contrast `mutualRoutes.js`'s
+`cancelMutualSession`, which uses an atomic `findOneAndUpdate` specifically
+to close this exact race, per its own comment). Its rollback only ran when
+the booking was already `confirmed`, so cancelling a still-`processing`
+booking correctly skipped it — but `POST /:id/book`'s own final confirm step
+(`createdBooking.status = 'confirmed'; ...; await createdBooking.save()`)
+was an unconditional `.save()` with no check on the document's current
+status (`ProviderBookingSchema` has no `optimisticConcurrency`). So: a guest
+books a slot; while `/:id/book` is mid-Google-Calendar-insert, the provider
+(who can already see the pending `processing` booking via
+`GET /my-bookings`, whose filter is `status: { $ne: 'cancelled' }`) cancels
+it; the cancel reads `processing`, skips rollback, sets `cancelled`; then
+the original `/:id/book` request finishes and unconditionally overwrites
+the same document back to `confirmed` — reopening the unique-index slot via
+the `pre('save')` `activeSlot` recompute, with a live Google Calendar event
+nothing ever deletes, while the provider believes they cancelled it.
+
+Fixed both sides to be atomic, mirroring `cancelMutualSession`'s pattern:
+`POST /bookings/:id/cancel` now does `findOneAndUpdate({_id, status: {$ne:
+'cancelled'}}, {$set:{status:'cancelled'}}, {new:false})` and decides the
+confirmed-only calendar/schedule rollback from the returned pre-image, never
+a stale read. `POST /:id/book`'s final confirm now does
+`findOneAndUpdate({_id, status:'processing'}, {$set:{status:'confirmed',
+...}}, {new:true})`; if that fails to match (a concurrent cancel won), it
+throws a 409 that the route's existing catch-block rollback (schedule
+pull + Google event delete + booking delete) already handles correctly,
+rather than resurrecting the booking. Updated the three existing
+`providerRoutesValidation.test.js` cancel tests (which relied on mocking
+`.save()`) to mock the new atomic `findOneAndUpdate` instead, and the one
+success-path `/:id/book` test that reaches the confirm step. Added three
+new regression tests: cancelling an already-processing booking skips the
+confirmed-only rollback and never looks up the provider; a concurrent
+cancel winning the race before `/:id/book`'s own confirm rolls back the
+schedule push and deletes the booking instead of confirming it; the
+already-cancelled idempotent-cancel path now goes through the atomic
+update's own filter rather than an upfront status check. All 48 tests in
+`providerRoutesValidation.test.js` pass; full suite 208/224 (16 known
+sandbox failures, net +2 tests from this run). `npm run build` (frontend)
+still clean (no frontend code touched).
+
+The sub-agent's review also re-checked every public-route query/body param
+across both route files for the same bracket-notation-into-Mongo-filter
+injection shape as the `category` bug (all are string/ObjectId/regex-typed
+already), and found no CLAUDE.md violations (no raw `localStorage`, no
+non-ISO `Date` parsing). No other correctness bugs found this run. No
+ambiguous UX decision or open question for the human.
