@@ -638,6 +638,80 @@ test('POST /sessions/:id/confirm: the invitee schedule push losing its optimisti
   }
 });
 
+// This branch has twice fixed the bug class "a status-mutating write loses a
+// race against a concurrent cancel" on the *provider*-booking side (the
+// cancel-vs-/:id/book lost-update race, then the activeSlot pre-save-hook
+// bypass that followed it) — this is the same shape on the *mutual*-session
+// side: a concurrent POST /sessions/:id/cancel landing after both Google
+// Calendar events are inserted and both schedules are pushed, but *before*
+// this route's own final findOneAndUpdate({status:'processing'} ->
+// {status:'completed'}). That update's filter requires status:'processing',
+// so a session already flipped to 'cancelled' by the concurrent cancel makes
+// it return null — covered here to prove the route treats that as a genuine
+// failure (rolls back both calendar events and both schedule pushes) rather
+// than silently "succeeding" with a stale response or resurrecting the
+// session back to 'active' over the top of the real cancellation.
+test('POST /sessions/:id/confirm: a concurrent cancel winning the race just before the final completion update rolls back both calendar events and both schedule pushes', async (t) => {
+  const hostId = new mongoose.Types.ObjectId();
+  const inviteeId = new mongoose.Types.ObjectId();
+  const existing = { sessionId: 'mut_x', duration: 30, locationId: 'jerusalem', hostId, inviteeId };
+  const claimedSession = { ...existing, status: 'processing' };
+
+  t.mock.method(MutualBooking, 'findOne', async () => existing);
+  t.mock.method(MutualBooking, 'findOneAndUpdate', async (filter) => {
+    if (filter.status === 'active') return claimedSession;
+    // The final completion step: a concurrent cancel already flipped the
+    // session to 'cancelled', so the 'processing' filter no longer matches.
+    if (filter.status === 'processing') return null;
+    throw new Error('unexpected findOneAndUpdate filter: ' + JSON.stringify(filter));
+  });
+  const mutualUpdateOneMock = t.mock.method(MutualBooking, 'updateOne', async () => ({}));
+
+  const hostUser = { _id: hostId, email: 'host@test.com', googleAccessToken: 'tok-host', scheduleRevision: 0 };
+  const inviteeUser = { _id: inviteeId, email: 'invitee@test.com', googleAccessToken: 'tok-invitee', scheduleRevision: 0 };
+  t.mock.method(User, 'findById', async (id) => (String(id) === String(hostId) ? hostUser : inviteeUser));
+  // Both schedule pushes succeed — the race is only lost at the very last step.
+  const userUpdateOneMock = t.mock.method(User, 'updateOne', async () => ({ matchedCount: 1 }));
+
+  t.mock.method(mutualAvailability, 'isSlotMutuallyFree', async () => ({ free: true, timeZone: 'Asia/Jerusalem' }));
+  t.mock.method(googleCalendarService, 'createOAuth2ClientWithRefresh', async () => ({}));
+
+  const insertedEventIds = [];
+  const deletedEventIds = [];
+  t.mock.method(google, 'calendar', () => ({
+    events: {
+      insert: async () => {
+        const id = `evt-${insertedEventIds.length + 1}`;
+        insertedEventIds.push(id);
+        return { data: { id } };
+      },
+      delete: async ({ eventId }) => { deletedEventIds.push(eventId); }
+    }
+  }));
+
+  const { server, base } = startApp(freshMutualRoutes());
+  try {
+    const res = await fetch(`${base}/api/mutual/sessions/mut_x/confirm`, {
+      method: 'POST', headers: authed(hostId),
+      body: JSON.stringify({ date: '2099-12-01', startTime: '10:00 AM', endTime: '10:30 AM' })
+    });
+    const data = await res.json();
+    assert.equal(res.status, 503);
+    assert.match(data.error, /Could not finalize/);
+    assert.equal(insertedEventIds.length, 2, 'both calendar events must already have been inserted before the final completion step runs');
+    assert.deepEqual(new Set(deletedEventIds), new Set(insertedEventIds), 'both just-inserted calendar events must be rolled back using the real event ids, not left orphaned on either calendar');
+    assert.equal(userUpdateOneMock.mock.callCount(), 4, '2 successful schedule pushes + 2 rollback schedule pulls (host and invitee)');
+    assert.equal(mutualUpdateOneMock.mock.callCount(), 1, 'the route must still attempt to release the claim back to active');
+    assert.deepEqual(
+      mutualUpdateOneMock.mock.calls[0].arguments[0],
+      { sessionId: 'mut_x', status: 'processing' },
+      'the release-back-to-active update must itself be filtered on status:processing, so in real MongoDB it is a no-op against the already-cancelled document rather than resurrecting it'
+    );
+  } finally {
+    server.close();
+  }
+});
+
 // ── GET /api/mutual/lookup ──
 // No test file touches this route directly today: rateLimiting.test.js only
 // exercises its abuse limiter (unauthenticated, so every request it sends
