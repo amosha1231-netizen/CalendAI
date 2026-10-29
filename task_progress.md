@@ -251,3 +251,67 @@ injection shape as the `category` bug (all are string/ObjectId/regex-typed
 already), and found no CLAUDE.md violations (no raw `localStorage`, no
 non-ISO `Date` parsing). No other correctness bugs found this run. No
 ambiguous UX decision or open question for the human.
+
+## 2026-10-29 run notes (third run, same day)
+Fresh clone, so `npm install` in both `frontend/` and `backend/` first. `npm
+run build` (frontend) clean. `node --test` (backend): 208/224 pass before
+this run's fix, 16 known `fastdl.mongodb.org` sandbox-network failures
+confirmed by error text (not regressions) — see AGENTS.md.
+
+Delegated an eighth independent adversarial review (same 10 mutual/provider
+files + wiring, explicit instructions not to trust prior "no bugs" notes,
+with a pointer at the status-transition-race bug class already fixed twice
+on this branch in case a regression crept back in) to a sub-agent. It found
+a real regression introduced by the *previous* run's own fix (commit
+`d953347`):
+
+**A cancelled `ProviderBooking` keeps `activeSlot: true`, so its slot stays
+permanently locked in the unique partial index.** `POST
+/bookings/:id/cancel` (`backend/routes/providerRoutes.js`) was changed last
+run from a plain `.save()` to an atomic `findOneAndUpdate({_id, status:
+{$ne: 'cancelled'}}, {$set: {status: 'cancelled'}})` to close the
+lost-update race against `/:id/book`'s own confirm step — correctly fixing
+that race, but `findOneAndUpdate` does not run Mongoose's `pre('save')`
+hook, and `ProviderBookingSchema`'s *only* place that syncs `activeSlot`
+(the boolean the unique `{providerId, date, startTime}` partial index
+actually keys on) is that hook (`this.activeSlot = this.status !==
+'cancelled'`). So every cancel via this path now leaves `activeSlot: true`
+on a `status: 'cancelled'` document: the unique index keeps treating that
+slot as taken, forever. `GET /:id/availability` still reports the slot as
+free (its own filter is on `status`, not `activeSlot`), so a guest can get
+through the availability check, then the subsequent `ProviderBooking.create`
+for that exact slot always loses to a stale E11000 duplicate-key error —
+"slot already booked by someone else" on a slot that is actually empty,
+with no recovery short of a manual DB fix. The existing cancel tests all
+mock `findOneAndUpdate` wholesale without asserting on the update document,
+so none of them caught the missing field.
+
+Fixed by adding `activeSlot: false` to the same `$set` the cancel route
+already issues atomically alongside `status: 'cancelled'` — one field, same
+write, same atomicity guarantee, no new race introduced. Updated
+`providerRoutesValidation.test.js`'s one test that asserted the exact `$set`
+shape (`the booking's own provider can cancel a processing booking`) to
+include the new field — that was already a tight enough regression check on
+its own. A true end-to-end "cancel then rebook the same slot hits the real
+unique index" test would need `mongodb-memory-server`, which per AGENTS.md
+this sandbox can't run — notably, `providerRoutesValidation` test #75
+("provider booking: a cancelled booking does not block re-booking the same
+slot") is exactly that scenario and is one of the 16 sandbox-blocked tests;
+treat it as a live regression check once a future run has real network
+access to `fastdl.mongodb.org`, not as already passing.
+
+Full suite after the fix: 208/224 pass (unchanged pass count — one assertion
+updated, no tests added/removed this run), same 16 known sandbox-network
+failures. `npm run build` (frontend) clean (no frontend code touched).
+
+The sub-agent's review also re-verified the mutual-session side's atomic
+transitions (claim/confirm/cancel), day-window/Shabbat guards, Google
+Calendar partial-failure rollback ordering on both route files, and all
+other query/body params for the bracket-notation injection shape — no other
+findings. No ambiguous UX decision or open question for the human.
+
+**Takeaway for future runs:** any time a status-mutating write is changed
+from `.save()` to `findOneAndUpdate`/`updateOne` to close a race (this is now
+the second time on this branch), check whether that model has any
+`pre('save')`-only derived field — `activeSlot` here — that the bypassed
+hook was also responsible for, and set it explicitly in the same `$set`.

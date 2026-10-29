@@ -1022,7 +1022,7 @@ test('POST /bookings/:id/cancel: the booking\'s own provider can cancel a proces
     assert.equal(data.ok, true);
     assert.equal(updateMock.mock.callCount(), 1);
     assert.deepEqual(updateMock.mock.calls[0].arguments[0], { _id: bookingId, status: { $ne: 'cancelled' } });
-    assert.deepEqual(updateMock.mock.calls[0].arguments[1], { $set: { status: 'cancelled' } });
+    assert.deepEqual(updateMock.mock.calls[0].arguments[1], { $set: { status: 'cancelled', activeSlot: false } });
   } finally {
     server.close();
   }

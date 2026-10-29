@@ -411,9 +411,13 @@ router.post('/bookings/:id/cancel', async (req, res) => {
     // below: whichever of the two writes the document first wins, and the
     // pre-image this returns reflects what the document actually held the
     // instant this update applied, not a stale read taken before it.
+    // findOneAndUpdate bypasses the schema's pre('save') hook, so activeSlot
+    // must be set here explicitly — otherwise a cancelled booking would keep
+    // activeSlot: true and stay stuck in the unique partial index, permanently
+    // blocking any future booking of the same provider+date+startTime.
     const prior = await ProviderBooking.findOneAndUpdate(
       { _id: booking._id, status: { $ne: 'cancelled' } },
-      { $set: { status: 'cancelled' } },
+      { $set: { status: 'cancelled', activeSlot: false } },
       { new: false }
     );
     if (!prior) return res.json({ ok: true, alreadyCancelled: true });
