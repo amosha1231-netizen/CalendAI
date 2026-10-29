@@ -183,7 +183,7 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangC
     try {
       const position = await new Promise((resolve, reject) => {
         navigator.geolocation.getCurrentPosition(resolve, reject, {
-          enableHighAccuracy: true,
+          enableHighAccuracy: false, // city-level is enough; the app only holds coarse location
           timeout: 10000,
           maximumAge: 60000
         });
