@@ -165,6 +165,26 @@ test('PUT /me: an availability row whose end is not after its start is rejected'
   }
 });
 
+test('PUT /me: a non-string availability startTime/endTime is rejected with 400, not a 500 crash', async (t) => {
+  // Regression: timeToMinutes(row.startTime) called `.match()` on the value
+  // with no typeof guard, so a non-string (e.g. an object) threw a
+  // TypeError caught by the route's own try/catch and surfaced as a bare
+  // 500 instead of the normal 400 validation response every other
+  // malformed-availability-row case gets.
+  const userId = new mongoose.Types.ObjectId();
+  t.mock.method(User, 'findByIdAndUpdate', () => { throw new Error('must not be reached'); });
+  const { server, base } = startApp(freshProviderRoutes(), { userId });
+  try {
+    const res = await fetch(`${base}/api/providers/me`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ availability: [{ day: 'Monday', startTime: {}, endTime: '09:00 AM' }] })
+    });
+    assert.equal(res.status, 400);
+  } finally {
+    server.close();
+  }
+});
+
 test('PUT /me: more than MAX_SERVICES services is rejected', async (t) => {
   const userId = new mongoose.Types.ObjectId();
   t.mock.method(User, 'findByIdAndUpdate', () => { throw new Error('must not be reached'); });

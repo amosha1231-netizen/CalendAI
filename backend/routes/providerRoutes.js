@@ -320,6 +320,9 @@ router.put('/me', async (req, res) => {
         if (!row || !VALID_DAYS.includes(row.day) || row.day === 'Saturday') {
           return res.status(400).json({ error: 'יום זמינות לא תקין (שבת אינה נתמכת).' });
         }
+        if (typeof row.startTime !== 'string' || typeof row.endTime !== 'string') {
+          return res.status(400).json({ error: 'טווח שעות זמינות לא תקין.' });
+        }
         const startMin = timeToMinutes(row.startTime);
         const endMin = timeToMinutes(row.endTime);
         if (startMin === null || endMin === null || endMin <= startMin) {
@@ -473,8 +476,12 @@ router.get('/', browseLimiter, async (req, res) => {
     // guards against for `q`, just via a different field.
     const safeCategory = typeof category === 'string' ? category.trim().slice(0, 50) : '';
     if (safeCategory && safeCategory !== 'all') filter['providerProfile.category'] = safeCategory;
-    if (q && q.trim()) {
-      const safe = escapeRegex(q.trim().slice(0, 100));
+    // q must be cast the same way as category above: ?q[x]=1 or ?q=a&q=b
+    // turns req.query.q into an object/array with no .trim(), which would
+    // otherwise throw a TypeError and surface as a bare 500.
+    const safeQ = typeof q === 'string' ? q.trim() : '';
+    if (safeQ) {
+      const safe = escapeRegex(safeQ.slice(0, 100));
       filter.$or = [
         { 'providerProfile.businessName': { $regex: safe, $options: 'i' } },
         { 'providerProfile.bio': { $regex: safe, $options: 'i' } },
