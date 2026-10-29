@@ -718,10 +718,21 @@ test('POST /:id/book: a successful booking\'s "Today" push is decided by the pro
     _id: new mongoose.Types.ObjectId(),
     createdAt: new Date('2026-12-07T08:00:01.000Z'),
     day: 'Monday',
-    async save() { return this; },
-    toObject() { return { _id: this._id, status: this.status }; }
+    status: 'processing'
   };
   t.mock.method(ProviderBooking, 'create', () => Promise.resolve(createdBooking));
+  // The final confirm step is now an atomic findOneAndUpdate conditioned on
+  // status still being 'processing' (not a plain createdBooking.save()) —
+  // see the lost-update race fix in providerRoutes.js. The mock returns a
+  // document with the fields the response relies on (toObject()).
+  const confirmMock = t.mock.method(ProviderBooking, 'findOneAndUpdate', async (filter, update) => {
+    assert.deepEqual(filter, { _id: createdBooking._id, status: 'processing' });
+    return {
+      ...createdBooking,
+      ...update.$set,
+      toObject() { return { _id: createdBooking._id, status: update.$set.status }; }
+    };
+  });
   const updateOneMock = t.mock.method(User, 'updateOne', () => Promise.resolve({ matchedCount: 1 }));
 
   // Deliberately wrong day — if the route ever fell back to consulting this,
@@ -845,6 +856,64 @@ test('POST /:id/book: a Google Calendar sync failure after the schedule push alr
   }
 });
 
+// Regression test for the lost-update race fixed alongside
+// POST /bookings/:id/cancel's own atomic update: a cancel can land on this
+// exact document between this request's schedule push/Google sync and its
+// final confirm. Before the fix, the confirm step was a plain
+// createdBooking.status = 'confirmed'; await createdBooking.save(), which
+// would silently resurrect the just-cancelled booking as confirmed with no
+// check on its current status. Simulated here by having the mocked
+// findOneAndUpdate (conditioned on status still being 'processing') return
+// null, exactly as the real driver would once a concurrent cancel has
+// already flipped the document to 'cancelled'.
+test('POST /:id/book: a concurrent cancel winning the race before this request\'s own confirm step rolls back the schedule push instead of resurrecting the booking as confirmed', async (t) => {
+  const serviceId = new mongoose.Types.ObjectId();
+  const providerId = new mongoose.Types.ObjectId();
+  mock.timers.enable({ apis: ['Date'], now: new Date('2026-12-02T08:00:00Z').getTime() });
+  t.mock.method(User, 'findOne', () => Promise.resolve({
+    _id: providerId,
+    googleAccessToken: null, // no Google sync in play — isolates the status-race fix itself
+    schedule: {},
+    scheduleRevision: 0,
+    providerProfile: {
+      locationId: 'jerusalem',
+      services: [{ _id: serviceId, name: 'Haircut', duration: 30, active: true }],
+      availability: [{ day: 'Monday', startTime: '09:00 AM', endTime: '11:00 AM' }]
+    }
+  }));
+  t.mock.method(ProviderBooking, 'find', () => ({ select: () => ({ lean: async () => [] }) }));
+  const createdBooking = { _id: new mongoose.Types.ObjectId(), day: 'Monday', createdAt: new Date('2026-12-07T09:00:00.000Z'), status: 'processing' };
+  t.mock.method(ProviderBooking, 'create', () => Promise.resolve(createdBooking));
+  const deleteMock = t.mock.method(ProviderBooking, 'deleteOne', () => Promise.resolve({ deletedCount: 1 }));
+  const updateOneMock = t.mock.method(User, 'updateOne', () => Promise.resolve({ matchedCount: 1 }));
+  // A concurrent POST /bookings/:id/cancel already committed its own atomic
+  // update, flipping this document to 'cancelled' — so the confirm's filter
+  // (status: 'processing') no longer matches.
+  const confirmMock = t.mock.method(ProviderBooking, 'findOneAndUpdate', async (filter) => {
+    assert.deepEqual(filter, { _id: createdBooking._id, status: 'processing' });
+    return null;
+  });
+
+  const { server, base } = startApp(freshProviderRoutes());
+  try {
+    const res = await fetch(`${base}/api/providers/${providerId}/book`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ serviceId: serviceId.toString(), date: '2026-12-07', startTime: '09:00 AM', guestName: 'Guest' })
+    });
+    const data = await res.json();
+    assert.equal(res.status, 409, JSON.stringify(data));
+    assert.match(data.error, /בוטלה/);
+    assert.equal(confirmMock.mock.callCount(), 1);
+    assert.equal(updateOneMock.mock.callCount(), 2, '1 successful push + 1 rollback pull undoing it, since the confirm never committed');
+    assert.deepEqual(updateOneMock.mock.calls[1].arguments[1], { $pull: { 'schedule.Monday': { providerBookingId: createdBooking._id.toString() } } });
+    assert.equal(deleteMock.mock.callCount(), 1, 'the booking document must still be removed rather than left confirmed with no corresponding calendar event');
+    assert.equal(deleteMock.mock.calls[0].arguments[0]._id, createdBooking._id);
+  } finally {
+    server.close();
+    mock.timers.reset();
+  }
+});
+
 test('POST /:id/book: a past date is rejected relative to the provider\'s own location timezone', async (t) => {
   const serviceId = new mongoose.Types.ObjectId();
   t.mock.method(User, 'findOne', () => Promise.resolve({
@@ -921,6 +990,13 @@ test('POST /bookings/:id/cancel: cancelling an already-cancelled booking is idem
   const userId = new mongoose.Types.ObjectId();
   const booking = { providerId: userId, bookedByUserId: null, status: 'cancelled' };
   t.mock.method(ProviderBooking, 'findById', () => Promise.resolve(booking));
+  // The atomic cancel update's own filter (status: { $ne: 'cancelled' }) is
+  // what makes this idempotent now — a document already 'cancelled' doesn't
+  // match it, so the mock returns null exactly as the real driver would.
+  t.mock.method(ProviderBooking, 'findOneAndUpdate', async (filter) => {
+    assert.deepEqual(filter.status, { $ne: 'cancelled' });
+    return null;
+  });
   const { server, base } = startApp(freshProviderRoutes(), { userId });
   try {
     const res = await fetch(`${base}/api/providers/bookings/${new mongoose.Types.ObjectId()}/cancel`, { method: 'POST' });
@@ -934,20 +1010,19 @@ test('POST /bookings/:id/cancel: cancelling an already-cancelled booking is idem
 
 test('POST /bookings/:id/cancel: the booking\'s own provider can cancel a processing (not-yet-confirmed) booking', async (t) => {
   const userId = new mongoose.Types.ObjectId();
-  const booking = {
-    providerId: userId,
-    bookedByUserId: null,
-    status: 'processing',
-    save: async () => {}
-  };
+  const bookingId = new mongoose.Types.ObjectId();
+  const booking = { _id: bookingId, providerId: userId, bookedByUserId: null, status: 'processing' };
   t.mock.method(ProviderBooking, 'findById', () => Promise.resolve(booking));
+  const updateMock = t.mock.method(ProviderBooking, 'findOneAndUpdate', async () => ({ ...booking, status: 'processing' }));
   const { server, base } = startApp(freshProviderRoutes(), { userId });
   try {
     const res = await fetch(`${base}/api/providers/bookings/${new mongoose.Types.ObjectId()}/cancel`, { method: 'POST' });
     const data = await res.json();
     assert.equal(res.status, 200);
     assert.equal(data.ok, true);
-    assert.equal(booking.status, 'cancelled');
+    assert.equal(updateMock.mock.callCount(), 1);
+    assert.deepEqual(updateMock.mock.calls[0].arguments[0], { _id: bookingId, status: { $ne: 'cancelled' } });
+    assert.deepEqual(updateMock.mock.calls[0].arguments[1], { $set: { status: 'cancelled' } });
   } finally {
     server.close();
   }
@@ -956,19 +1031,48 @@ test('POST /bookings/:id/cancel: the booking\'s own provider can cancel a proces
 test('POST /bookings/:id/cancel: the guest who made the booking (bookedByUserId) can cancel it even though they are not the provider', async (t) => {
   const guestUserId = new mongoose.Types.ObjectId();
   const booking = {
+    _id: new mongoose.Types.ObjectId(),
     providerId: new mongoose.Types.ObjectId(),
     bookedByUserId: guestUserId,
-    status: 'processing',
-    save: async () => {}
+    status: 'processing'
   };
   t.mock.method(ProviderBooking, 'findById', () => Promise.resolve(booking));
+  t.mock.method(ProviderBooking, 'findOneAndUpdate', async () => ({ ...booking, status: 'processing' }));
   const { server, base } = startApp(freshProviderRoutes(), { userId: guestUserId });
   try {
     const res = await fetch(`${base}/api/providers/bookings/${new mongoose.Types.ObjectId()}/cancel`, { method: 'POST' });
     const data = await res.json();
     assert.equal(res.status, 200);
     assert.equal(data.ok, true);
-    assert.equal(booking.status, 'cancelled');
+  } finally {
+    server.close();
+  }
+});
+
+// Regression test for a lost-update race: POST /:id/book's own final confirm
+// step used to be a plain read-then-save (createdBooking.status = 'confirmed';
+// await createdBooking.save()) with no check on the document's current
+// status, so a cancel that committed in between would get silently
+// overwritten back to 'confirmed' by this stale in-memory object — see the
+// atomic findOneAndUpdate guard added to that confirm step. This test
+// exercises /bookings/:id/cancel's side in isolation: a cancel that lands
+// while the booking is still 'processing' must not attempt the
+// confirmed-only calendar/schedule rollback (there is nothing to roll back
+// yet — the still-in-flight /:id/book request's own confirm step, guarded
+// the same way, is responsible for undoing its own schedule push/Google
+// event if it loses the race).
+test('POST /bookings/:id/cancel: cancelling a still-processing booking skips the confirmed-only rollback entirely', async (t) => {
+  const userId = new mongoose.Types.ObjectId();
+  const bookingId = new mongoose.Types.ObjectId();
+  const booking = { _id: bookingId, providerId: userId, bookedByUserId: null, status: 'processing' };
+  t.mock.method(ProviderBooking, 'findById', () => Promise.resolve(booking));
+  t.mock.method(ProviderBooking, 'findOneAndUpdate', async () => ({ ...booking, status: 'processing' }));
+  const userFindByIdMock = t.mock.method(User, 'findById', () => { throw new Error('must not look up the provider for a rollback that should never start'); });
+  const { server, base } = startApp(freshProviderRoutes(), { userId });
+  try {
+    const res = await fetch(`${base}/api/providers/bookings/${bookingId}/cancel`, { method: 'POST' });
+    assert.equal(res.status, 200);
+    assert.equal(userFindByIdMock.mock.callCount(), 0);
   } finally {
     server.close();
   }

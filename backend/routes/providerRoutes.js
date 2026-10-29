@@ -406,34 +406,47 @@ router.post('/bookings/:id/cancel', async (req, res) => {
       return res.status(403).json({ error: 'אין לך הרשאה לבטל הזמנה זו.' });
     }
 
-    if (booking.status === 'cancelled') return res.json({ ok: true, alreadyCancelled: true });
+    // Atomic transition (findOneAndUpdate, not a read-then-save) so this can
+    // never lose a race against POST /:id/book's own atomic confirm step
+    // below: whichever of the two writes the document first wins, and the
+    // pre-image this returns reflects what the document actually held the
+    // instant this update applied, not a stale read taken before it.
+    const prior = await ProviderBooking.findOneAndUpdate(
+      { _id: booking._id, status: { $ne: 'cancelled' } },
+      { $set: { status: 'cancelled' } },
+      { new: false }
+    );
+    if (!prior) return res.json({ ok: true, alreadyCancelled: true });
 
-    if (booking.status === 'confirmed') {
-      const provider = await User.findById(booking.providerId);
-      if (booking.googleEventId && provider?.googleAccessToken) {
+    if (prior.status === 'confirmed') {
+      const provider = await User.findById(prior.providerId);
+      if (prior.googleEventId && provider?.googleAccessToken) {
         try {
           const oauth = await createOAuth2ClientWithRefresh(provider);
-          await google.calendar({ version: 'v3', auth: oauth }).events.delete({ calendarId: 'primary', eventId: booking.googleEventId });
+          await google.calendar({ version: 'v3', auth: oauth }).events.delete({ calendarId: 'primary', eventId: prior.googleEventId });
         } catch (err) {
           console.error('Failed to delete provider Google Calendar event on cancel:', err.message);
         }
       }
       if (provider) {
-        const pull = { [`schedule.${booking.day}`]: { providerBookingId: booking._id.toString() } };
+        const pull = { [`schedule.${prior.day}`]: { providerBookingId: prior._id.toString() } };
         // Same provider-location-timezone decision the booking push used
         // (see POST /:id/book) — not server.js's generic getTodayDayName(),
         // which would resolve from this cancelling caller's own timezone
         // instead of the provider's.
         const providerTodayDayName = getTodayDayNameInTimeZone(getLocationTimeZone(provider.providerProfile?.locationId));
-        if (booking.day === providerTodayDayName) {
-          pull['schedule.Today'] = { providerBookingId: booking._id.toString() };
+        if (prior.day === providerTodayDayName) {
+          pull['schedule.Today'] = { providerBookingId: prior._id.toString() };
         }
         await User.updateOne({ _id: provider._id }, { $pull: pull }).catch(() => {});
       }
     }
+    // If prior.status === 'processing', POST /:id/book is still mid-flight on
+    // this same document: there is nothing to roll back yet here, and its own
+    // atomic confirm step (conditioned on status still 'processing') will
+    // fail to match this now-cancelled document and roll back the schedule
+    // push / Google Calendar event it created, on its own.
 
-    booking.status = 'cancelled';
-    await booking.save();
     res.json({ ok: true });
   } catch (err) {
     console.error('Cancel provider booking error:', err);
@@ -734,10 +747,24 @@ router.post('/:id/book', bookLimiter, async (req, res) => {
       googleCalendar = { success: true, eventId: syncedEventId };
     }
 
-    createdBooking.status = 'confirmed';
-    createdBooking.confirmedAt = new Date();
-    if (syncedEventId) createdBooking.googleEventId = syncedEventId;
-    await createdBooking.save();
+    // Atomic confirm (findOneAndUpdate conditioned on status still being
+    // 'processing', not a read-then-save) so this can never win a race
+    // against a concurrent POST /bookings/:id/cancel on this same document:
+    // if that cancel already committed, this fails to match and the branch
+    // below undoes the schedule push / Google Calendar event this request
+    // just created instead of silently resurrecting a cancelled booking as
+    // confirmed. See POST /bookings/:id/cancel's own atomic update.
+    const confirmUpdate = { status: 'confirmed', confirmedAt: new Date() };
+    if (syncedEventId) confirmUpdate.googleEventId = syncedEventId;
+    const confirmedBooking = await ProviderBooking.findOneAndUpdate(
+      { _id: createdBooking._id, status: 'processing' },
+      { $set: confirmUpdate },
+      { new: true }
+    );
+    if (!confirmedBooking) {
+      throw Object.assign(new Error('ההזמנה בוטלה לפני שהושלמה.'), { status: 409 });
+    }
+    createdBooking = confirmedBooking;
 
     // Best-effort in-memory schedule cache sync (mirrors legacy booking confirm).
     const getUserSchedule = req.app.get('getUserSchedule');
