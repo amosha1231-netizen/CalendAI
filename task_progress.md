@@ -315,3 +315,77 @@ from `.save()` to `findOneAndUpdate`/`updateOne` to close a race (this is now
 the second time on this branch), check whether that model has any
 `pre('save')`-only derived field — `activeSlot` here — that the bypassed
 hook was also responsible for, and set it explicitly in the same `$set`.
+
+## 2026-10-29 run notes (fourth run, same day)
+Fresh clone, so `npm install` in both `frontend/` and `backend/` first. `npm
+run build` (frontend) clean. `node --test` (backend): 208/224 pass before
+this run's fixes, 16 known `fastdl.mongodb.org` sandbox-network failures
+confirmed by error text (not regressions) — see AGENTS.md.
+
+Delegated a ninth independent adversarial review (same 10 mutual/provider
+files + wiring, explicit pointers at the already-fixed bug classes on this
+branch — NoSQL injection via an unguarded query param, status-mutating
+writes losing a race against a concurrent cancel, and `pre('save')`-hook
+bypass via `findOneAndUpdate` — asking it to generalize those checks across
+the whole codebase rather than just re-confirm the files they were first
+found in) to a sub-agent. It found one more real bug plus one cosmetic one
+and one test-coverage gap, all of which this run fixed/added:
+
+**Public `GET /api/providers` crashed (500) on a non-string `q`**
+(`backend/routes/providerRoutes.js`), three lines below where `category` on
+the exact same route was already fixed for the exact same issue. `category`
+is cast with `typeof category === 'string' ? ... : ''` before use, but `q`
+was still used as `if (q && q.trim())` — Express's query parser turns
+`?q=a&q=b` into an array and `?q[$foo]=bar` into an object, neither of which
+has `.trim()`, so the call threw a `TypeError` that the route's own
+try/catch turned into a bare 500 on this public, unauthenticated,
+rate-limited-but-still-exploitable endpoint. Not an injection by itself (it
+throws before reaching the Mongo filter, unlike the earlier `category` bug),
+but a trivial repeatable DoS-by-500 primitive that was sitting right next to
+its own fix pattern. Fixed by mirroring the `category` guard: `const safeQ =
+typeof q === 'string' ? q.trim() : '';`. Added two regression tests to
+`backend/test/providerSearch.test.js` (object-shaped and array-shaped `q`
+both return 200, not a crash).
+
+**Cosmetic: authenticated `PUT /api/providers/me` crashed (500 instead of
+400) on a non-string availability `startTime`/`endTime`** — same
+missing-`typeof`-guard shape, in `timeToMinutes()`'s `.match()` call. Low
+severity (auth required, provider editing only their own profile, bad data
+can never reach the DB — the throw happens before the `update[...]`
+assignment), but fixed anyway since it's the same bug class and the fix is
+a one-line guard: added a `typeof row.startTime !== 'string' ||
+typeof row.endTime !== 'string'` check to the existing availability-row
+validation in `providerRoutes.js`, alongside the day/Shabbat check that was
+already there. Added a regression test to
+`backend/test/providerRoutesValidation.test.js`.
+
+**Test-coverage gap (code itself was verified correct, not a bug):** the
+*mutual*-session confirm route (`mutualRoutes.js`) has the same
+claim→verify→insert→push→finalize→rollback skeleton that's twice needed a
+race fix on the provider-booking side, but had no direct test for its own
+analogous race — a concurrent `POST /sessions/:id/cancel` landing after both
+Google Calendar events are inserted and both schedules are pushed, but
+before the route's own final `findOneAndUpdate({status:'processing'} ->
+{status:'completed'})`. Traced the code: it's correct (the final update's
+`status:'processing'` filter fails to match a session already flipped to
+`cancelled`, throwing a 503 that the existing rollback path handles using
+the real post-insert `hostEventId`/`inviteeEventId`, and the subsequent
+"release back to active" `updateOne` is itself filtered on
+`status:'processing'` so it can't resurrect an already-cancelled session).
+Added the missing regression test to `backend/test/mutualRoutesValidation.test.js`
+so a future change that weakens any of those filters regresses loudly
+instead of silently.
+
+The review also re-verified (no new findings): no other `pre('save')` hook
+exists in scope besides `ProviderBooking`'s `activeSlot` one; no remaining
+read-mutate-save pattern in either route file (both fully atomic); all
+other query/body params in both route files fail closed on
+non-string/object input; timezone/DST/Shabbat guards remain internally
+consistent between listing and confirm-time re-verification; frontend
+components still use `safeStorage` correctly with no raw storage access or
+non-ISO date parsing, and have proper stale-response/unmount guards.
+
+After the fixes: full suite 212/228 pass (16 known sandbox-network
+failures, net +4 tests this run). `npm run build` (frontend) clean.
+
+No ambiguous UX decision or open question for the human this run.
