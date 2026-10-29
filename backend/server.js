@@ -29,7 +29,7 @@ const ProcessedPaymentEvent = require('./models/ProcessedPaymentEvent');
 const Booking = require('./models/Booking');
 const OAuthHandoff = require('./models/OAuthHandoff');
 const { google } = require('googleapis');
-const { createOAuth2ClientWithRefresh, buildGcalEventBody } = require('./services/googleCalendar');
+const { createOAuth2ClientWithRefresh, buildGcalEventBody, insertEventWithOptionalMeet } = require('./services/googleCalendar');
 const fs = require('fs');
 const path = require('path');
 const rateLimit = require('express-rate-limit');
@@ -2849,7 +2849,7 @@ app.post(SIRI_ENDPOINT_PATH, aiLimiter, async (req, res) => {
 
 // timeZoneOverride: the calendar owner's zone when the request comes from
 // someone else (a guest confirming a booking); otherwise the requester's zone.
-async function syncEventToGoogleCalendar(userId, event, locationId, timeZoneOverride = null) {
+async function syncEventToGoogleCalendar(userId, event, locationId, timeZoneOverride = null, { addMeet = false } = {}) {
   // Only sync for logged-in users with valid ObjectId
   if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
     return { success: false, error: 'Not a logged-in user', eventId: null };
@@ -2953,17 +2953,19 @@ async function syncEventToGoogleCalendar(userId, event, locationId, timeZoneOver
         ? { useDefault: false, overrides: [{ method: 'popup', minutes: 0 }] } // pops exactly at event start time
         : null,
       recurrenceRule: recurrenceRuleStr,
-      attendees
+      attendees,
+      // Callers opt in (personal booking links) — provider bookings such as
+      // in-person appointments shouldn't carry a video link.
+      addMeet: addMeet && attendees.length > 0
     });
 
-    const gcalResponse = await calendar.events.insert({
-      calendarId: 'primary',
+    const { event: gcalEvent, meetLink } = await insertEventWithOptionalMeet(calendar, {
       requestBody,
       sendUpdates: attendees.length ? 'all' : 'none',
     });
 
-    const gcalEventId = gcalResponse?.data?.id || null;
-    return { success: true, eventId: gcalEventId };
+    const gcalEventId = gcalEvent.id || null;
+    return { success: true, eventId: gcalEventId, meetLink };
   } catch (error) {
     // Log but never crash - event is already saved locally
     console.error('Google Calendar sync failed (non-fatal):', error.message);
@@ -3874,10 +3876,10 @@ app.post('/api/booking/:id/confirm', async (req, res) => {
     };
     let googleCalendar = { success: false, reason: 'Host has no connected Google Calendar' };
     if (host.googleAccessToken) {
-      const syncResult = await syncEventToGoogleCalendar(hostId, eventToPersist, bookingData.locationId || DEFAULT_LOCATION_ID, bookingData.hostTimezone || resolveLocation(bookingData.locationId || DEFAULT_LOCATION_ID).timezone);
+      const syncResult = await syncEventToGoogleCalendar(hostId, eventToPersist, bookingData.locationId || DEFAULT_LOCATION_ID, bookingData.hostTimezone || resolveLocation(bookingData.locationId || DEFAULT_LOCATION_ID).timezone, { addMeet: true });
       if (!syncResult.success) throw Object.assign(new Error(`Google Calendar insertion failed: ${syncResult.error || 'unknown error'}`), { status: 502 });
       syncedEventId = syncResult.eventId;
-      googleCalendar = { success: true, eventId: syncedEventId };
+      googleCalendar = { success: true, eventId: syncedEventId, meetLink: syncResult.meetLink || null };
     }
 
     const schedulePath = `schedule.${dayName}`;
@@ -4386,6 +4388,10 @@ app.use('/api/daily-log', dailyLogRoutes);
 // ── Mutual (peer-to-peer) Scheduling Routes ──
 const mutualRoutes = require('./routes/mutualRoutes');
 app.use('/api/mutual', mutualRoutes);
+
+// ── Calendar invites (Google sends the guests a regular invitation) ──
+const inviteRoutes = require('./routes/inviteRoutes');
+app.use('/api/invites', inviteRoutes);
 
 // ── Expected Expenses Routes (personal expense tracking) ──
 const expenseRoutes = require('./routes/expenseRoutes');
