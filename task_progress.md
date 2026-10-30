@@ -610,3 +610,106 @@ applicable (JSX); backend untouched, so backend suite re-run only as a
 sanity check (same 213/229 baseline).
 
 No ambiguous UX decision or open question for the human this run.
+
+## 2026-10-30 run notes (twelfth overall, independent self-review)
+No fresh clone needed (`node_modules` already present in both `frontend/`
+and `backend/`). Baseline: `npm run build` (frontend) clean; `node --test`
+(backend) 215/231 pass, 16 known `fastdl.mongodb.org` sandbox-network
+failures confirmed by error text (not regressions) — see AGENTS.md.
+
+Did a full independent adversarial read myself (not delegated) of all 10
+in-scope files plus their test files and the `App.jsx`/`server.js` wiring,
+explicitly skipping re-verification of everything already listed above as
+fixed, and spot-checked task_progress.md items 1-5 directly against current
+code (still true: `setInputText("")` fires before the fetch in `handleParse`;
+multer + `/api/parse-image` + `parseImageWithVision` are all wired). Explored
+several fresh angles per the task brief:
+
+- Re-traced the three-way interaction between the `activeSlot` fix, the
+  atomic-cancel/atomic-confirm fix, and the schedule-cache pull-on-cancel fix
+  in both `providerRoutes.js` and `mutualRoutes.js` under every interleaving
+  of cancel-vs-confirm. Still correct — no new gap.
+- Read `googleCalendar.js` itself for token-refresh/429/malformed-response
+  handling. `createOAuth2ClientWithRefresh`'s pre-check refresh failure is
+  caught and logged, deliberately falling through to let the real API call
+  retry/fail on its own terms; every caller already wraps the actual
+  Google Calendar insert/delete call in its own try/catch and turns a
+  failure into either a 502 (confirm/book) or a logged-and-swallowed warning
+  (cancel/rollback, which must not block the DB-side transition). No gap.
+- Re-checked authorization/ownership on every mutual/provider route for a
+  crafted-ID or email-mismatch bypass (`loadAuthorizedSession`'s
+  hostId/inviteeId check, the provider-booking cancel route's
+  isProvider/isGuestOwner check). Still correct.
+- Considered whether the provider/mutual confirm/cancel routes' best-effort
+  `getUserSchedule()` cache-sync code (added in run 11) could poison a
+  *different* user's (the provider's, or the mutual session's other party)
+  in-memory schedule cache with an empty default on a cold server (that
+  `getUserSchedule()` auto-vivifies an empty schedule on a cache miss, per
+  its own definition in `server.js`, rather than returning null/undefined —
+  so `if (cached)` in that cache-sync code is effectively always true).
+  Traced through to whether this could reach a real Mongo data-loss path:
+  it would require some *other* route for that same user to read the cache
+  and write it back to Mongo wholesale (`DELETE /api/schedule/event`,
+  `POST /api/reschedule`, `POST /api/schedule/extend-event`) *before* that
+  user's own normal page load (`GET /api/schedule`, which always reloads
+  from Mongo first) ever runs in this server process — which the frontend's
+  own normal flow effectively precludes (you can't select an event to
+  delete/reschedule before the schedule has been fetched once). Concluded
+  this is a real but pre-existing, narrow, legacy `server.js`-wide risk
+  class (the `runQuickAdd`/Siri code path has its own explicit "load from
+  MongoDB first" comment guarding against exactly this shape, elsewhere in
+  `server.js` it is unguarded) rather than something newly introduced by, or
+  cleanly scoped to, the mutual/provider feature's own files — fixing it
+  well would mean touching several legacy non-in-scope `server.js` routes,
+  which risks exactly the kind of server.js growth/scope creep the project
+  rules warn against. Noted here for a future run with a broader mandate,
+  not fixed.
+
+Found and fixed one new, previously-missed bug, confined to
+`frontend/src/components/ProviderBookingView.jsx` (the provider-booking
+counterpart's single-screen layout, unlike `MutualScheduler.jsx`'s
+step-wizard layout where the service/date/slot pickers are never visible
++ editable at the same time a confirm request is in flight):
+
+**Stale-closure race: changing the date or service picker while a booking
+confirm was in flight could get the slot grid silently overwritten with the
+wrong date's availability.** `handleConfirm` is a fresh async closure per
+render that, on a 409 ("slot just taken") or on success, called
+`fetchSlots(selectedServiceId, selectedDate)` directly — but those are the
+*local* values captured when that particular `handleConfirm` invocation
+started, not live state. Nothing disables the service/date pickers while
+`confirming` is true (only the Confirm button and the guest-detail fields
+are gated), so a user who changed the date while waiting for the booking
+response would, moments later, have this stale call fire with the *old*
+date/service. Because `fetchSlots`'s own staleness guard
+(`slotsRequestRef`) only tracks "most recent call wins" by call order, not
+by which date is actually current, this late stale-date call — issued
+*after* the legitimate effect-driven fetch for the user's new date — would
+win that race and overwrite the slot grid with the old date's slots while
+the date picker itself kept showing the new date. (Backend re-validates the
+date/time pair on the next real confirm attempt either way, so this was a
+display-only correctness bug, not a double-booking risk — but a real one:
+the grid shown no longer matched the selected date.) Fixed by replacing
+both direct `fetchSlots(selectedServiceId, selectedDate)` calls with a
+`slotsRefreshNonce` bump added to the existing fetch-on-change effect's
+dependency array, mirroring how `MutualScheduler.jsx`'s own refresh
+(`fetchAvailability(sessionId)`, which takes no date argument at all) is
+immune to this same shape by construction — the effect always reads
+whichever `selectedServiceId`/`selectedDate` are current when it actually
+runs, never a value captured in a different closure. No backend changes
+needed. `npx vite build` clean after the fix; no frontend test suite exists
+for this component (consistent with the prior run's note) so no regression
+test was added; backend untouched, full suite re-run only as a sanity check
+(same 215/231 baseline, same 16 known sandbox failures).
+
+Also re-verified (no new findings): `winsOverlapRace`'s 3-way chain
+resolution, both route files' atomic claim/confirm/cancel skeletons, the
+Google Calendar partial-failure rollback ordering on every branch in both
+route files, the day-window/Shabbat/Friday-cutoff guards, DST/midnight
+edges, `category`/`q`/`locationId` type-guards, and
+`ProviderDirectory.jsx`'s/`ProviderProfileEditor.jsx`'s own stale-
+closure/in-flight-mutation guards from prior runs — all still correct.
+
+Working tree after this run: only `frontend/src/components/
+ProviderBookingView.jsx` and this file are modified; left uncommitted per
+instructions. No ambiguous UX decision or open question for the human.

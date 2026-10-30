@@ -124,9 +124,27 @@ export default function ProviderBookingView({ providerId, lang, user, onClose, o
     }
   }, [providerId]);
 
+  // Bumped (instead of calling fetchSlots directly with closure-captured
+  // arguments) whenever handleConfirm needs to force a re-fetch of the
+  // current slot list — a 409 from a slot someone else just took, or a
+  // post-success refresh. handleConfirm is an async closure: if the user
+  // changes the service/date picker while its request is in flight (nothing
+  // disables them, unlike the guest-detail fields below), its own
+  // selectedServiceId/selectedDate locals are the OLD, pre-change values.
+  // Calling fetchSlots(oldServiceId, oldDate) directly from there would bump
+  // slotsRequestRef to a value *newer* than the legitimate fetch the effect
+  // below already kicked off for the service/date the user actually changed
+  // to — so that stale, wrong-date fetch would win the "latest request"
+  // race and silently overwrite the slot grid with availability for a date
+  // that no longer matches what the date picker shows. Routing every forced
+  // refresh through this effect instead means it always reads whichever
+  // selectedServiceId/selectedDate are current at the moment it actually
+  // runs, never a value captured earlier in some other closure.
+  const [slotsRefreshNonce, setSlotsRefreshNonce] = useState(0);
+
   useEffect(() => {
     if (selectedServiceId && selectedDate) fetchSlots(selectedServiceId, selectedDate);
-  }, [selectedServiceId, selectedDate, fetchSlots]);
+  }, [selectedServiceId, selectedDate, fetchSlots, slotsRefreshNonce]);
 
   const handleConfirm = async () => {
     if (!selectedSlot || !guestName.trim()) return;
@@ -155,12 +173,12 @@ export default function ProviderBookingView({ providerId, lang, user, onClose, o
         // The slot may have just been taken by someone else — refresh and
         // go back to picking, same as MutualScheduler's handleConfirm.
         setConfirmError(data.error || "Booking failed");
-        if (res.status === 409) fetchSlots(selectedServiceId, selectedDate);
+        if (res.status === 409) setSlotsRefreshNonce(n => n + 1);
         return;
       }
       setConfirmedBooking(data.booking);
       // Refresh slots so the just-taken one disappears if the user books again.
-      fetchSlots(selectedServiceId, selectedDate);
+      setSlotsRefreshNonce(n => n + 1);
       // If the signed-in booker is the provider themselves (e.g. testing their
       // own public page), this booking just landed in their own `schedule`
       // document server-side — let the caller refetch it. A no-op prop for
