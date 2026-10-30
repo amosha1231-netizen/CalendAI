@@ -502,6 +502,66 @@ still correct, no regression.
 
 No ambiguous UX decision or open question for the human this run.
 
+## 2026-10-30 run notes (second run, eleventh overall)
+`npm install` in both `frontend/` and `backend/` (fresh clone). Baseline
+before this run's fix: `npm run build` (frontend) clean; `node --test`
+(backend) 213/229 pass, 16 known `fastdl.mongodb.org` sandbox-network
+failures confirmed by error text (not regressions) — see AGENTS.md.
+
+Delegated an eleventh independent adversarial review (same 10 mutual/
+provider files + wiring, explicit instructions not to re-check anything
+task_progress.md already lists as fixed/verified — all the race/injection/
+type-guard bug classes from runs 1-10 and the two ProviderProfileEditor.jsx
+frontend races from the run right before this one) to a sub-agent. It found
+one new, previously-missed bug:
+
+**Cancelling a `ProviderBooking` or `MutualBooking` never cleared the
+matching entry out of server.js' in-memory `getUserSchedule()` cache, only
+out of MongoDB — so a later cache-based write could resurrect it.**
+(`backend/routes/providerRoutes.js` `POST /bookings/:id/cancel`;
+`backend/routes/mutualRoutes.js` `rollbackCompletedSession`, shared by the
+mutual cancel route and the confirm-failure rollback path.) Both confirm
+paths push the newly-created event into the in-memory cache right after
+writing Mongo (`POST /:id/book`, `POST /sessions/:id/confirm`) specifically
+so routes that read that cache without reloading from Mongo don't serve
+stale data — but neither cancel path ever pulled the matching entry back
+out of that same cache, only ran a Mongo `$pull`. Several routes read the
+whole cached schedule and write it back wholesale without first reloading
+from Mongo (`DELETE /api/schedule/event`, `POST /api/reschedule`, `POST
+/api/schedule/extend-event`), so the very next time the affected user (or,
+for a mutual session, either party) touched any *other* event through one
+of those routes, the stale cached entry for the just-cancelled
+booking/meeting got `$set` straight back into their `User.schedule` in
+Mongo — reopening a slot the `activeSlot`/Mongo-pull fix from run 7 was
+specifically meant to keep closed, with no Google Calendar event behind it
+and no record in the booking/session doc.
+
+Fixed by mirroring the confirm-side cache-push pattern on both cancel
+paths: filter the matching `providerBookingId`/`mutualSessionId` entry out
+of the cached day bucket (and `Today`) via `req.app.get('getUserSchedule')`,
+then call `saveSchedulesNow()` — best-effort, same as the confirm paths.
+`rollbackCompletedSession`/`cancelMutualSession` now take an optional `app`
+param (threaded from `req.app` at both call sites: the mutual cancel route
+and the confirm route's own failure-rollback branch) so existing direct
+calls from `mutualBooking.test.js` with just a `sessionId` still work
+unchanged. Added one regression test per route
+(`providerRoutesValidation.test.js`, `mutualRoutesValidation.test.js`)
+asserting the cache is pulled on cancel, following the existing confirm-side
+cache-sync test's own pattern in each file. `node --check` on both changed
+route files. Full suite after the fix: 215/231 pass (16 known sandbox
+failures, net +2 tests this run). `npm run build` (frontend) clean (no
+frontend code touched).
+
+No other new bugs found this run — the sub-agent's pass re-confirmed (no
+regressions, nothing re-reported) the day-window/Shabbat guards, the 3-way
+`winsOverlapRace` chain resolution, Google Calendar partial-failure rollback
+ordering, timezone/DST edges, `handleParse`'s clear-on-submit ordering,
+image-upload wiring, and the frontend stale-closure/request-id guards in
+`MutualScheduler.jsx`/`ProviderBookingView.jsx`/`ProviderDirectory.jsx`/
+`ProviderProfileEditor.jsx`. No CLAUDE.md violations (ISO dates, safeStorage,
+guarded browser-global access) in any in-scope file. No ambiguous UX
+decision or open question for the human this run.
+
 ## 2026-10-30 run notes
 Fresh clone, `npm install` in both `frontend/` and `backend/`. Re-verified
 baseline: `npm run build` (frontend) clean; `node --test` (backend) 213/229
