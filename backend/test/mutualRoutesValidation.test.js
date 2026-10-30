@@ -1075,3 +1075,53 @@ test('POST /sessions/:id/cancel: cancelling a completed session deletes both Goo
     server.close();
   }
 });
+
+// The confirm route's own cache-sync test above (`a fully successful
+// confirmation also syncs both the host's and invitee's in-memory schedule
+// cache`) proves /confirm pushes the just-created event into server.js'
+// getUserSchedule() cache for both parties. Cancelling a *completed*
+// session only ever pulled the MongoDB-side mirrored entry (the
+// userUpdateOneMock assertion above) — nothing pulled the matching entry
+// back out of that same in-memory cache. Any route that reads the cache
+// without first reloading from Mongo (GET /api/schedule/expanded) or reads
+// it and writes the whole thing back to Mongo (DELETE /api/schedule/event,
+// POST /api/reschedule) would then resurrect this now-cancelled meeting.
+test('POST /sessions/:id/cancel: cancelling a completed session also pulls the mirrored entry out of both parties\' in-memory schedule cache', async (t) => {
+  const hostId = new mongoose.Types.ObjectId();
+  const inviteeId = new mongoose.Types.ObjectId();
+  const session = {
+    sessionId: 'mut_cache_cancel', status: 'completed', hostId, inviteeId,
+    hostEventId: null, inviteeEventId: null
+  };
+  t.mock.method(MutualBooking, 'findOne', async () => session);
+  t.mock.method(MutualBooking, 'findOneAndUpdate', async () => session);
+
+  const hostUser = { _id: hostId };
+  const inviteeUser = { _id: inviteeId };
+  t.mock.method(User, 'findById', async (id) => (String(id) === String(hostId) ? hostUser : inviteeUser));
+  t.mock.method(User, 'updateOne', async () => ({}));
+
+  const otherEvent = { title: 'Unrelated', mutualSessionId: 'mut_other' };
+  const matchingEvent = { title: 'To be cancelled', mutualSessionId: 'mut_cache_cancel' };
+  const cacheByUser = {
+    [String(hostId)]: { Tuesday: [matchingEvent], Today: [matchingEvent, otherEvent] },
+    [String(inviteeId)]: { Tuesday: [otherEvent, matchingEvent] }
+  };
+  const getUserSchedule = (id) => cacheByUser[String(id)];
+  let saveCalls = 0;
+  const saveSchedulesNow = () => { saveCalls++; };
+
+  const { server, base } = startApp(freshMutualRoutes(), { getUserSchedule, saveSchedulesNow });
+  try {
+    const res = await fetch(`${base}/api/mutual/sessions/mut_cache_cancel/cancel`, { method: 'POST', headers: authed(hostId) });
+    const data = await res.json();
+    assert.equal(res.status, 200);
+    assert.equal(data.ok, true);
+    assert.deepEqual(cacheByUser[String(hostId)].Tuesday, [], 'the cancelled entry must be removed from the host\'s cached Tuesday bucket');
+    assert.deepEqual(cacheByUser[String(hostId)].Today, [otherEvent], 'the cancelled entry must be removed from the host\'s cached Today bucket, leaving unrelated entries intact');
+    assert.deepEqual(cacheByUser[String(inviteeId)].Tuesday, [otherEvent], 'the cancelled entry must be removed from the invitee\'s cached Tuesday bucket, leaving unrelated entries intact');
+    assert.ok(saveCalls >= 1, 'saveSchedulesNow must be called after syncing the cache');
+  } finally {
+    server.close();
+  }
+});

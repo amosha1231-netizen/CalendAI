@@ -446,6 +446,29 @@ router.post('/bookings/:id/cancel', async (req, res) => {
           pull['schedule.Today'] = { providerBookingId: prior._id.toString() };
         }
         await User.updateOne({ _id: provider._id }, { $pull: pull }).catch(() => {});
+
+        // Best-effort in-memory schedule cache sync (mirrors POST /:id/book's
+        // own cache push for this same providerBookingId marker). Without
+        // this, a route that reads server.js' in-memory getUserSchedule()
+        // cache without first reloading from Mongo — including one that
+        // reads the whole cached schedule and writes it back wholesale
+        // (e.g. DELETE /api/schedule/event, POST /api/reschedule,
+        // POST /api/schedule/extend-event) — would resurrect this
+        // just-cancelled booking into Mongo on its next unrelated write.
+        const getUserSchedule = req.app.get('getUserSchedule');
+        const saveSchedulesNow = req.app.get('saveSchedulesNow');
+        if (getUserSchedule) {
+          const cached = getUserSchedule(provider._id.toString());
+          if (cached) {
+            if (Array.isArray(cached[prior.day])) {
+              cached[prior.day] = cached[prior.day].filter(e => e.providerBookingId !== prior._id.toString());
+            }
+            if (prior.day === providerTodayDayName && Array.isArray(cached.Today)) {
+              cached.Today = cached.Today.filter(e => e.providerBookingId !== prior._id.toString());
+            }
+          }
+        }
+        if (saveSchedulesNow) saveSchedulesNow();
       }
     }
     // If prior.status === 'processing', POST /:id/book is still mid-flight on

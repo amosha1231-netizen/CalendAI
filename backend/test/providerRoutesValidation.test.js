@@ -56,7 +56,9 @@ function timeToMinutes(timeStr) {
 function startApp(router, {
   userId = null,
   getTodayDayName = () => 'Monday',
-  syncEventToGoogleCalendar = async () => ({ success: true, eventId: 'gcal-evt-test' })
+  syncEventToGoogleCalendar = async () => ({ success: true, eventId: 'gcal-evt-test' }),
+  getUserSchedule = () => null,
+  saveSchedulesNow = () => {}
 } = {}) {
   const app = express();
   app.use(express.json());
@@ -66,8 +68,8 @@ function startApp(router, {
   app.set('getTodayDayName', getTodayDayName);
   app.set('syncEventToGoogleCalendar', syncEventToGoogleCalendar);
   app.set('DEFAULT_LOCATION_ID', 'jerusalem');
-  app.set('getUserSchedule', () => null);
-  app.set('saveSchedulesNow', () => {});
+  app.set('getUserSchedule', getUserSchedule);
+  app.set('saveSchedulesNow', saveSchedulesNow);
   app.use('/api/providers', router);
   const server = app.listen(0);
   const { port } = server.address();
@@ -1093,6 +1095,50 @@ test('POST /bookings/:id/cancel: cancelling a still-processing booking skips the
     const res = await fetch(`${base}/api/providers/bookings/${bookingId}/cancel`, { method: 'POST' });
     assert.equal(res.status, 200);
     assert.equal(userFindByIdMock.mock.callCount(), 0);
+  } finally {
+    server.close();
+  }
+});
+
+// POST /:id/book's own cache-sync (further down this same route file) mirrors
+// its MongoDB schedule push into server.js' in-memory getUserSchedule() cache
+// so a route that reads that cache without first reloading from Mongo (e.g.
+// GET /api/schedule/expanded) or reads-then-writes the whole cached schedule
+// back to Mongo (DELETE /api/schedule/event, POST /api/reschedule) doesn't
+// serve/persist stale data. Cancelling a *confirmed* booking only ever pulled
+// the MongoDB-side mirrored entry — nothing pulled the matching entry back
+// out of that same in-memory cache, so it could get written back into Mongo
+// by one of those routes and permanently re-lock the slot via the unique
+// partial index, exactly the bug the activeSlot fix above was meant to close.
+test('POST /bookings/:id/cancel: cancelling a confirmed booking also pulls the mirrored entry out of the in-memory schedule cache', async (t) => {
+  const userId = new mongoose.Types.ObjectId();
+  const bookingId = new mongoose.Types.ObjectId();
+  const booking = {
+    _id: bookingId, providerId: userId, bookedByUserId: null,
+    status: 'confirmed', day: 'Wednesday', googleEventId: null
+  };
+  t.mock.method(ProviderBooking, 'findById', () => Promise.resolve(booking));
+  t.mock.method(ProviderBooking, 'findOneAndUpdate', async () => ({ ...booking }));
+
+  const provider = { _id: userId, providerProfile: { locationId: 'jerusalem' } };
+  t.mock.method(User, 'findById', () => Promise.resolve(provider));
+  t.mock.method(User, 'updateOne', async () => ({}));
+
+  const otherEvent = { title: 'Unrelated', providerBookingId: new mongoose.Types.ObjectId().toString() };
+  const matchingEvent = { title: 'To be cancelled', providerBookingId: bookingId.toString() };
+  const cache = { Wednesday: [otherEvent, matchingEvent] };
+  const getUserSchedule = () => cache;
+  let saveCalls = 0;
+  const saveSchedulesNow = () => { saveCalls++; };
+
+  const { server, base } = startApp(freshProviderRoutes(), { userId, getUserSchedule, saveSchedulesNow });
+  try {
+    const res = await fetch(`${base}/api/providers/bookings/${bookingId}/cancel`, { method: 'POST' });
+    const data = await res.json();
+    assert.equal(res.status, 200);
+    assert.equal(data.ok, true);
+    assert.deepEqual(cache.Wednesday, [otherEvent], 'the cancelled booking\'s entry must be removed from the cached Wednesday bucket, leaving unrelated entries intact');
+    assert.ok(saveCalls >= 1, 'saveSchedulesNow must be called after syncing the cache');
   } finally {
     server.close();
   }
