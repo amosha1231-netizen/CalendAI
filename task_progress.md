@@ -501,3 +501,52 @@ already correct); frontend stale-closure/unmount/double-submit guards in
 still correct, no regression.
 
 No ambiguous UX decision or open question for the human this run.
+
+## 2026-10-30 run notes
+Fresh clone, `npm install` in both `frontend/` and `backend/`. Re-verified
+baseline: `npm run build` (frontend) clean; `node --test` (backend) 213/229
+(16 known sandbox-network failures, unchanged). Re-read task_progress.md in
+full and delegated a fresh adversarial pass over all 10 in-scope
+mutual/provider files plus their test files and `App.jsx` wiring to a
+sub-agent, specifically steered away from re-trying anything these notes
+already list as checked (the activeSlot/cancel/confirm races, category/q/
+locationId type-guards, Google Calendar rollback ordering, DST/Shabbat
+edges, and the MutualScheduler/ProviderBookingView/ProviderDirectory
+stale-closure guards). No new backend bugs — all backend code re-confirmed
+correct. Found two new, previously-unreported frontend bugs in
+`frontend/src/components/ProviderProfileEditor.jsx`, the one in-scope
+component none of runs 1-10's notes mention by name:
+
+1. **Concurrent-cancel stale-closure race** (`handleCancelBooking`, was line
+115): `setBookings(bookings.filter(...))` closed over the `bookings` state
+from the render that created that particular callback instance, not a
+functional updater. Two bookings cancelled back-to-back before either
+request resolved could race: the second response's filter ran against a
+stale snapshot and silently resurrected the first (already-cancelled-on-
+the-server) booking in the UI list. Fixed by switching to the functional
+updater form `setBookings(prev => prev.filter(...))`, which always applies
+against the latest state regardless of resolution order. No server-side
+impact (cancel is already idempotent/atomic) — this was a client-only
+display bug.
+
+2. **Save silently discards rows added mid-save** (`handleSave`, was lines
+173-174): the PUT response unconditionally overwrote `services`/
+`availability` with the server's echo of whatever was in the *request*
+body, but no input was disabled while `saving` was true except the Save
+button itself. Clicking "Add service"/"Add day" (or editing/removing a row)
+while a save was in flight added/changed local state that the in-flight
+request's response then clobbered on arrival, with no warning. Fixed by
+disabling every service/availability field, its remove button, and both
+"Add service"/"Add day" buttons while `saving` is true — mirrors the
+`disabled={confirming}` pattern `ProviderBookingView.jsx` already uses for
+the same class of in-flight-mutation race. This fully closes the race since
+no local edit can occur while the save round-trip is outstanding.
+
+Both bugs were UI-state races only, no backend/security impact, and (since
+this repo has no frontend test suite for any component) no regression-test
+gap to fill beyond what already doesn't exist for this component's other
+behavior. `npx vite build` clean after the fix; `node --check` not
+applicable (JSX); backend untouched, so backend suite re-run only as a
+sanity check (same 213/229 baseline).
+
+No ambiguous UX decision or open question for the human this run.

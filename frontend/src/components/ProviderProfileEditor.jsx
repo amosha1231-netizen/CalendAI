@@ -112,7 +112,7 @@ export default function ProviderProfileEditor({ lang, user, onClose, onBookingCa
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to cancel booking");
-      setBookings(bookings.filter(b => b._id !== bookingId));
+      setBookings(prev => prev.filter(b => b._id !== bookingId));
       // Cancelling pulls the mirrored event out of the provider's (this
       // user's) own `schedule` document server-side — tell the dashboard to
       // refetch so a stale cancelled meeting doesn't linger in its calendar view.
@@ -261,7 +261,7 @@ export default function ProviderProfileEditor({ lang, user, onClose, onBookingCa
                 </h3>
                 <button
                   onClick={addService}
-                  disabled={services.length >= MAX_SERVICES}
+                  disabled={saving || services.length >= MAX_SERVICES}
                   className="text-xs font-medium text-indigo-600 hover:text-indigo-700 flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <Plus className="w-3.5 h-3.5" /> {lang === "he" ? "הוסף שירות" : "Add service"}
@@ -274,6 +274,7 @@ export default function ProviderProfileEditor({ lang, user, onClose, onBookingCa
                       type="checkbox"
                       checked={s.active !== false}
                       onChange={(e) => updateService(i, "active", e.target.checked)}
+                      disabled={saving}
                       title={lang === "he" ? "שירות פעיל (זמין להזמנה)" : "Active (bookable)"}
                       className="w-4 h-4 accent-indigo-600 shrink-0"
                     />
@@ -281,6 +282,7 @@ export default function ProviderProfileEditor({ lang, user, onClose, onBookingCa
                       type="text"
                       value={s.name}
                       onChange={(e) => updateService(i, "name", e.target.value)}
+                      disabled={saving}
                       placeholder={lang === "he" ? "שם השירות" : "Service name"}
                       className="flex-1 min-w-0 px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                     />
@@ -290,6 +292,7 @@ export default function ProviderProfileEditor({ lang, user, onClose, onBookingCa
                       max={480}
                       value={s.duration}
                       onChange={(e) => updateService(i, "duration", e.target.value)}
+                      disabled={saving}
                       title={lang === "he" ? "דקות" : "minutes"}
                       className="w-16 px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                     />
@@ -298,10 +301,11 @@ export default function ProviderProfileEditor({ lang, user, onClose, onBookingCa
                       min={0}
                       value={s.price}
                       onChange={(e) => updateService(i, "price", e.target.value)}
+                      disabled={saving}
                       title={lang === "he" ? "מחיר" : "price"}
                       className="w-16 px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                     />
-                    <button onClick={() => removeService(i)} className="p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg shrink-0">
+                    <button onClick={() => removeService(i)} disabled={saving} className="p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg shrink-0 disabled:opacity-50">
                       <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
@@ -322,7 +326,7 @@ export default function ProviderProfileEditor({ lang, user, onClose, onBookingCa
                 </h3>
                 <button
                   onClick={addAvailabilityRow}
-                  disabled={availability.length >= MAX_AVAILABILITY_ROWS}
+                  disabled={saving || availability.length >= MAX_AVAILABILITY_ROWS}
                   className="text-xs font-medium text-indigo-600 hover:text-indigo-700 flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <Plus className="w-3.5 h-3.5" /> {lang === "he" ? "הוסף יום" : "Add day"}
@@ -337,6 +341,7 @@ export default function ProviderProfileEditor({ lang, user, onClose, onBookingCa
                     <select
                       value={row.day}
                       onChange={(e) => updateAvailabilityRow(i, "day", e.target.value)}
+                      disabled={saving}
                       className="px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                     >
                       {DAYS.map(d => <option key={d} value={d}>{dayLabels[d]}</option>)}
@@ -345,6 +350,7 @@ export default function ProviderProfileEditor({ lang, user, onClose, onBookingCa
                       type="time"
                       value={to24h(row.startTime)}
                       onChange={(e) => updateAvailabilityRow(i, "startTime", to12h(e.target.value))}
+                      disabled={saving}
                       className="px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                     />
                     <span className="text-xs text-gray-400">–</span>
@@ -352,9 +358,10 @@ export default function ProviderProfileEditor({ lang, user, onClose, onBookingCa
                       type="time"
                       value={to24h(row.endTime)}
                       onChange={(e) => updateAvailabilityRow(i, "endTime", to12h(e.target.value))}
+                      disabled={saving}
                       className="px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                     />
-                    <button onClick={() => removeAvailabilityRow(i)} className="p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg shrink-0">
+                    <button onClick={() => removeAvailabilityRow(i)} disabled={saving} className="p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg shrink-0 disabled:opacity-50">
                       <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
