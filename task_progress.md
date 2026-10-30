@@ -389,3 +389,115 @@ After the fixes: full suite 212/228 pass (16 known sandbox-network
 failures, net +4 tests this run). `npm run build` (frontend) clean.
 
 No ambiguous UX decision or open question for the human this run.
+
+## 2026-10-30 run notes (tenth run)
+`node_modules` already present in both `frontend/` and `backend/` this run
+(no fresh clone needed). `npm run build` (frontend) clean. `node --test`
+(backend): 212/228 pass before this run's fix, 16 known
+`fastdl.mongodb.org` sandbox-network failures confirmed by error text (not
+regressions) — see AGENTS.md.
+
+Did a full independent adversarial review myself (not delegated) of all 10
+mutual/provider files, their test files, and the `App.jsx`/`server.js`
+wiring, with explicit pointers at the three bug classes already fixed
+multiple times on this branch — NoSQL/regex-operator injection via an
+unguarded query/body param, a non-string value reaching `.trim()`/`.match()`
+without a `typeof` guard, and a status-mutating write bypassing a
+`pre('save')` hook via `findOneAndUpdate` — generalized across every
+query/body param and every write in both route files rather than just
+re-checking the exact lines already fixed. Found one new, previously-missed
+bug:
+
+**`POST /api/mutual/sessions` crashed with a 500 (instead of falling back to
+the default location) on a non-string `locationId`.**
+(`backend/routes/mutualRoutes.js`.) `MutualBooking.locationId` is a
+Mongoose `String`-typed schema field. Every other client-supplied string
+field going into that same `MutualBooking.create()` call is explicitly cast
+first — `inviteeEmail` via `String(inviteeEmail || '').trim().toLowerCase()`,
+`subject` via `String(subject || 'Meeting').trim().slice(0, 200) ||
+'Meeting'` — but `locationId` was passed straight through as
+`locationId: locationId || DEFAULT_LOCATION_ID`. A body value that is
+itself an object or array (e.g. `{"locationId": {"$ne": null}}`, or an
+array) is truthy, so it skips the `|| DEFAULT_LOCATION_ID` fallback and is
+handed to Mongoose's own String caster, which throws a CastError for a
+value it can't safely stringify (confirmed directly: `MutualBooking.create
+({..., locationId: ['a','b']})` rejects with `ValidationError: Cast to
+string failed...` with no DB connection needed, i.e. synchronously during
+validation) — caught by the route's generic `catch`, surfacing as a bare
+500 ("Failed to create mutual scheduling session.") instead of either a
+clean 400 or, consistent with how every sibling field here already
+degrades, a silent fallback to the default location. Lower severity than
+the `category`/`q` injection bugs fixed in earlier runs (this route
+requires auth, and the value never reaches a live Mongo query — it fails
+before any network I/O), but the exact same "unguarded type reaching a
+cast/operator without a `typeof` guard" shape already fixed repeatedly on
+this branch, sitting one call away from its own established fix pattern
+(`providerRoutes.js` PUT `/me`'s `String(locationId).trim() || 'jerusalem'`).
+
+Fixed by adding the same `typeof`-guard pattern already used for
+`category`/`q` in `providerRoutes.js`: `const safeLocationId = typeof
+locationId === 'string' && locationId.trim() ? locationId.trim().slice(0,
+50) : DEFAULT_LOCATION_ID;`, used in the `MutualBooking.create()` call
+instead of the unguarded value. Added one regression test to
+`backend/test/mutualRoutesValidation.test.js` (right after the existing
+locationId-forwarding test) asserting that both an object-shaped and an
+array-shaped `locationId` body value fall back to the string default
+rather than reaching `MutualBooking.create()` as a non-string — verified it
+fails against the pre-fix code (reverted the route file only, kept the new
+test, confirmed a failure) and passes against the fix. `node --check` run
+on both changed files.
+
+Full suite after the fix: 213/229 pass (16 known sandbox-network failures,
+net +1 test this run). `npm run build` (frontend) clean (no frontend code
+touched).
+
+Also directly re-verified, against current code rather than trusting this
+file's own checkmarks: `handleParse` (`frontend/src/App.jsx:1030-1113`)
+calls `setInputText("")` at line 1040, before the `fetch` — the request
+body at line 1048 and `saveGuestTempData` at line 1111 both still read the
+pre-clear value from `inputText` because they're reading the already-
+captured closure variable, not a stale ref; React's `setInputText` schedules
+a re-render, it does not mutate the `inputText` binding this `handleParse`
+call closed over. No stale-closure bug. Image upload: `multer` (configured
+`backend/server.js:37,39`) + `POST /api/parse-image` (`backend/server.js:
+2329`) + `parseImageWithVision` (`backend/services/aiService.js:1027`) are
+all present and wired; the frontend's `handleParseImage`
+(`frontend/src/App.jsx:986`) posts a `FormData` with field `image` to
+`${API_BASE}/api/parse-image`. Credit accounting: `deductAICredit`
+(`backend/server.js:619`) throws a 502 ("AI usage data is unavailable;
+refusing to complete an unbilled request.") if `usage` is falsy/non-object
+— traced the only path that could reach it with no real `usage` (no
+OpenRouter client configured, so `parseImageWithVision` falls through to
+`fallbackParseAdvice`, which returns no `.error` and no `.usage`) and
+confirmed the route's schedule mutation happens on a *detached* copy
+(`JSON.parse(JSON.stringify(getUserSchedule(userId)))`) that is only
+persisted to Mongo/cache *after* `deductAICredit` succeeds — so that 502
+throws before anything is saved, and no AI usage/credits are ever invented.
+Both task_progress.md items genuinely hold.
+
+Attack/race/type-confusion shapes tried this run that did **not** turn up
+anything (so a future run does not need to re-try these): non-string/
+array/object values on every remaining query/body param in both route
+files not already guarded (`subject`, `duration`, `inviteeEmail`,
+`guestName/Email/Phone/Notes`, `services[]`/`availability[]` entries,
+`date`/`startTime`/`endTime` on both confirm/book/availability routes,
+`rangeDays`) — all either already explicitly cast with `String()`/`Number()`
+(which never throw) or already `typeof`-guarded; bracket-notation query
+injection on every other `req.query.*` read in both files (all are either
+`String()`-cast or ObjectId/ISO-date-validated, so none reaches Mongo as a
+live operator); re-deriving the `activeSlot`/atomic-cancel/atomic-confirm
+race fixes from runs 7–9 from the current code (still correct, no
+regression crept back in); Google Calendar partial-failure/rollback
+ordering in both `POST /:id/book` and `/sessions/:id/confirm` (still
+correct — schedule-pull → Google-event-delete → doc-delete/no-op on every
+failure branch, and the "cancel wins the race" vs. "confirm wins the race"
+interleaving is closed both ways by the atomic filters, re-verified by
+hand-tracing both orderings); DST/midnight/Shabbat-cutoff edges in
+`zonedDateTime`/`getMutualFreeSlots`/`isSlotMutuallyFree` (unchanged,
+already correct); frontend stale-closure/unmount/double-submit guards in
+`MutualScheduler.jsx` (unmount-cleanup `liveRef`, request-id refs),
+`ProviderBookingView.jsx` (`slotsRequestRef`, `cancelled` flag,
+`disabled={confirming}`), and `ProviderDirectory.jsx` (`requestRef`) — all
+still correct, no regression.
+
+No ambiguous UX decision or open question for the human this run.

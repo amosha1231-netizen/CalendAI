@@ -203,6 +203,20 @@ router.post('/sessions', mutualAbuseLimiter, requireAuth, async (req, res) => {
     if (invitee._id.equals(host._id)) return res.status(400).json({ error: 'You cannot schedule a mutual meeting with yourself.' });
     if (!invitee.googleAccessToken) return res.status(400).json({ error: 'That user has not connected Google Calendar yet.' });
 
+    // locationId must be cast to a plain string before use, same as every
+    // other client-supplied field here (inviteeEmail/subject already go
+    // through String()): MutualBooking.locationId is a schema String field,
+    // and Mongoose's own String caster throws a CastError/ValidationError
+    // for a non-string, non-stringifiable-safely value like an array or a
+    // plain object (e.g. `locationId[$ne]=null` bracket-notation input turns
+    // req.body.locationId into `{ $ne: null }`), which MutualBooking.create()
+    // below would surface as an uncaught-by-design 500 instead of a clean
+    // fallback to the default location — the exact "unguarded type reaching
+    // a Mongoose cast" shape already fixed for other fields in this feature.
+    const safeLocationId = typeof locationId === 'string' && locationId.trim()
+      ? locationId.trim().slice(0, 50)
+      : DEFAULT_LOCATION_ID;
+
     const sessionId = `mut_${crypto.randomBytes(18).toString('hex')}`;
     const session = await MutualBooking.create({
       sessionId,
@@ -211,7 +225,7 @@ router.post('/sessions', mutualAbuseLimiter, requireAuth, async (req, res) => {
       inviteeEmail: email,
       subject: String(subject || 'Meeting').trim().slice(0, 200) || 'Meeting',
       duration: Number(duration),
-      locationId: locationId || DEFAULT_LOCATION_ID,
+      locationId: safeLocationId,
       status: 'active'
     });
 

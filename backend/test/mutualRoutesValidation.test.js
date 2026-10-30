@@ -176,6 +176,45 @@ test("POST /sessions: the host's own selected locationId is forwarded to the cre
   }
 });
 
+test('POST /sessions: a non-string locationId (object or array body value) falls back to the default instead of reaching MutualBooking.create as a non-string', async (t) => {
+  // MutualBooking.locationId is a Mongoose String-typed field — handing it an
+  // object or array (e.g. a JSON body with `"locationId": {"$ne": null}`, or
+  // Express's own bracket-notation query parsing on a different route) throws
+  // a CastError/ValidationError inside MutualBooking.create() in real usage.
+  // This test mocks create() (same as the test above), so it can't observe
+  // that throw directly — instead it asserts the route's own typeof guard
+  // converts the value to a safe string *before* create() is ever called,
+  // which is what actually prevents the throw in production. Same bug class
+  // already fixed for `category`/`q` in providerRoutes.js.
+  const hostId = new mongoose.Types.ObjectId();
+  const inviteeId = new mongoose.Types.ObjectId();
+  t.mock.method(User, 'findById', async () => ({ _id: hostId, email: 'host@test.com', googleAccessToken: 'tok' }));
+  t.mock.method(User, 'findOne', async () => ({ _id: inviteeId, email: 'invitee@test.com', googleAccessToken: 'tok' }));
+  const createCalls = [];
+  t.mock.method(MutualBooking, 'create', async (doc) => { createCalls.push(doc); return doc; });
+
+  const { server, base } = startApp(freshMutualRoutes());
+  try {
+    const res1 = await fetch(`${base}/api/mutual/sessions`, {
+      method: 'POST', headers: authed(hostId),
+      body: JSON.stringify({ inviteeEmail: 'invitee@test.com', duration: 30, locationId: { $ne: null } })
+    });
+    assert.equal(res1.status, 200);
+    assert.equal(typeof createCalls[0].locationId, 'string');
+    assert.equal(createCalls[0].locationId, 'jerusalem');
+
+    const res2 = await fetch(`${base}/api/mutual/sessions`, {
+      method: 'POST', headers: authed(hostId),
+      body: JSON.stringify({ inviteeEmail: 'invitee@test.com', duration: 30, locationId: ['newyork'] })
+    });
+    assert.equal(res2.status, 200);
+    assert.equal(typeof createCalls[1].locationId, 'string');
+    assert.equal(createCalls[1].locationId, 'jerusalem');
+  } finally {
+    server.close();
+  }
+});
+
 // ── POST /api/mutual/sessions/:id/confirm ──
 test('POST /sessions/:id/confirm: an invalid date is rejected before any DB lookup', async (t) => {
   const userId = new mongoose.Types.ObjectId();
