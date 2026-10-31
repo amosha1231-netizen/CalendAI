@@ -932,3 +932,62 @@ net +1 test this run). `npm run build` (frontend) clean (no frontend code
 touched).
 
 No ambiguous UX decision or open question for the human this run.
+
+## 2026-10-31 run notes (sixteenth overall, fourth run same day)
+`npm install` in both `frontend/` and `backend/` (fresh clone). Baseline
+before this run's fix: `npm run build` (frontend) clean; `node --test`
+(backend) 218/234 pass, 16 known `fastdl.mongodb.org` sandbox-network
+failures confirmed by error text (not regressions) — see AGENTS.md.
+Re-verified task_progress.md items 1-5 directly against current code again
+(`setInputText("")`, `multer`/`/api/parse-image`/`parseImageWithVision` all
+still present and wired).
+
+Delegated a sixteenth independent adversarial review (same 10 mutual/
+provider files + wiring, explicit instructions not to re-derive any of the
+bug classes already fixed across the prior 15 rounds, asking for fresh
+angles) to a sub-agent. It found one new, previously-missed bug, confined
+to `frontend/src/components/MutualScheduler.jsx`:
+
+**The invitee-email step's close (X) button had no in-flight guard,
+letting a user leak an `active` `MutualBooking` document with no cleanup
+path.** `handleFindMutualTime` awaits `GET /api/mutual/lookup` then `POST
+/api/mutual/sessions` — the POST creates a real `MutualBooking` row with
+`status: 'active'` in Mongo — and only *after* that resolves does it call
+`setSessionId(...)`. Unlike the 'confirm' step's back button (fixed in
+round 13 with `disabled={confirming}`), this close button had no
+`disabled={lookupLoading}` guard, so a user could click it (or press
+Escape, which calls `onClose()` through a separate handler with the same
+gap) while the `POST /api/mutual/sessions` call was in flight or had just
+returned. That unmounts `MutualScheduler` before `setSessionId` ever runs,
+so the unmount-cleanup effect's `liveRef.current.sessionId` is still
+`null` at cleanup time — its `if (sid && finalStep !== 'success')
+cancelSession(sid)` guard is a no-op, and the session the backend already
+created is never cancelled. Confirmed there's no backend TTL/expiry
+mechanism for `MutualBooking` (no `expireAfterSeconds` index on the model,
+no reference to `MutualBooking` anywhere in `server.js` for a cleanup
+job), so the row sits `active` forever — not a security hole and not
+reachable by anyone else, but a genuine resource leak triggerable by
+ordinary impatient UI use, distinct from every previously-fixed
+cancel/confirm-race issue (those were about correctness of an existing
+cancel path, this is about a path with no cancel call at all).
+
+Fixed by adding `disabled={lookupLoading}` to the invitee-email step's
+close button (mirroring the existing `disabled={confirming}` pattern on
+the confirm step's back button) and extending the shared Escape-key
+handler's guard from `!confirming` to `!confirming && !lookupLoading` so
+both ways of triggering `onClose()` are closed during the window where a
+session create is in flight. No backend changes; no regression test added
+(frontend has no component test suite, consistent with every prior
+frontend-only fix on this branch). `npx vite build` clean after the fix;
+backend untouched, full suite re-run only as a sanity check (same
+218/234 baseline, same 16 known sandbox failures).
+
+The sub-agent's review also re-walked `providerRoutes.js`, `mutualRoutes.js`,
+both booking models, `mutualAvailability.js`, and
+`ProviderBookingView.jsx`/`ProviderDirectory.jsx`/`ProviderProfileEditor.jsx`
+for fresh angles (N+1 queries, array-length caps, Mongoose
+validation-throw edge cases, provider-side authz, timezone edge cases) —
+all came up clean, consistent with what's already documented as
+fixed/verified.
+
+No ambiguous UX decision or open question for the human this run.

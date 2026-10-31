@@ -89,10 +89,10 @@ export default function MutualScheduler({ lang, t, locationId, onClose, onFallba
   }, [cancelSession]);
 
   useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape' && !confirming) onClose(); };
+    const onKey = (e) => { if (e.key === 'Escape' && !confirming && !lookupLoading) onClose(); };
     try { document.addEventListener('keydown', onKey); } catch (e) {}
     return () => { try { document.removeEventListener('keydown', onKey); } catch (e) {} };
-  }, [onClose, confirming]);
+  }, [onClose, confirming, lookupLoading]);
 
   const fetchAvailability = useCallback(async (sid) => {
     setAvailabilityLoading(true);
@@ -225,7 +225,7 @@ export default function MutualScheduler({ lang, t, locationId, onClose, onFallba
     return (
       <div className="booking-container" dir={isRTL ? 'rtl' : 'ltr'} role="dialog" aria-modal="true" aria-label={t.mutualTitle || (lang === 'he' ? 'תיאום פגישה הדדי' : 'Mutual Scheduling')}>
         <div className="booking-header">
-          <button onClick={onClose} className="booking-close-btn">
+          <button onClick={onClose} className="booking-close-btn" disabled={lookupLoading}>
             <X className="w-5 h-5" />
           </button>
           <div className="booking-header-content">
