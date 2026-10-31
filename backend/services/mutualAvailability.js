@@ -43,6 +43,23 @@ function todayIsoInTimeZone(timeZone) {
 }
 
 /**
+ * Today's weekday name as observed in the given IANA timezone, not
+ * server-local/UTC and not the requesting visitor's own timezone. Shared by
+ * mutualRoutes.js and providerRoutes.js so that whichever party actually owns
+ * the schedule being written (the mutual session's location, or the
+ * provider's own locationId) decides what "Today" means for their own
+ * mirrored schedule.Today bucket — a provider in one timezone must not have
+ * their "Today" list decided by an anonymous guest's browser timezone
+ * (server.js's generic getTodayDayName() resolves from the *requesting*
+ * user's timezone via its request-scoped AsyncLocalStorage, which is right
+ * for that user's own schedule but wrong here).
+ */
+function getTodayDayNameInTimeZone(timeZone) {
+  const weekday = new Intl.DateTimeFormat('en-US', { timeZone, weekday: 'long' }).format(new Date());
+  return DAY_NAMES.includes(weekday) ? weekday : DAY_NAMES[new Date().getDay()];
+}
+
+/**
  * Strictly validate a 'YYYY-MM-DD' calendar date. A regex + Date.parse check
  * alone isn't enough: `new Date("2026-02-30T00:00:00Z")` doesn't throw or
  * produce NaN, it silently overflows to March 2 — so an invalid date would
@@ -89,15 +106,28 @@ function minutesToTime12(totalMinutes) {
 
 function parseClock12(timeStr) {
   if (!timeStr) return null;
-  const match = String(timeStr).match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
-  if (!match) return null;
-  let hours = parseInt(match[1], 10);
-  const minutes = parseInt(match[2], 10);
-  if (hours < 1 || hours > 12 || minutes > 59) return null;
-  const meridiem = match[3].toUpperCase();
-  if (meridiem === 'PM' && hours !== 12) hours += 12;
-  if (meridiem === 'AM' && hours === 12) hours = 0;
-  return hours * 60 + minutes;
+  const str = String(timeStr);
+  const match = str.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+  if (match) {
+    let hours = parseInt(match[1], 10);
+    const minutes = parseInt(match[2], 10);
+    if (hours < 1 || hours > 12 || minutes > 59) return null;
+    const meridiem = match[3].toUpperCase();
+    if (meridiem === 'PM' && hours !== 12) hours += 12;
+    if (meridiem === 'AM' && hours === 12) hours = 0;
+    return hours * 60 + minutes;
+  }
+  // No AM/PM marker — AI-parsed schedule events are stored in 24-hour format
+  // (aiService.js instructs the model to always return 24-hour startTime/endTime),
+  // so fall back to that instead of dropping the event as unparseable.
+  const h24Match = str.match(/(\d{1,2}):(\d{2})/);
+  if (h24Match) {
+    const hours = parseInt(h24Match[1], 10);
+    const minutes = parseInt(h24Match[2], 10);
+    if (hours > 23 || minutes > 59) return null;
+    return hours * 60 + minutes;
+  }
+  return null;
 }
 
 function currentMinuteOfDay(timeZone) {
@@ -194,7 +224,30 @@ async function getFreeBusyForDay(user, isoDate, dayStartHHMM, dayEndHHMM, timeZo
     }
   });
 
-  const busy = result.data?.calendars?.primary?.busy || [];
+  // Google's freebusy.query can come back HTTP 200 with a per-calendar
+  // `errors` array instead of `busy` (e.g. a revoked grant, or a transient
+  // Google-side failure on just this calendar) — falling through to `|| []`
+  // in that case would tell every caller this user has nothing busy, which
+  // is exactly backwards for a function whose whole job is a race guard
+  // against double-booking. Fail closed instead, same as providerRoutes.js'
+  // computeAvailableSlots does for its own Google-fetch-failure case.
+  //
+  // Same fail-closed treatment applies if `calendars.primary` is missing
+  // from the response altogether — every requested item id is supposed to
+  // get its own entry (with `busy` or `errors`), so an absent entry means
+  // the response itself didn't answer "is primary busy?". The old `?.`
+  // chain here silently read that as `undefined?.busy || []` = "nothing
+  // busy", which is the same double-booking risk the `errors` check above
+  // exists to close, just via a different-shaped bad response.
+  const primaryCalendar = result.data?.calendars?.primary;
+  if (!primaryCalendar) {
+    throw new Error(`Google freebusy query returned no result for ${isoDate} (missing calendars.primary)`);
+  }
+  if (primaryCalendar.errors?.length) {
+    const reasons = primaryCalendar.errors.map(e => e.reason || 'unknown').join(', ');
+    throw new Error(`Google freebusy query failed for ${isoDate}: ${reasons}`);
+  }
+  const busy = primaryCalendar.busy || [];
   const toClockMinutes = (ms) => {
     const parts = new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date(ms));
     return Number(parts.find(p => p.type === 'hour').value) * 60 + Number(parts.find(p => p.type === 'minute').value);
@@ -256,6 +309,23 @@ async function isSlotMutuallyFree(host, invitee, { locationId, date, startTime, 
   // cutoff and RUNS PAST it is just as much a Shabbat violation — hence
   // checking endMin, not startMin. See FRIDAY_SHABBAT_CUTOFF_MIN above.
   if (dayName === 'Friday' && endMin > FRIDAY_SHABBAT_CUTOFF_MIN) {
+    return { free: false, timeZone };
+  }
+
+  // HARD DAY-WINDOW GUARD: getMutualFreeSlots() never lists a slot outside
+  // [dayStartHHMM, dayEndHHMM), but this function is the server-side source
+  // of truth /confirm relies on to re-verify a client-supplied window — and
+  // the freebusy query just below is itself windowed to exactly
+  // [dayStartHHMM, dayEndHHMM). Without this check, a direct API call
+  // requesting a window outside that range (e.g. a slot that was never
+  // actually offered) would have its "busy" data silently come back empty
+  // (freebusy.query was never asked about that time), reading as free
+  // regardless of any real conflict there — and getting locked in as a
+  // genuine double-booking on both calendars. Same failure shape the
+  // Shabbat/Friday guards above already close for a different bypass.
+  const dayStartMin = minutesSinceMidnight(dayStartHHMM);
+  const dayEndMin = minutesSinceMidnight(dayEndHHMM);
+  if (startMin < dayStartMin || endMin > dayEndMin) {
     return { free: false, timeZone };
   }
 
@@ -337,6 +407,7 @@ module.exports = {
   getLocalScheduleBusy,
   getLocationTimeZone,
   todayIsoInTimeZone,
+  getTodayDayNameInTimeZone,
   isValidIsoDate,
   getMutualFreeSlots,
   isSlotMutuallyFree,

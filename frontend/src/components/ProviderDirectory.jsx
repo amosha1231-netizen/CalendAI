@@ -73,6 +73,12 @@ export default function ProviderDirectory({ lang, user, onClose, onSelectProvide
     fetchProviders(searchQuery, selectedCategory);
   }, [selectedCategory, fetchProviders]);
 
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    try { document.addEventListener("keydown", onKey); } catch (e) {}
+    return () => { try { document.removeEventListener("keydown", onKey); } catch (e) {} };
+  }, [onClose]);
+
   const handleSearch = () => fetchProviders(searchQuery, selectedCategory);
   const handleKeyDown = (e) => { if (e.key === "Enter") handleSearch(); };
 
@@ -81,9 +87,15 @@ export default function ProviderDirectory({ lang, user, onClose, onSelectProvide
     return found ? found.label : (lang === "he" ? "⭐ כללי" : "⭐ General");
   };
 
+  const dialogLabel = lang === "he" ? "מצא נותן שירות" : "Find a Provider";
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4" dir={isRtl ? "rtl" : "ltr"}>
-      <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4" dir={isRtl ? "rtl" : "ltr"} onClick={onClose}>
+      <div
+        className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col"
+        role="dialog" aria-modal="true" aria-label={dialogLabel}
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
         <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
           <div className="flex items-center gap-2">

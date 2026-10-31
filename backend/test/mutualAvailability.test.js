@@ -13,8 +13,9 @@ const assert = require('node:assert/strict');
 const { test, mock } = require('node:test');
 const { google } = require('googleapis');
 const {
-  intersectFree, mergeIntervals, sliceIntoSlots, overlapsAny, getLocalScheduleBusy, getLocationTimeZone, todayIsoInTimeZone, isValidIsoDate,
-  isSlotMutuallyFree, getMutualFreeSlots, getFreeBusyForDay, FRIDAY_SHABBAT_CUTOFF_MIN
+  intersectFree, mergeIntervals, sliceIntoSlots, overlapsAny, getLocalScheduleBusy, getLocationTimeZone, todayIsoInTimeZone,
+  getTodayDayNameInTimeZone, isValidIsoDate, isSlotMutuallyFree, getMutualFreeSlots, getFreeBusyForDay, FRIDAY_SHABBAT_CUTOFF_MIN,
+  minutesToTime12, parseClock12
 } = require('../services/mutualAvailability');
 
 // ── intersectFree(): pure interval math ──
@@ -106,6 +107,14 @@ test('getLocalScheduleBusy: malformed or missing schedule yields no busy interva
   assert.deepEqual(getLocalScheduleBusy(null, '2026-11-02', 'Monday'), []);
   const user = { schedule: { Monday: [{ startTime: 'garbage', endTime: 'garbage' }] } };
   assert.deepEqual(getLocalScheduleBusy(user, '2026-11-02', 'Monday'), []);
+});
+
+test('getLocalScheduleBusy: a bare 24-hour AI-parsed event (no AM/PM marker) still counts as busy', () => {
+  // aiService.js instructs the model to always return startTime/endTime in 24-hour
+  // format ("17:00", not "05:00 PM"), and /api/parse-schedule stores that as-is —
+  // without a 24-hour fallback these events were silently invisible to mutual scheduling.
+  const user = { schedule: { Monday: [{ startTime: '17:00', endTime: '18:00', targetDate: '2026-11-02' }] } };
+  assert.deepEqual(getLocalScheduleBusy(user, '2026-11-02', 'Monday'), [{ start: 1020, end: 1080 }]);
 });
 
 // ── sliceIntoSlots(): shared slot-slicing rule used by both mutual free-time
@@ -302,6 +311,121 @@ test('isSlotMutuallyFree: a Friday slot that ends exactly at the Shabbat-start c
   }
 });
 
+// ── isSlotMutuallyFree(): HARD DAY-WINDOW GUARD. getFreeBusyForDay windows
+// its freebusy.query to exactly [defaultDayStart, defaultDayEnd) — a request
+// for a window outside that range would never have real conflicts fetched
+// for it at all (not merely skipped by a Shabbat/Friday guard), so it must be
+// rejected outright before ever reaching Google, the same short-circuit
+// proof technique (fake credentials) used by the guards above. ──
+test('isSlotMutuallyFree: rejects a slot starting before the location\'s day-start, without even checking the calendars', async () => {
+  const host = { _id: 'host-1', googleAccessToken: 'fake' };
+  const invitee = { _id: 'invitee-1', googleAccessToken: 'fake' };
+  // Jerusalem's defaultDayStart is 06:00; 2026-11-09 is a Monday (no other guard applies).
+  const result = await isSlotMutuallyFree(host, invitee, {
+    locationId: 'jerusalem',
+    date: '2026-11-09',
+    startTime: '05:30 AM',
+    endTime: '06:00 AM'
+  });
+  assert.deepEqual(result, { free: false, timeZone: 'Asia/Jerusalem' });
+});
+
+test('isSlotMutuallyFree: rejects a slot ending after the location\'s day-end, without even checking the calendars', async () => {
+  const host = { _id: 'host-1', googleAccessToken: 'fake' };
+  const invitee = { _id: 'invitee-1', googleAccessToken: 'fake' };
+  // Jerusalem's defaultDayEnd is 23:00; 2026-11-09 is a Monday (no other guard applies).
+  const result = await isSlotMutuallyFree(host, invitee, {
+    locationId: 'jerusalem',
+    date: '2026-11-09',
+    startTime: '11:00 PM',
+    endTime: '11:30 PM'
+  });
+  assert.deepEqual(result, { free: false, timeZone: 'Asia/Jerusalem' });
+});
+
+// ── isSlotMutuallyFree(): the actual freebusy-based decision. Every test
+// above only exercises the short-circuit guards (Shabbat, already-started,
+// Friday cutoff) via deliberately-invalid credentials that would blow up if
+// the function ever reached the freebusy.query call — none of them actually
+// prove the function correctly grants or denies a slot once it gets there.
+// These mock google.calendar() (the same shared `googleapis` singleton
+// getFreeBusyForDay() calls internally, per getFreeBusyForDay's own tests
+// above) to exercise that real decision end-to-end. ──
+test('isSlotMutuallyFree: both calendars fully free resolves free:true', async (t) => {
+  const calendarMock = t.mock.method(google, 'calendar', () => ({
+    freebusy: { query: async () => ({ data: { calendars: { primary: { busy: [] } } } }) }
+  }));
+  try {
+    const host = { _id: 'host-1', googleAccessToken: 'fake' };
+    const invitee = { _id: 'invitee-1', googleAccessToken: 'fake' };
+    const result = await isSlotMutuallyFree(host, invitee, {
+      locationId: 'jerusalem',
+      date: '2026-11-09', // a Monday
+      startTime: '10:00 AM',
+      endTime: '10:30 AM'
+    });
+    assert.deepEqual(result, { free: true, timeZone: 'Asia/Jerusalem' });
+  } finally {
+    calendarMock.mock.restore();
+  }
+});
+
+test('isSlotMutuallyFree: a busy block on just one side (the invitee\'s) still rejects the slot', async (t) => {
+  let callCount = 0;
+  const calendarMock = t.mock.method(google, 'calendar', () => ({
+    freebusy: {
+      query: async () => {
+        callCount++;
+        // First call is the host's freebusy, second is the invitee's (see
+        // isSlotMutuallyFree's Promise.all([getFreeBusyForDay(host, ...),
+        // getFreeBusyForDay(invitee, ...)])) — busy only on the second.
+        const busy = callCount === 2 ? [{ start: '2026-11-09T08:00:00Z', end: '2026-11-09T08:30:00Z' }] : [];
+        return { data: { calendars: { primary: { busy } } } };
+      }
+    }
+  }));
+  try {
+    const host = { _id: 'host-1', googleAccessToken: 'fake' };
+    const invitee = { _id: 'invitee-1', googleAccessToken: 'fake' };
+    // 08:00-08:30 Asia/Jerusalem (UTC+2) is 10:00-10:30 local — matches the
+    // invitee's busy block above exactly.
+    const result = await isSlotMutuallyFree(host, invitee, {
+      locationId: 'jerusalem',
+      date: '2026-11-09',
+      startTime: '10:00 AM',
+      endTime: '10:30 AM'
+    });
+    assert.deepEqual(result, { free: false, timeZone: 'Asia/Jerusalem' });
+  } finally {
+    calendarMock.mock.restore();
+  }
+});
+
+test('isSlotMutuallyFree: a conflict confined to the host\'s own local `schedule` (never synced to Google) still rejects the slot', async (t) => {
+  const calendarMock = t.mock.method(google, 'calendar', () => ({
+    freebusy: { query: async () => ({ data: { calendars: { primary: { busy: [] } } } }) }
+  }));
+  try {
+    // Nothing on either Google calendar, but the host already has this exact
+    // window booked locally (e.g. via /api/schedule/add-to-free-slot, which
+    // never syncs to Google) — getLocalScheduleBusy must still catch it.
+    const host = {
+      _id: 'host-1', googleAccessToken: 'fake',
+      schedule: { Monday: [{ startTime: '10:00 AM', endTime: '10:30 AM' }] }
+    };
+    const invitee = { _id: 'invitee-1', googleAccessToken: 'fake' };
+    const result = await isSlotMutuallyFree(host, invitee, {
+      locationId: 'jerusalem',
+      date: '2026-11-09', // a Monday
+      startTime: '10:00 AM',
+      endTime: '10:30 AM'
+    });
+    assert.deepEqual(result, { free: false, timeZone: 'Asia/Jerusalem' });
+  } finally {
+    calendarMock.mock.restore();
+  }
+});
+
 test('todayIsoInTimeZone: resolves the calendar day in the given timezone, not the server/UTC day', () => {
   // 2026-11-02T02:30:00Z is already Nov 2 in UTC, but still 21:30 on Nov 1
   // in America/New_York (UTC-5 in November) — a UTC-day check would wrongly
@@ -310,6 +434,22 @@ test('todayIsoInTimeZone: resolves the calendar day in the given timezone, not t
   try {
     assert.equal(todayIsoInTimeZone('UTC'), '2026-11-02');
     assert.equal(todayIsoInTimeZone('America/New_York'), '2026-11-01');
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test('getTodayDayNameInTimeZone: resolves the weekday in the given timezone, not the server/UTC day', () => {
+  // Same instant as the todayIsoInTimeZone test above (2026-11-02T02:30:00Z):
+  // already Monday Nov 2 in UTC, but still Sunday Nov 1, 21:30 in
+  // America/New_York (UTC-5 in November) — providerRoutes.js/mutualRoutes.js
+  // rely on exactly this divergence to decide a location's own "Today"
+  // schedule bucket independently of the server's or a requesting visitor's
+  // own timezone.
+  mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-02T02:30:00Z').getTime() });
+  try {
+    assert.equal(getTodayDayNameInTimeZone('UTC'), 'Monday');
+    assert.equal(getTodayDayNameInTimeZone('America/New_York'), 'Sunday');
   } finally {
     mock.timers.reset();
   }
@@ -338,6 +478,37 @@ test('getMutualFreeSlots: clips today\'s window to the current time but leaves l
 
     assert.ok(tomorrow && tomorrow.freeSlots.length, 'tomorrow should have free slots');
     assert.equal(tomorrow.freeSlots[0].startTime, '06:00 AM', 'tomorrow is unaffected by today\'s current-time cutoff and starts at the location\'s normal day start');
+  } finally {
+    mock.timers.reset();
+    calendarMock.mock.restore();
+  }
+});
+
+test('getMutualFreeSlots: skips Saturday entirely and caps Friday at the Shabbat-start cutoff', async () => {
+  // 2026-01-01T08:00:00Z is 10:00 AM in Asia/Jerusalem, a Thursday, so with
+  // rangeDays=3 the window covers Thu 1/1, Fri 1/2 and Sat 1/3 — exactly the
+  // Friday-cutoff/Saturday-skip combination isSlotMutuallyFree enforces
+  // server-side, but which getMutualFreeSlots' own listing had no direct
+  // coverage for until now (only the plain weekday-clipping test above did).
+  mock.timers.enable({ apis: ['Date'], now: new Date('2026-01-01T08:00:00Z').getTime() });
+  const calendarMock = mock.method(google, 'calendar', () => ({
+    freebusy: { query: async () => ({ data: { calendars: { primary: { busy: [] } } } }) }
+  }));
+  try {
+    const host = { _id: 'host-1', googleAccessToken: 'fake', googleRefreshToken: 'fake', schedule: {} };
+    const invitee = { _id: 'invitee-1', googleAccessToken: 'fake', googleRefreshToken: 'fake', schedule: {} };
+
+    const results = await getMutualFreeSlots(host, invitee, { locationId: 'jerusalem', duration: 30, rangeDays: 3 });
+
+    assert.ok(!results.some(r => r.date === '2026-01-03'), 'Saturday (Shabbat) must never appear in the results');
+
+    const friday = results.find(r => r.date === '2026-01-02');
+    assert.ok(friday && friday.freeSlots.length, 'Friday should still offer slots before the Shabbat-start cutoff');
+    const lastSlot = friday.freeSlots[friday.freeSlots.length - 1];
+    const [h, m] = lastSlot.endTime.replace(/\s*(AM|PM)/i, '').split(':').map(Number);
+    const isPM = /PM/i.test(lastSlot.endTime);
+    const endMin = ((isPM && h !== 12 ? h + 12 : (!isPM && h === 12 ? 0 : h)) * 60) + m;
+    assert.ok(endMin <= FRIDAY_SHABBAT_CUTOFF_MIN, `Friday's last slot must end by the 16:00 cutoff, got ${lastSlot.endTime}`);
   } finally {
     mock.timers.reset();
     calendarMock.mock.restore();
@@ -433,6 +604,47 @@ test('getFreeBusyForDay: no busy blocks at all resolves to an empty array', asyn
   }
 });
 
+test('getFreeBusyForDay: a per-calendar `errors` field in an HTTP-200 response fails closed instead of reading as "nothing busy"', async (t) => {
+  // Google's freebusy.query can return 200 OK with no `busy` array but an
+  // `errors` array on the calendar entry (e.g. a revoked grant) — this must
+  // throw, not silently resolve to [], or every caller (isSlotMutuallyFree,
+  // getMutualFreeSlots, providerRoutes.js' computeAvailableSlots) would treat
+  // this user as fully free and risk double-booking their real calendar.
+  const calendarMock = t.mock.method(google, 'calendar', () => ({
+    freebusy: {
+      query: async () => ({
+        data: { calendars: { primary: { errors: [{ domain: 'global', reason: 'notFound' }] } } }
+      })
+    }
+  }));
+  try {
+    await assert.rejects(
+      () => getFreeBusyForDay(user, '2026-11-02', '06:00', '23:00', 'Asia/Jerusalem'),
+      /notFound/
+    );
+  } finally {
+    calendarMock.mock.restore();
+  }
+});
+
+test('getFreeBusyForDay: a response missing calendars.primary entirely fails closed instead of reading as "nothing busy"', async (t) => {
+  // Every requested item id is supposed to get its own entry back (with
+  // `busy` or `errors`) — an HTTP-200 response that omits `primary`
+  // altogether is just as unusable as the explicit-`errors` case above, and
+  // must not silently resolve to [] either.
+  const calendarMock = t.mock.method(google, 'calendar', () => ({
+    freebusy: { query: async () => ({ data: { calendars: {} } }) }
+  }));
+  try {
+    await assert.rejects(
+      () => getFreeBusyForDay(user, '2026-11-02', '06:00', '23:00', 'Asia/Jerusalem'),
+      /missing calendars\.primary/
+    );
+  } finally {
+    calendarMock.mock.restore();
+  }
+});
+
 test('getFreeBusyForDay: queries Google with the window expressed as absolute instants in the right timezone', async (t) => {
   let capturedRequestBody = null;
   const calendarMock = t.mock.method(google, 'calendar', () => ({
@@ -452,4 +664,58 @@ test('getFreeBusyForDay: queries Google with the window expressed as absolute in
   } finally {
     calendarMock.mock.restore();
   }
+});
+
+// ── minutesToTime12() / parseClock12(): pure 12-hour clock conversion ──
+// Load-bearing for every slot label shown to users and every startTime
+// match done server-side (provider booking's unique-index claim, the post-
+// insert overlap recheck, mutual availability slicing) — worth pinning down
+// directly rather than only indirectly through the higher-level tests above.
+test('minutesToTime12: midnight, noon and one-minute-to-midnight', () => {
+  assert.equal(minutesToTime12(0), '12:00 AM');
+  assert.equal(minutesToTime12(720), '12:00 PM');
+  assert.equal(minutesToTime12(1439), '11:59 PM');
+});
+
+test('minutesToTime12: morning and afternoon hours convert correctly', () => {
+  assert.equal(minutesToTime12(9 * 60 + 5), '09:05 AM');
+  assert.equal(minutesToTime12(13 * 60 + 30), '01:30 PM');
+  assert.equal(minutesToTime12(23 * 60 + 59), '11:59 PM');
+});
+
+test('minutesToTime12: wraps negative and >=1440 totals into a valid day', () => {
+  assert.equal(minutesToTime12(-30), '11:30 PM'); // 30 min before midnight
+  assert.equal(minutesToTime12(1440), '12:00 AM'); // exactly one day over
+  assert.equal(minutesToTime12(1440 + 60), '01:00 AM');
+});
+
+test('parseClock12: round-trips every minute of the day through minutesToTime12', () => {
+  for (let m = 0; m < 1440; m += 17) { // sample, not exhaustive — still covers every hour and both AM/PM
+    assert.equal(parseClock12(minutesToTime12(m)), m, `round-trip failed for minute ${m}`);
+  }
+});
+
+test('parseClock12: rejects malformed or out-of-range input instead of guessing', () => {
+  assert.equal(parseClock12(''), null);
+  assert.equal(parseClock12(null), null);
+  assert.equal(parseClock12('13:00 AM'), null); // hour out of 1-12 range
+  assert.equal(parseClock12('00:00 AM'), null); // hour must be 1-12, not 0
+  assert.equal(parseClock12('09:60 AM'), null); // minutes out of range
+  assert.equal(parseClock12('not a time'), null);
+});
+
+test('parseClock12: 12 AM is midnight and 12 PM is noon', () => {
+  assert.equal(parseClock12('12:00 AM'), 0);
+  assert.equal(parseClock12('12:00 PM'), 720);
+  assert.equal(parseClock12('12:30 AM'), 30);
+  assert.equal(parseClock12('12:30 PM'), 750);
+});
+
+test('parseClock12: falls back to 24-hour format when no AM/PM marker is present', () => {
+  assert.equal(parseClock12('17:00'), 17 * 60);
+  assert.equal(parseClock12('00:00'), 0);
+  assert.equal(parseClock12('23:59'), 23 * 60 + 59);
+  assert.equal(parseClock12('09:05'), 9 * 60 + 5);
+  assert.equal(parseClock12('24:00'), null); // hour out of 0-23 range
+  assert.equal(parseClock12('12:60'), null); // minutes out of range
 });

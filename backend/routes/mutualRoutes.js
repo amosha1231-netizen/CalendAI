@@ -18,7 +18,7 @@ const JWT_SECRET = require('../config/jwtSecret');
 const User = require('../models/User');
 const MutualBooking = require('../models/MutualBooking');
 const { createOAuth2ClientWithRefresh, buildGcalEventBody } = require('../services/googleCalendar');
-const { getMutualFreeSlots, isSlotMutuallyFree, getLocationTimeZone, todayIsoInTimeZone, isValidIsoDate } = require('../services/mutualAvailability');
+const { getMutualFreeSlots, isSlotMutuallyFree, getLocationTimeZone, todayIsoInTimeZone, getTodayDayNameInTimeZone, isValidIsoDate } = require('../services/mutualAvailability');
 
 const DEFAULT_LOCATION_ID = 'jerusalem';
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -29,8 +29,14 @@ const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Frid
 // invitee's lookup on every call. `/sessions/:id/availability` calls Google's
 // freebusy.query for BOTH host and invitee, once per day in range (up to 14
 // days = ~28 Google API calls per request) — unmetered, a tight retry loop
-// could burn through Google API quota fast. None of these routes are
-// AI-metered, so the server.js aiLimiter doesn't cover them.
+// could burn through Google API quota fast. `/sessions/:id/confirm` has the
+// same freebusy.query-for-both-parties cost via isSlotMutuallyFree (plus two
+// calendar inserts on success) — and unlike availability, a losing confirm
+// (stale slot, optimistic-concurrency loss, Google error) resets the session
+// back to 'active', so nothing stops the same caller from immediately
+// retrying and burning quota just as fast as hammering availability would.
+// None of these routes are AI-metered, so the server.js aiLimiter doesn't
+// cover them.
 const mutualAbuseLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 20,
@@ -105,8 +111,15 @@ async function loadAuthorizedSession(req, res) {
  * Delete whichever Google Calendar events a completed session created, and
  * pull the mirrored entries from both users' local `schedule` docs. Shared
  * by the cancel route and the confirm-handler's failure-rollback path.
+ * `app` (optional — the Express app, so `app.get('getUserSchedule')` etc.
+ * are reachable) also syncs server.js' in-memory schedule cache for both
+ * users, mirroring the confirm route's own cache push for this same
+ * mutualSessionId marker. Without it, a route that reads that cache
+ * without first reloading from Mongo — including one that reads the whole
+ * cached schedule and writes it back wholesale — would resurrect this
+ * now-cancelled meeting into Mongo on its next unrelated write.
  */
-async function rollbackCompletedSession(session) {
+async function rollbackCompletedSession(session, app) {
   const [host, invitee] = await Promise.all([
     User.findById(session.hostId),
     User.findById(session.inviteeId)
@@ -138,6 +151,24 @@ async function rollbackCompletedSession(session) {
     User.updateOne({ _id: session.hostId }, pullUpdate).catch(() => {}),
     User.updateOne({ _id: session.inviteeId }, pullUpdate).catch(() => {})
   ]);
+
+  if (app) {
+    const getUserSchedule = app.get('getUserSchedule');
+    const saveSchedulesNow = app.get('saveSchedulesNow');
+    if (getUserSchedule) {
+      for (const userId of [session.hostId, session.inviteeId]) {
+        const cached = getUserSchedule(userId.toString());
+        if (cached) {
+          for (const day of dayKeys) {
+            if (Array.isArray(cached[day])) {
+              cached[day] = cached[day].filter(e => e.mutualSessionId !== session.sessionId);
+            }
+          }
+        }
+      }
+    }
+    if (saveSchedulesNow) saveSchedulesNow();
+  }
 }
 
 async function pushToSchedule(userDoc, dayName, eventObj, timeZone) {
@@ -201,6 +232,20 @@ router.post('/sessions', mutualAbuseLimiter, requireAuth, async (req, res) => {
     if (invitee._id.equals(host._id)) return res.status(400).json({ error: 'You cannot schedule a mutual meeting with yourself.' });
     if (!invitee.googleAccessToken) return res.status(400).json({ error: 'That user has not connected Google Calendar yet.' });
 
+    // locationId must be cast to a plain string before use, same as every
+    // other client-supplied field here (inviteeEmail/subject already go
+    // through String()): MutualBooking.locationId is a schema String field,
+    // and Mongoose's own String caster throws a CastError/ValidationError
+    // for a non-string, non-stringifiable-safely value like an array or a
+    // plain object (e.g. `locationId[$ne]=null` bracket-notation input turns
+    // req.body.locationId into `{ $ne: null }`), which MutualBooking.create()
+    // below would surface as an uncaught-by-design 500 instead of a clean
+    // fallback to the default location — the exact "unguarded type reaching
+    // a Mongoose cast" shape already fixed for other fields in this feature.
+    const safeLocationId = typeof locationId === 'string' && locationId.trim()
+      ? locationId.trim().slice(0, 50)
+      : DEFAULT_LOCATION_ID;
+
     const sessionId = `mut_${crypto.randomBytes(18).toString('hex')}`;
     const session = await MutualBooking.create({
       sessionId,
@@ -209,7 +254,7 @@ router.post('/sessions', mutualAbuseLimiter, requireAuth, async (req, res) => {
       inviteeEmail: email,
       subject: String(subject || 'Meeting').trim().slice(0, 200) || 'Meeting',
       duration: Number(duration),
-      locationId: locationId || DEFAULT_LOCATION_ID,
+      locationId: safeLocationId,
       status: 'active'
     });
 
@@ -263,7 +308,7 @@ router.get('/sessions/:id/availability', mutualAbuseLimiter, requireAuth, async 
 // mirroring the exact claim→verify→insert→persist→rollback skeleton used by
 // the existing /api/booking/:id/confirm (anonymous-guest) flow.
 // ──────────────────────────────────────────────
-router.post('/sessions/:id/confirm', requireAuth, async (req, res) => {
+router.post('/sessions/:id/confirm', mutualAbuseLimiter, requireAuth, async (req, res) => {
   let claimed = false;
   let hostEventId = null;
   let inviteeEventId = null;
@@ -376,6 +421,34 @@ router.post('/sessions/:id/confirm', requireAuth, async (req, res) => {
     );
     if (!completed) throw Object.assign(new Error('Could not finalize this session.'), { status: 503 });
 
+    // Best-effort in-memory schedule cache sync (mirrors the legacy
+    // /api/booking/:id/confirm host-side sync and providerRoutes.js' POST
+    // /:id/book) — both schedule pushes above already landed in MongoDB via
+    // pushToSchedule, but a route that reads server.js' in-memory
+    // getUserSchedule() cache without first reloading from MongoDB (e.g. GET
+    // /api/schedule/expanded, which MonthlyCalendar.jsx calls directly) would
+    // otherwise keep serving a stale schedule — missing this just-confirmed
+    // meeting for either party — until something else happens to refresh
+    // that user's cache entry (e.g. their next GET /api/schedule, which
+    // always reloads from Mongo).
+    const getUserSchedule = req.app.get('getUserSchedule');
+    const saveSchedulesNow = req.app.get('saveSchedulesNow');
+    if (getUserSchedule) {
+      const isTodayBucket = date === todayIsoInTimeZone(timeZone);
+      for (const [user, event] of [[host, hostEvent], [invitee, inviteeEvent]]) {
+        const cached = getUserSchedule(user._id.toString());
+        if (cached) {
+          if (!cached[dayOfWeek]) cached[dayOfWeek] = [];
+          cached[dayOfWeek].push(event);
+          if (isTodayBucket) {
+            if (!cached.Today) cached.Today = [];
+            cached.Today.push(event);
+          }
+        }
+      }
+    }
+    if (saveSchedulesNow) saveSchedulesNow();
+
     res.json({ ok: true, message: 'Mutual meeting confirmed on both calendars!', session: completed });
   } catch (err) {
     console.error('Confirm mutual session error:', err);
@@ -398,7 +471,7 @@ router.post('/sessions/:id/confirm', requireAuth, async (req, res) => {
           sessionId: claimedSession.sessionId,
           hostEventId,
           inviteeEventId
-        });
+        }, req.app);
       } catch (rollbackErr) {
         console.error('Failed to roll back mutual session side-effects:', rollbackErr.message);
       }
@@ -414,6 +487,10 @@ router.post('/sessions/:id/confirm', requireAuth, async (req, res) => {
  * whichever Google Calendar events/schedule entries it actually holds.
  * Exported so the race it closes can be exercised directly in tests
  * (see mutualBooking.test.js) without standing up Google Calendar mocks.
+ * `app` is optional and only used to best-effort sync the in-memory
+ * schedule cache (see rollbackCompletedSession) — tests that call this
+ * directly with just a sessionId still work, exactly as the Google
+ * Calendar side-effects below are already best-effort/optional there.
  *
  * Deliberately a single atomic findOneAndUpdate rather than a read then a
  * separate write: /confirm races this in-between, claiming 'active' ->
@@ -427,7 +504,7 @@ router.post('/sessions/:id/confirm', requireAuth, async (req, res) => {
  * actually held the instant this update applied, so the rollback decision
  * can never be made on stale state.
  */
-async function cancelMutualSession(sessionId) {
+async function cancelMutualSession(sessionId, app) {
   const prior = await MutualBooking.findOneAndUpdate(
     { sessionId, status: { $ne: 'cancelled' } },
     { $set: { status: 'cancelled' } },
@@ -436,7 +513,7 @@ async function cancelMutualSession(sessionId) {
   if (!prior) return { alreadyCancelled: true };
 
   if (prior.status === 'completed') {
-    await rollbackCompletedSession(prior);
+    await rollbackCompletedSession(prior, app);
   }
   return { alreadyCancelled: false };
 }
@@ -450,7 +527,7 @@ router.post('/sessions/:id/cancel', requireAuth, async (req, res) => {
     if (!session) return;
     if (session.status === 'cancelled') return res.json({ ok: true, alreadyCancelled: true });
 
-    const { alreadyCancelled } = await cancelMutualSession(req.params.id);
+    const { alreadyCancelled } = await cancelMutualSession(req.params.id, req.app);
     res.json({ ok: true, alreadyCancelled });
   } catch (err) {
     console.error('Cancel mutual session error:', err);

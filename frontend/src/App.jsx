@@ -1682,8 +1682,10 @@ function AppRoutes() {
         <MutualScheduler
           lang={lang}
           t={t}
+          locationId={selectedLocation}
           onClose={() => setCurrentView('dashboard')}
           onFallbackToShareLink={() => setCurrentView('booking')}
+          onMeetingConfirmed={fetchSchedule}
         />
         {renderBottomNav()}
       </div>
@@ -2808,6 +2810,7 @@ function AppRoutes() {
               setShowProviderBooking(false);
               setSelectedProviderId(null);
             }}
+            onBookingConfirmed={fetchSchedule}
           />
         </Suspense>
       )}
@@ -2819,6 +2822,7 @@ function AppRoutes() {
             lang={lang}
             user={user}
             onClose={() => setShowProviderProfileEditor(false)}
+            onBookingCancelled={fetchSchedule}
           />
         </Suspense>
       )}

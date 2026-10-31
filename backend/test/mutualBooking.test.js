@@ -92,6 +92,25 @@ test('mutual session claim: a cancelled session cannot be claimed', async () => 
   assert.equal(claim, null, 'a non-active session must be refused a claim');
 });
 
+test('cancelMutualSession: cancelling an already-cancelled session is a no-op that reports alreadyCancelled', async () => {
+  const host = await User.create({ email: 'mutual-host-already-1@test.com' });
+  const invitee = await User.create({ email: 'mutual-invitee-already-1@test.com' });
+  const session = await MutualBooking.create({
+    sessionId: 'mut-already-cancelled-1',
+    hostId: host._id,
+    inviteeId: invitee._id,
+    inviteeEmail: invitee.email,
+    duration: 30,
+    status: 'cancelled',
+  });
+
+  const result = await cancelMutualSession(session.sessionId);
+  assert.equal(result.alreadyCancelled, true, 'a second cancel of the same session must report alreadyCancelled instead of erroring');
+
+  const final = await MutualBooking.findOne({ sessionId: session.sessionId });
+  assert.equal(final.status, 'cancelled', 'status must stay cancelled, not be touched again');
+});
+
 // ── 2. cancelMutualSession: atomic cancel never decides its rollback from a stale read ──
 test('cancelMutualSession: a session still mid-confirm (processing) is marked cancelled, no completed-session rollback attempted', async () => {
   const host = await User.create({ email: 'mutual-host-3@test.com' });

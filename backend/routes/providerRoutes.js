@@ -21,7 +21,7 @@ const { createOAuth2ClientWithRefresh } = require('../services/googleCalendar');
 const mutualAvailability = require('../services/mutualAvailability');
 const {
   mergeIntervals, sliceIntoSlots, overlapsAny, isValidIsoDate, getLocationTimeZone, todayIsoInTimeZone, FRIDAY_SHABBAT_CUTOFF_MIN,
-  minutesToTime12, currentMinuteOfDay
+  minutesToTime12, currentMinuteOfDay, getTodayDayNameInTimeZone
 } = mutualAvailability;
 const { google } = require('googleapis');
 
@@ -43,24 +43,35 @@ function escapeRegex(str) {
 }
 
 /**
- * Deterministic tiebreak for a booking whose time range overlaps one or more
- * other non-cancelled bookings discovered by the post-insert recheck below
- * (the unique index only catches an exact-startTime collision). The earlier
- * createdAt wins; ties (same millisecond) are broken by _id. Pure and
- * symmetric, so whichever of two concurrently-created, mutually-overlapping
- * bookings runs this check, both land on the same single winner — without
- * it, two requests that both insert before either runs its recheck would
- * each see only the other as "the" conflict and both self-delete, leaving
- * the slot with zero bookings instead of one.
+ * Resolve a create-time race among concurrently-inserted provider bookings
+ * discovered by the post-insert recheck below (the unique index only catches
+ * an exact-startTime collision — two different-duration services slice to
+ * different startTimes and can still spatially overlap). Each of `self` and
+ * `others` needs {_id, createdAt, start, end}.
+ *
+ * Resolving `self` against only its own *direct* overlaps isn't enough for a
+ * 3+-way chain: if A overlaps B, B overlaps C, but A and C do not overlap
+ * each other, A and C can both legitimately stand once B is gone — yet C's
+ * own recheck, running concurrently with B's, can still see B (not yet
+ * deleted) as a blocking conflict and wrongly self-delete too. Sorting every
+ * candidate oldest-first (ties broken by _id) and greedily keeping each one
+ * only if it doesn't overlap anything already kept resolves the whole group
+ * in one deterministic pass, the same way from any candidate's point of
+ * view: A (oldest) is kept, B loses to A, and C — no longer blocked once B
+ * is excluded — is kept too.
  */
-function selfLosesOverlapRace(self, overlappingOthers) {
-  const selfCreatedAt = self.createdAt.getTime();
-  const selfId = self._id.toString();
-  return overlappingOthers.some(other => {
-    const otherCreatedAt = other.createdAt.getTime();
-    if (otherCreatedAt !== selfCreatedAt) return otherCreatedAt < selfCreatedAt;
-    return other._id.toString() < selfId;
+function winsOverlapRace(self, others) {
+  const all = [self, ...others].slice().sort((a, b) => {
+    const diff = a.createdAt.getTime() - b.createdAt.getTime();
+    if (diff !== 0) return diff;
+    return a._id.toString() < b._id.toString() ? -1 : 1;
   });
+  const kept = [];
+  for (const candidate of all) {
+    const blocked = kept.some(k => overlapsAny(candidate.start, candidate.end, [k]));
+    if (!blocked) kept.push(candidate);
+  }
+  return kept.some(k => k._id.toString() === self._id.toString());
 }
 
 // POST /:id/book is reachable by anonymous guests (no auth required) and
@@ -134,7 +145,7 @@ function mapServicesForSave(services) {
       name: s.name.trim().slice(0, 100),
       duration: Math.round(Number(s.duration)),
       price: s.price !== undefined ? Number(s.price) : 0,
-      color: typeof s.color === 'string' ? s.color : '#6366f1',
+      color: typeof s.color === 'string' ? s.color.trim().slice(0, 20) : '#6366f1',
       active: s.active !== false
     };
     if (s._id && mongoose.Types.ObjectId.isValid(s._id)) svc._id = s._id;
@@ -218,9 +229,14 @@ async function computeAvailableSlots(req, provider, service, dateStr) {
   // actually has calendar conflicts to avoid.
   let googleBusyRanges = [];
   if (provider.googleAccessToken) {
+    // Use slotRanges (post-Shabbat-cutoff), not mergedRanges — on a Friday
+    // whose raw availability extends past FRIDAY_SHABBAT_CUTOFF_MIN, querying
+    // Google for the uncapped window would fetch freebusy data for time past
+    // candle-lighting that candidates (sliced from slotRanges) never offers
+    // anyway. candidates.length > 0 here guarantees slotRanges is non-empty.
     const toHHMM = min => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
-    const windowStartMin = mergedRanges[0].start;
-    const windowEndMin = mergedRanges[mergedRanges.length - 1].end;
+    const windowStartMin = slotRanges[0].start;
+    const windowEndMin = slotRanges[slotRanges.length - 1].end;
     try {
       googleBusyRanges = await mutualAvailability.getFreeBusyForDay(
         provider, dateStr, toHHMM(windowStartMin), toHHMM(windowEndMin), timeZone
@@ -304,6 +320,9 @@ router.put('/me', async (req, res) => {
         if (!row || !VALID_DAYS.includes(row.day) || row.day === 'Saturday') {
           return res.status(400).json({ error: 'יום זמינות לא תקין (שבת אינה נתמכת).' });
         }
+        if (typeof row.startTime !== 'string' || typeof row.endTime !== 'string') {
+          return res.status(400).json({ error: 'טווח שעות זמינות לא תקין.' });
+        }
         const startMin = timeToMinutes(row.startTime);
         const endMin = timeToMinutes(row.endTime);
         if (startMin === null || endMin === null || endMin <= startMin) {
@@ -317,13 +336,13 @@ router.put('/me', async (req, res) => {
     if (businessName !== undefined) update['providerProfile.businessName'] = String(businessName).trim().slice(0, 200);
     if (bio !== undefined) update['providerProfile.bio'] = String(bio).trim().slice(0, 2000);
     if (category !== undefined) update['providerProfile.category'] = String(category).trim().slice(0, 50) || 'general';
-    if (locationId !== undefined) update['providerProfile.locationId'] = String(locationId).trim() || 'jerusalem';
+    if (locationId !== undefined) update['providerProfile.locationId'] = String(locationId).trim().slice(0, 50) || 'jerusalem';
     if (services !== undefined) update['providerProfile.services'] = mapServicesForSave(services);
     if (availability !== undefined) {
       update['providerProfile.availability'] = availability.map(r => ({
         day: r.day,
-        startTime: r.startTime,
-        endTime: r.endTime
+        startTime: r.startTime.trim().slice(0, 20),
+        endTime: r.endTime.trim().slice(0, 20)
       }));
     }
 
@@ -390,14 +409,28 @@ router.post('/bookings/:id/cancel', async (req, res) => {
       return res.status(403).json({ error: 'אין לך הרשאה לבטל הזמנה זו.' });
     }
 
-    if (booking.status === 'cancelled') return res.json({ ok: true, alreadyCancelled: true });
+    // Atomic transition (findOneAndUpdate, not a read-then-save) so this can
+    // never lose a race against POST /:id/book's own atomic confirm step
+    // below: whichever of the two writes the document first wins, and the
+    // pre-image this returns reflects what the document actually held the
+    // instant this update applied, not a stale read taken before it.
+    // findOneAndUpdate bypasses the schema's pre('save') hook, so activeSlot
+    // must be set here explicitly — otherwise a cancelled booking would keep
+    // activeSlot: true and stay stuck in the unique partial index, permanently
+    // blocking any future booking of the same provider+date+startTime.
+    const prior = await ProviderBooking.findOneAndUpdate(
+      { _id: booking._id, status: { $ne: 'cancelled' } },
+      { $set: { status: 'cancelled', activeSlot: false } },
+      { new: false }
+    );
+    if (!prior) return res.json({ ok: true, alreadyCancelled: true });
 
-    if (booking.status === 'confirmed') {
-      const provider = await User.findById(booking.providerId);
-      if (booking.googleEventId && provider?.googleAccessToken) {
+    if (prior.status === 'confirmed') {
+      const provider = await User.findById(prior.providerId);
+      if (prior.googleEventId && provider?.googleAccessToken) {
         try {
           const oauth = await createOAuth2ClientWithRefresh(provider);
-          await google.calendar({ version: 'v3', auth: oauth }).events.delete({ calendarId: 'primary', eventId: booking.googleEventId });
+          await google.calendar({ version: 'v3', auth: oauth }).events.delete({ calendarId: 'primary', eventId: prior.googleEventId });
         } catch (err) {
           console.error('Failed to delete provider Google Calendar event on cancel:', err.message);
         }
@@ -407,15 +440,41 @@ router.post('/bookings/:id/cancel', async (req, res) => {
         // by providerBookingId is a precise, harmless no-op on whichever
         // bucket the push didn't actually reach.
         const pull = {
-          [`schedule.${booking.day}`]: { providerBookingId: booking._id.toString() },
-          'schedule.Today': { providerBookingId: booking._id.toString() }
+          [`schedule.${prior.day}`]: { providerBookingId: prior._id.toString() },
+          'schedule.Today': { providerBookingId: prior._id.toString() }
         };
         await User.updateOne({ _id: provider._id }, { $pull: pull }).catch(() => {});
+
+        // Best-effort in-memory schedule cache sync (mirrors POST /:id/book's
+        // own cache push for this same providerBookingId marker). Without
+        // this, a route that reads server.js' in-memory getUserSchedule()
+        // cache without first reloading from Mongo — including one that
+        // reads the whole cached schedule and writes it back wholesale
+        // (e.g. DELETE /api/schedule/event, POST /api/reschedule,
+        // POST /api/schedule/extend-event) — would resurrect this
+        // just-cancelled booking into Mongo on its next unrelated write.
+        const getUserSchedule = req.app.get('getUserSchedule');
+        const saveSchedulesNow = req.app.get('saveSchedulesNow');
+        if (getUserSchedule) {
+          const cached = getUserSchedule(provider._id.toString());
+          if (cached) {
+            if (Array.isArray(cached[prior.day])) {
+              cached[prior.day] = cached[prior.day].filter(e => e.providerBookingId !== prior._id.toString());
+            }
+            if (Array.isArray(cached.Today)) {
+              cached.Today = cached.Today.filter(e => e.providerBookingId !== prior._id.toString());
+            }
+          }
+        }
+        if (saveSchedulesNow) saveSchedulesNow();
       }
     }
+    // If prior.status === 'processing', POST /:id/book is still mid-flight on
+    // this same document: there is nothing to roll back yet here, and its own
+    // atomic confirm step (conditioned on status still 'processing') will
+    // fail to match this now-cancelled document and roll back the schedule
+    // push / Google Calendar event it created, on its own.
 
-    booking.status = 'cancelled';
-    await booking.save();
     res.json({ ok: true });
   } catch (err) {
     console.error('Cancel provider booking error:', err);
@@ -431,9 +490,19 @@ router.get('/', browseLimiter, async (req, res) => {
   try {
     const { q, category } = req.query;
     const filter = { 'providerProfile.enabled': true };
-    if (category && category !== 'all') filter['providerProfile.category'] = category;
-    if (q && q.trim()) {
-      const safe = escapeRegex(q.trim().slice(0, 100));
+    // category must be cast to a plain string before use: Express's query
+    // parser turns bracket syntax like ?category[$regex]=... into a nested
+    // object, which would otherwise be handed straight to Mongo as a live
+    // query operator (NoSQL/ReDoS injection) — same risk escapeRegex() above
+    // guards against for `q`, just via a different field.
+    const safeCategory = typeof category === 'string' ? category.trim().slice(0, 50) : '';
+    if (safeCategory && safeCategory !== 'all') filter['providerProfile.category'] = safeCategory;
+    // q must be cast the same way as category above: ?q[x]=1 or ?q=a&q=b
+    // turns req.query.q into an object/array with no .trim(), which would
+    // otherwise throw a TypeError and surface as a bare 500.
+    const safeQ = typeof q === 'string' ? q.trim() : '';
+    if (safeQ) {
+      const safe = escapeRegex(safeQ.slice(0, 100));
       filter.$or = [
         { 'providerProfile.businessName': { $regex: safe, $options: 'i' } },
         { 'providerProfile.bio': { $regex: safe, $options: 'i' } },
@@ -466,7 +535,7 @@ router.get('/', browseLimiter, async (req, res) => {
 // ──────────────────────────────────────────────
 // GET /api/providers/:id — single public provider profile
 // ──────────────────────────────────────────────
-router.get('/:id', async (req, res) => {
+router.get('/:id', browseLimiter, async (req, res) => {
   try {
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
       return res.status(400).json({ error: 'מזהה נותן שירות לא תקין.' });
@@ -658,8 +727,8 @@ router.post('/:id/book', bookLimiter, async (req, res) => {
     const otherRanges = otherBookings
       .map(b => ({ _id: b._id, createdAt: b.createdAt, start: timeToMinutes(b.startTime), end: timeToMinutes(b.endTime) }))
       .filter(r => r.start !== null && r.end !== null);
-    const overlappingOthers = otherRanges.filter(r => overlapsAny(claimedStartMin, claimedEndMin, [r]));
-    if (overlappingOthers.length > 0 && selfLosesOverlapRace(createdBooking, overlappingOthers)) {
+    const selfRange = { _id: createdBooking._id, createdAt: createdBooking.createdAt, start: claimedStartMin, end: claimedEndMin };
+    if (!winsOverlapRace(selfRange, otherRanges)) {
       await ProviderBooking.deleteOne({ _id: createdBooking._id }).catch(() => {});
       return res.status(409).json({ error: 'השעה שנבחרה הוזמנה הרגע על ידי מישהו אחר. בחר שעה אחרת.' });
     }
@@ -716,10 +785,24 @@ router.post('/:id/book', bookLimiter, async (req, res) => {
       googleCalendar = { success: true, eventId: syncedEventId };
     }
 
-    createdBooking.status = 'confirmed';
-    createdBooking.confirmedAt = new Date();
-    if (syncedEventId) createdBooking.googleEventId = syncedEventId;
-    await createdBooking.save();
+    // Atomic confirm (findOneAndUpdate conditioned on status still being
+    // 'processing', not a read-then-save) so this can never win a race
+    // against a concurrent POST /bookings/:id/cancel on this same document:
+    // if that cancel already committed, this fails to match and the branch
+    // below undoes the schedule push / Google Calendar event this request
+    // just created instead of silently resurrecting a cancelled booking as
+    // confirmed. See POST /bookings/:id/cancel's own atomic update.
+    const confirmUpdate = { status: 'confirmed', confirmedAt: new Date() };
+    if (syncedEventId) confirmUpdate.googleEventId = syncedEventId;
+    const confirmedBooking = await ProviderBooking.findOneAndUpdate(
+      { _id: createdBooking._id, status: 'processing' },
+      { $set: confirmUpdate },
+      { new: true }
+    );
+    if (!confirmedBooking) {
+      throw Object.assign(new Error('ההזמנה בוטלה לפני שהושלמה.'), { status: 409 });
+    }
+    createdBooking = confirmedBooking;
 
     // Best-effort in-memory schedule cache sync (mirrors legacy booking confirm).
     const getUserSchedule = req.app.get('getUserSchedule');
@@ -783,4 +866,4 @@ module.exports = router;
 module.exports.mapServicesForSave = mapServicesForSave;
 module.exports.computeAvailableSlots = computeAvailableSlots;
 module.exports.escapeRegex = escapeRegex;
-module.exports.selfLosesOverlapRace = selfLosesOverlapRace;
+module.exports.winsOverlapRace = winsOverlapRace;

@@ -23,7 +23,7 @@ function todayIsoInTimeZone(timeZone) {
   }
 }
 
-export default function ProviderBookingView({ providerId, lang, user, onClose }) {
+export default function ProviderBookingView({ providerId, lang, user, onClose, onBookingConfirmed }) {
   const isRtl = lang === "he";
 
   const [provider, setProvider] = useState(null);
@@ -70,6 +70,7 @@ export default function ProviderBookingView({ providerId, lang, user, onClose })
         if (cancelled) return;
 
         setProvider(data.provider);
+        dateTouchedRef.current = false;
         if (data.provider.services?.length) setSelectedServiceId(data.provider.services[0]._id);
 
         // "Today" must match the provider's own location timezone, not the
@@ -123,9 +124,33 @@ export default function ProviderBookingView({ providerId, lang, user, onClose })
     }
   }, [providerId]);
 
+  // Bumped (instead of calling fetchSlots directly with closure-captured
+  // arguments) whenever handleConfirm needs to force a re-fetch of the
+  // current slot list — a 409 from a slot someone else just took, or a
+  // post-success refresh. handleConfirm is an async closure: if the user
+  // changes the service/date picker while its request is in flight (nothing
+  // disables them, unlike the guest-detail fields below), its own
+  // selectedServiceId/selectedDate locals are the OLD, pre-change values.
+  // Calling fetchSlots(oldServiceId, oldDate) directly from there would bump
+  // slotsRequestRef to a value *newer* than the legitimate fetch the effect
+  // below already kicked off for the service/date the user actually changed
+  // to — so that stale, wrong-date fetch would win the "latest request"
+  // race and silently overwrite the slot grid with availability for a date
+  // that no longer matches what the date picker shows. Routing every forced
+  // refresh through this effect instead means it always reads whichever
+  // selectedServiceId/selectedDate are current at the moment it actually
+  // runs, never a value captured earlier in some other closure.
+  const [slotsRefreshNonce, setSlotsRefreshNonce] = useState(0);
+
   useEffect(() => {
     if (selectedServiceId && selectedDate) fetchSlots(selectedServiceId, selectedDate);
-  }, [selectedServiceId, selectedDate, fetchSlots]);
+  }, [selectedServiceId, selectedDate, fetchSlots, slotsRefreshNonce]);
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape" && !confirming) onClose(); };
+    try { document.addEventListener("keydown", onKey); } catch (e) {}
+    return () => { try { document.removeEventListener("keydown", onKey); } catch (e) {} };
+  }, [onClose, confirming]);
 
   const handleConfirm = async () => {
     if (!selectedSlot || !guestName.trim()) return;
@@ -154,12 +179,17 @@ export default function ProviderBookingView({ providerId, lang, user, onClose })
         // The slot may have just been taken by someone else — refresh and
         // go back to picking, same as MutualScheduler's handleConfirm.
         setConfirmError(data.error || "Booking failed");
-        if (res.status === 409) fetchSlots(selectedServiceId, selectedDate);
+        if (res.status === 409) setSlotsRefreshNonce(n => n + 1);
         return;
       }
       setConfirmedBooking(data.booking);
       // Refresh slots so the just-taken one disappears if the user books again.
-      fetchSlots(selectedServiceId, selectedDate);
+      setSlotsRefreshNonce(n => n + 1);
+      // If the signed-in booker is the provider themselves (e.g. testing their
+      // own public page), this booking just landed in their own `schedule`
+      // document server-side — let the caller refetch it. A no-op prop for
+      // every other (normal) booker.
+      if (onBookingConfirmed) onBookingConfirmed();
     } catch (err) {
       setConfirmError(err.message);
     } finally {
@@ -171,8 +201,12 @@ export default function ProviderBookingView({ providerId, lang, user, onClose })
 
   if (loading) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
-        <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-lg p-8 flex items-center justify-center">
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4" onClick={onClose}>
+        <div
+          className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-lg p-8 flex items-center justify-center"
+          role="dialog" aria-modal="true" aria-label={lang === "he" ? "טוען" : "Loading"}
+          onClick={(e) => e.stopPropagation()}
+        >
           <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
         </div>
       </div>
@@ -181,8 +215,12 @@ export default function ProviderBookingView({ providerId, lang, user, onClose })
 
   if (error || !provider) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
-        <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-md p-6">
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4" onClick={onClose}>
+        <div
+          className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-md p-6"
+          role="dialog" aria-modal="true" aria-label={lang === "he" ? "שגיאה" : "Error"}
+          onClick={(e) => e.stopPropagation()}
+        >
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-bold text-red-600">{lang === "he" ? "שגיאה" : "Error"}</h3>
             <button onClick={onClose} className="p-1 rounded-full hover:bg-gray-100"><X className="w-5 h-5" /></button>
@@ -195,8 +233,12 @@ export default function ProviderBookingView({ providerId, lang, user, onClose })
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4" dir={isRtl ? "rtl" : "ltr"}>
-      <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4" dir={isRtl ? "rtl" : "ltr"} onClick={confirming ? undefined : onClose}>
+      <div
+        className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col"
+        role="dialog" aria-modal="true" aria-label={provider.businessName || (lang === "he" ? "הזמנת פגישה" : "Book an appointment")}
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
         <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2 min-w-0">
@@ -232,6 +274,16 @@ export default function ProviderBookingView({ providerId, lang, user, onClose })
                 {lang === "he" ? "סגור" : "Close"}
               </button>
             </div>
+          ) : !(provider.services || []).length ? (
+            /* ── No bookable services — nothing to pick a date/slot for ── */
+            <div className="text-center py-6">
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                {lang === "he" ? "נותן השירות אינו מציע כרגע שירותים להזמנה." : "This provider currently has no bookable services."}
+              </p>
+              <button onClick={onClose} className="mt-4 px-4 py-2 bg-gray-200 dark:bg-gray-600 rounded-lg text-sm">
+                {lang === "he" ? "סגור" : "Close"}
+              </button>
+            </div>
           ) : (
             <>
               {/* Service picker */}
@@ -241,7 +293,7 @@ export default function ProviderBookingView({ providerId, lang, user, onClose })
                 </label>
                 <select
                   value={selectedServiceId}
-                  onChange={(e) => setSelectedServiceId(e.target.value)}
+                  onChange={(e) => { setConfirmError(""); setSelectedServiceId(e.target.value); }}
                   className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-xl text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 >
                   {(provider.services || []).map(s => (
@@ -262,7 +314,7 @@ export default function ProviderBookingView({ providerId, lang, user, onClose })
                   type="date"
                   min={minDate}
                   value={selectedDate}
-                  onChange={(e) => { dateTouchedRef.current = true; setSelectedDate(e.target.value); }}
+                  onChange={(e) => { dateTouchedRef.current = true; setConfirmError(""); setSelectedDate(e.target.value); }}
                   className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-xl text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
               </div>
@@ -288,7 +340,7 @@ export default function ProviderBookingView({ providerId, lang, user, onClose })
                       return (
                         <button
                           key={i}
-                          onClick={() => setSelectedSlot(isSelected ? null : slot)}
+                          onClick={() => { setConfirmError(""); setSelectedSlot(isSelected ? null : slot); }}
                           className={`px-2 py-2.5 rounded-xl text-xs font-medium border-2 transition ${
                             isSelected
                               ? "bg-indigo-600 text-white border-indigo-600"
@@ -303,9 +355,25 @@ export default function ProviderBookingView({ providerId, lang, user, onClose })
                 )}
               </div>
 
+              {/* Shown here (not inside the guest-details block below) so a slot-taken
+                  error from handleConfirm's 409 branch stays visible even though that
+                  same branch's slot refresh resets selectedSlot to null, which would
+                  otherwise unmount the guest-details block before the user ever sees it. */}
+              {confirmError && (
+                <div className="text-sm text-red-600 bg-red-50 dark:bg-red-900/30 rounded-lg p-3">{confirmError}</div>
+              )}
+
               {/* Guest details */}
               {selectedSlot && (
                 <div className="space-y-3 border-t border-gray-200 dark:border-gray-700 pt-4">
+                  {selectedService && (
+                    <div className="bg-indigo-50 dark:bg-indigo-900/20 rounded-lg p-3 text-xs text-gray-700 dark:text-gray-300">
+                      <div className="font-medium text-gray-900 dark:text-white">
+                        {selectedService.name} · {selectedService.duration} {lang === "he" ? "דק׳" : "min"}{selectedService.price ? ` · ₪${selectedService.price}` : ""}
+                      </div>
+                      <div>{selectedDate} · {selectedSlot.startTime}</div>
+                    </div>
+                  )}
                   <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">
                     {lang === "he" ? "הפרטים שלך" : "Your details"}
                   </h3>
@@ -352,10 +420,6 @@ export default function ProviderBookingView({ providerId, lang, user, onClose })
                       className="w-full pl-10 pr-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-xl text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
                     />
                   </div>
-
-                  {confirmError && (
-                    <div className="text-sm text-red-600 bg-red-50 dark:bg-red-900/30 rounded-lg p-3">{confirmError}</div>
-                  )}
 
                   <button
                     onClick={handleConfirm}

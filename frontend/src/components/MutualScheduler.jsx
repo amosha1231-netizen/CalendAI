@@ -28,7 +28,7 @@ function authHeaders() {
  * both calendars at once. If the invitee isn't a connected CalendAI user,
  * `onFallbackToShareLink` hands off to the existing guest-link flow.
  */
-export default function MutualScheduler({ lang, t, onClose, onFallbackToShareLink }) {
+export default function MutualScheduler({ lang, t, locationId, onClose, onFallbackToShareLink, onMeetingConfirmed }) {
   const isRTL = lang === 'he';
 
   const [step, setStep] = useState('invitee-email'); // 'invitee-email' | 'select-slot' | 'confirm' | 'success'
@@ -50,6 +50,11 @@ export default function MutualScheduler({ lang, t, onClose, onFallbackToShareLin
   const [confirming, setConfirming] = useState(false);
   const [confirmError, setConfirmError] = useState("");
   const [confirmedSession, setConfirmedSession] = useState(null);
+  // Set when handleConfirm's 409 branch bounces the user back to
+  // 'select-slot' — that step doesn't render confirmError, and the refresh it
+  // triggers (fetchAvailability) would otherwise make the error disappear
+  // before it was ever shown. Cleared on the next slot pick or restart.
+  const [slotTakenNotice, setSlotTakenNotice] = useState("");
 
   const dayLabel = (dayKey) => (lang === 'he' ? (DAY_NAMES_HE[dayKey] || dayKey) : dayKey);
 
@@ -83,9 +88,21 @@ export default function MutualScheduler({ lang, t, onClose, onFallbackToShareLin
     };
   }, [cancelSession]);
 
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape' && !confirming && !lookupLoading) onClose(); };
+    try { document.addEventListener('keydown', onKey); } catch (e) {}
+    return () => { try { document.removeEventListener('keydown', onKey); } catch (e) {} };
+  }, [onClose, confirming, lookupLoading]);
+
   const fetchAvailability = useCallback(async (sid) => {
     setAvailabilityLoading(true);
     setAvailabilityError("");
+    // Clear any slots from a previous fetch (e.g. the pre-conflict list a
+    // 409 confirm failure bounced back from) — the day list below renders
+    // unconditionally, not gated on availabilityLoading like the spinner/
+    // error/empty-state messages are, so a stale list would otherwise stay
+    // visible and clickable until this fetch resolves.
+    setDays([]);
     try {
       const res = await fetch(`${API_BASE}/api/mutual/sessions/${sid}/availability`, {
         headers: authHeaders(),
@@ -111,6 +128,7 @@ export default function MutualScheduler({ lang, t, onClose, onFallbackToShareLin
     setLookupLoading(true);
     setLookupError("");
     setNotFound(false);
+    setSlotTakenNotice("");
     try {
       const lookupRes = await fetch(`${API_BASE}/api/mutual/lookup?email=${encodeURIComponent(email)}`, {
         headers: authHeaders(),
@@ -130,7 +148,7 @@ export default function MutualScheduler({ lang, t, onClose, onFallbackToShareLin
         method: "POST",
         headers: authHeaders(),
         credentials: "include",
-        body: JSON.stringify({ inviteeEmail: email, subject: subject || undefined, duration })
+        body: JSON.stringify({ inviteeEmail: email, subject: subject || undefined, duration, locationId })
       });
       const sessionData = await sessionRes.json();
       if (!sessionRes.ok) throw new Error(sessionData.error || "Could not start a mutual scheduling session.");
@@ -151,12 +169,14 @@ export default function MutualScheduler({ lang, t, onClose, onFallbackToShareLin
     setSelectedSlot(null);
     setDays([]);
     setAvailabilityError("");
+    setSlotTakenNotice("");
     setStep('invitee-email');
   };
 
   const handlePickSlot = (date, day, slot) => {
     setSelectedSlot({ date, day, startTime: slot.startTime, endTime: slot.endTime });
     setConfirmError("");
+    setSlotTakenNotice("");
     setStep('confirm');
   };
 
@@ -178,15 +198,21 @@ export default function MutualScheduler({ lang, t, onClose, onFallbackToShareLin
       const data = await res.json();
       if (!res.ok) {
         // The slot may have just been taken on either calendar — refresh and go back.
-        setConfirmError(data.error || "Failed to confirm the mutual meeting.");
         if (res.status === 409) {
+          setSlotTakenNotice(data.error || "Failed to confirm the mutual meeting.");
           setStep('select-slot');
           fetchAvailability(sessionId);
+        } else {
+          setConfirmError(data.error || "Failed to confirm the mutual meeting.");
         }
         return;
       }
       setConfirmedSession(data.session);
       setStep('success');
+      // The confirmed meeting was just pushed into the host's own `schedule`
+      // document server-side — the dashboard's in-memory schedule state has
+      // no way to know that happened unless told to refetch.
+      if (onMeetingConfirmed) onMeetingConfirmed();
     } catch (err) {
       setConfirmError(err.message);
     } finally {
@@ -197,9 +223,9 @@ export default function MutualScheduler({ lang, t, onClose, onFallbackToShareLin
   // ===================== INVITEE EMAIL STEP =====================
   if (step === 'invitee-email') {
     return (
-      <div className="booking-container" dir={isRTL ? 'rtl' : 'ltr'}>
+      <div className="booking-container" dir={isRTL ? 'rtl' : 'ltr'} role="dialog" aria-modal="true" aria-label={t.mutualTitle || (lang === 'he' ? 'תיאום פגישה הדדי' : 'Mutual Scheduling')}>
         <div className="booking-header">
-          <button onClick={onClose} className="booking-close-btn">
+          <button onClick={onClose} className="booking-close-btn" disabled={lookupLoading}>
             <X className="w-5 h-5" />
           </button>
           <div className="booking-header-content">
@@ -301,7 +327,7 @@ export default function MutualScheduler({ lang, t, onClose, onFallbackToShareLin
   // ===================== SELECT SLOT STEP =====================
   if (step === 'select-slot') {
     return (
-      <div className="booking-container" dir={isRTL ? 'rtl' : 'ltr'}>
+      <div className="booking-container" dir={isRTL ? 'rtl' : 'ltr'} role="dialog" aria-modal="true" aria-label={t.mutualTitle || (lang === 'he' ? 'תיאום פגישה הדדי' : 'Mutual Scheduling')}>
         <div className="booking-header">
           <button onClick={handleBackToEmailStep} className="booking-close-btn">
             <X className="w-5 h-5" />
@@ -316,6 +342,13 @@ export default function MutualScheduler({ lang, t, onClose, onFallbackToShareLin
             </div>
           </div>
         </div>
+
+        {slotTakenNotice && (
+          <div className="booking-slot-error">
+            <AlertCircle className="w-4 h-4" />
+            <span>{slotTakenNotice}</span>
+          </div>
+        )}
 
         {availabilityLoading && (
           <div className="booking-ai-result">
@@ -365,9 +398,21 @@ export default function MutualScheduler({ lang, t, onClose, onFallbackToShareLin
   // ===================== CONFIRM STEP =====================
   if (step === 'confirm' && selectedSlot) {
     return (
-      <div className="booking-container" dir={isRTL ? 'rtl' : 'ltr'}>
+      <div className="booking-container" dir={isRTL ? 'rtl' : 'ltr'} role="dialog" aria-modal="true" aria-label={t.mutualTitle || (lang === 'he' ? 'תיאום פגישה הדדי' : 'Mutual Scheduling')}>
         <div className="booking-header">
-          <button onClick={() => setStep('select-slot')} className="booking-close-btn">
+          {/* Disabled while confirming: without this guard the user could
+              navigate back to 'select-slot' mid-request, pick a *different*
+              slot, and fire a second concurrent POST .../confirm for the
+              same sessionId. The backend's atomic claim (status: 'active' ->
+              'processing') ensures only one of the two requests can actually
+              win, but the two fetches resolve independently in the browser —
+              whichever response lands LAST decides the UI's final state
+              regardless of which one actually succeeded server-side. A
+              losing request's 409 ("already claimed") arriving after the
+              winning request's success response would bounce the user off
+              the success screen back to slot-picking, making an actually-
+              confirmed-on-both-calendars meeting look like it failed. */}
+          <button onClick={() => setStep('select-slot')} className="booking-close-btn" disabled={confirming}>
             <X className="w-5 h-5" />
           </button>
           <div className="booking-header-content">
@@ -418,7 +463,7 @@ export default function MutualScheduler({ lang, t, onClose, onFallbackToShareLin
   // ===================== SUCCESS STEP =====================
   if (step === 'success') {
     return (
-      <div className="booking-container" dir={isRTL ? 'rtl' : 'ltr'}>
+      <div className="booking-container" dir={isRTL ? 'rtl' : 'ltr'} role="dialog" aria-modal="true" aria-label={t.mutualTitle || (lang === 'he' ? 'תיאום פגישה הדדי' : 'Mutual Scheduling')}>
         <div className="booking-header">
           <button onClick={onClose} className="booking-close-btn">
             <X className="w-5 h-5" />
