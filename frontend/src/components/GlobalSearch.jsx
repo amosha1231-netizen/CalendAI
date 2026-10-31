@@ -10,7 +10,7 @@ var API_BASE = import.meta.env.VITE_API_URL || "";
  * Searches across public goals/challenges and users.
  * Supports joining challenges and viewing user profiles.
  */
-export default function GlobalSearch({ lang, user, onJoinChallenge, onViewProfile, onOpenPublicGoals }) {
+export default function GlobalSearch({ lang, user, onJoinChallenge, onViewProfile, onOpenPublicGoals, autoOpen = false, onClose }) {
   const isRtl = lang === "he";
   const [query, setQuery] = useState("");
   const [results, setResults] = useState({ goals: [], users: [] });
@@ -20,6 +20,17 @@ export default function GlobalSearch({ lang, user, onJoinChallenge, onViewProfil
   const inputRef = useRef(null);
   const dropdownRef = useRef(null);
   const debounceRef = useRef(null);
+  const wasOpenRef = useRef(false);
+
+  // Opened from the header icon: show the search right away, no second tap.
+  useEffect(() => {
+    if (autoOpen) setShowDropdown(true);
+  }, [autoOpen]);
+
+  useEffect(() => {
+    if (wasOpenRef.current && !showDropdown && onClose) onClose();
+    wasOpenRef.current = showDropdown;
+  }, [showDropdown, onClose]);
 
   // ── Command Palette: Listen for Cmd+K / Ctrl+K ──
   useEffect(() => {
@@ -156,6 +167,7 @@ export default function GlobalSearch({ lang, user, onJoinChallenge, onViewProfil
   // ── Command Palette Modal ──
   return (
     <>
+      {!autoOpen && (<>
       {/* Desktop Trigger Button */}
       <div className="relative flex-1 max-w-md mx-2 hidden sm:block">
         <button
@@ -184,6 +196,7 @@ export default function GlobalSearch({ lang, user, onJoinChallenge, onViewProfil
       >
         <Search className="w-4.5 h-4.5" />
       </button>
+      </>)}
 
       {/* ── Command Palette Overlay ── */}
       <AnimatePresence>

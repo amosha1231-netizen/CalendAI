@@ -26,6 +26,7 @@ const routineSchema = new mongoose.Schema({
   timeOfDay: { type: String, enum: ['morning', 'afternoon', 'evening', 'any'], default: 'any' },
   kind: { type: String, enum: ['routine', 'challenge'], default: 'routine' },
   challengeDays: { type: Number, min: 1, max: 365, default: null },
+  restSeconds: { type: Number, min: 0, max: 600, default: 0 }, // rest timer per tap; 0 = off
   isPublic: { type: Boolean, default: false, index: true },
   shareCode: { type: String, required: true, unique: true },
   participants: { type: [participantSchema], default: [] }, // includes the owner

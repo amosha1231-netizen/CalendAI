@@ -909,7 +909,7 @@ test('POST /:id/book: a Google Calendar sync failure after the schedule push alr
   const providerId = new mongoose.Types.ObjectId();
   // Pin "today" to a Wednesday before the booked Monday (not the day being
   // booked, and not in the past relative to it) so the schedule.Today
-  // push/pull never enters this test's assertions — without this, the test
+  // push never fires (the rollback pull always includes Today) — without this, the test
   // only passed by coincidence on real-world days that weren't Monday in
   // Asia/Jerusalem.
   mock.timers.enable({ apis: ['Date'], now: new Date('2026-12-02T08:00:00Z').getTime() });
@@ -947,7 +947,7 @@ test('POST /:id/book: a Google Calendar sync failure after the schedule push alr
     assert.equal(res.status, 502);
     assert.match(data.error, /הוספה ליומן Google נכשלה/);
     assert.equal(updateOneMock.mock.callCount(), 2, '1 successful push + 1 rollback pull undoing it');
-    assert.deepEqual(updateOneMock.mock.calls[1].arguments[1], { $pull: { 'schedule.Monday': { providerBookingId: createdBooking._id.toString() } } });
+    assert.deepEqual(updateOneMock.mock.calls[1].arguments[1], { $pull: { 'schedule.Monday': { providerBookingId: createdBooking._id.toString() }, 'schedule.Today': { providerBookingId: createdBooking._id.toString() } } });
     assert.equal(deleteMock.mock.callCount(), 1, 'the booking document must still be deleted even though the failure happened after the push');
     assert.equal(deleteMock.mock.calls[0].arguments[0]._id, createdBooking._id);
   } finally {
@@ -1005,7 +1005,7 @@ test('POST /:id/book: a concurrent cancel winning the race before this request\'
     assert.match(data.error, /בוטלה/);
     assert.equal(confirmMock.mock.callCount(), 1);
     assert.equal(updateOneMock.mock.callCount(), 2, '1 successful push + 1 rollback pull undoing it, since the confirm never committed');
-    assert.deepEqual(updateOneMock.mock.calls[1].arguments[1], { $pull: { 'schedule.Monday': { providerBookingId: createdBooking._id.toString() } } });
+    assert.deepEqual(updateOneMock.mock.calls[1].arguments[1], { $pull: { 'schedule.Monday': { providerBookingId: createdBooking._id.toString() }, 'schedule.Today': { providerBookingId: createdBooking._id.toString() } } });
     assert.equal(deleteMock.mock.callCount(), 1, 'the booking document must still be removed rather than left confirmed with no corresponding calendar event');
     assert.equal(deleteMock.mock.calls[0].arguments[0]._id, createdBooking._id);
   } finally {

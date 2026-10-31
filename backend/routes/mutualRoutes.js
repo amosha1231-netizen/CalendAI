@@ -173,7 +173,11 @@ async function rollbackCompletedSession(session, app) {
 
 async function pushToSchedule(userDoc, dayName, eventObj, timeZone) {
   const update = { $push: { [`schedule.${dayName}`]: eventObj }, $inc: { scheduleRevision: 1 } };
-  if (dayName === getTodayDayNameInTimeZone(timeZone)) update.$push['schedule.Today'] = eventObj;
+  // Compare the event's actual target date (not just its weekday name) to
+  // today in the given timezone — matching on weekday alone would also
+  // mirror a meeting booked for next week into Today whenever that date
+  // happens to land on today's weekday.
+  if (eventObj.targetDate === todayIsoInTimeZone(timeZone)) update.$push['schedule.Today'] = eventObj;
   const observedRevision = Number(userDoc.scheduleRevision || 0);
   const result = await User.updateOne({
     _id: userDoc._id,
@@ -430,7 +434,7 @@ router.post('/sessions/:id/confirm', mutualAbuseLimiter, requireAuth, async (req
     const getUserSchedule = req.app.get('getUserSchedule');
     const saveSchedulesNow = req.app.get('saveSchedulesNow');
     if (getUserSchedule) {
-      const isTodayBucket = dayOfWeek === getTodayDayNameInTimeZone(timeZone);
+      const isTodayBucket = date === todayIsoInTimeZone(timeZone);
       for (const [user, event] of [[host, hostEvent], [invitee, inviteeEvent]]) {
         const cached = getUserSchedule(user._id.toString());
         if (cached) {

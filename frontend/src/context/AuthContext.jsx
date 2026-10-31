@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import api from '../api/axios';
+import { startOAuth } from '../utils/nativeApp';
 import safeStorage from '../utils/safeStorage';
 import { normalizeUserCredits } from '../utils/credits';
 
@@ -84,6 +85,12 @@ const clearJwtToken = () => {
   } catch (e) {
     // localStorage may be unavailable
   }
+};
+
+// /api/auth/me hands back a fresh 30-day token once the current one is a day old.
+const adoptRenewedToken = (res) => {
+  const renewed = res?.data?.token;
+  if (typeof renewed === 'string' && renewed && !isJwtExpired(renewed)) setJwtToken(renewed);
 };
 
 export function AuthProvider({ children }) {
@@ -227,6 +234,7 @@ export function AuthProvider({ children }) {
       // ── 200 OK → authenticated! ──
       const data = res.data;
       if (data.user) {
+        adoptRenewedToken(res);
         const normalizedUser = normalizeUserCredits(data.user);
         setUserRaw(normalizedUser);
         setIsPro(data.user?.isPro === true || data.user?.isPro === 'true');
@@ -276,7 +284,7 @@ export function AuthProvider({ children }) {
   const handleLogin = useCallback((lang) => {
     const baseUrl = `${API_BASE}/api/auth/google`;
     const url = lang ? `${baseUrl}?lang=${lang}` : baseUrl;
-    window.location.href = url;
+    startOAuth(url);
   }, []);
 
   // ── Set Authorization header from localStorage token on app init ──
@@ -390,6 +398,7 @@ export function AuthProvider({ children }) {
           validateStatus: false
         });
         if (res.status === 200 && res.data) {
+          adoptRenewedToken(res);
           const userData = res.data.user || res.data;
           const normalizedUserData = normalizeUserCredits(userData);
           setUserRaw(normalizedUserData);
@@ -474,6 +483,7 @@ export function AuthProvider({ children }) {
 
         if (res.status === 200 && res.data?.user) {
           // Server confirmed the user is authenticated
+          adoptRenewedToken(res);
           const normalizedUser = normalizeUserCredits(res.data.user);
           setUserRaw(normalizedUser);
           setIsAuthenticated(true);

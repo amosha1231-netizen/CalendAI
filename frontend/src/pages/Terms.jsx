@@ -25,7 +25,7 @@ export default function Terms() {
             </div>
             <div>
               <h1 className="text-2xl font-bold text-slate-900">Terms of Service</h1>
-              <p className="text-sm text-slate-500">Last updated: July 27, 2026</p>
+              <p className="text-sm text-slate-500">Last updated: October 21, 2026</p>
             </div>
           </div>
 
@@ -206,11 +206,31 @@ export default function Terms() {
           </div>
         </div>
 
-        {/* 9. Changes to Terms */}
+        {/* 9. Modification and Discontinuation of Service */}
+        <div className="bg-white rounded-2xl shadow-sm border p-6 sm:p-8 mb-6">
+          <div className="flex items-center gap-2 mb-4">
+            <AlertCircle className="w-5 h-5 text-amber-500" />
+            <h2 className="text-lg font-bold text-slate-800">9. Modification and Discontinuation of Service</h2>
+          </div>
+          
+          <div className="space-y-3 text-sm text-slate-600 leading-relaxed">
+            <p>
+              We reserve the right, at our sole discretion, to suspend, modify, or discontinue 
+              the App or any part of it (including any feature, integration, or plan), temporarily 
+              or permanently, at any time and for any reason, with or without notice.
+            </p>
+            <p>
+              We will not be liable to you or to any third party for any suspension, modification, 
+              or discontinuation of the App, to the fullest extent permitted by law.
+            </p>
+          </div>
+        </div>
+
+        {/* 10. Changes to Terms */}
         <div className="bg-white rounded-2xl shadow-sm border p-6 sm:p-8 mb-6">
           <div className="flex items-center gap-2 mb-4">
             <FileText className="w-5 h-5 text-slate-500" />
-            <h2 className="text-lg font-bold text-slate-800">9. Changes to These Terms</h2>
+            <h2 className="text-lg font-bold text-slate-800">10. Changes to These Terms</h2>
           </div>
           
           <div className="space-y-3 text-sm text-slate-600 leading-relaxed">
@@ -222,11 +242,11 @@ export default function Terms() {
           </div>
         </div>
 
-        {/* 10. Contact */}
+        {/* 11. Contact */}
         <div className="bg-white rounded-2xl shadow-sm border p-6 sm:p-8 mb-6">
           <div className="flex items-center gap-2 mb-4">
             <Mail className="w-5 h-5 text-blue-500" />
-            <h2 className="text-lg font-bold text-slate-800">10. Contact</h2>
+            <h2 className="text-lg font-bold text-slate-800">11. Contact</h2>
           </div>
           
           <div className="space-y-3 text-sm text-slate-600 leading-relaxed">

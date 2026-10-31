@@ -203,6 +203,51 @@ function sanitizeReminderInput(input = {}, { timeZone, now = new Date() } = {}) 
   return { value };
 }
 
+const HEBREW_UNITS = { 'יום': 'day', 'ימים': 'day', 'שבוע': 'week', 'שבועות': 'week', 'חודש': 'month', 'חודשים': 'month', 'שנה': 'year', 'שנים': 'year' };
+const HEBREW_DUALS = { 'יומיים': ['day', 2], 'שבועיים': ['week', 2], 'חודשיים': ['month', 2], 'שנתיים': ['year', 2] };
+const NOT_WORD = '(?<![\\u0590-\\u05FFA-Za-z0-9])';
+const RELATIVE_PATTERNS = [
+  // "בעוד 355 ימים", "לעוד 3 שבועות", "עוד 2 חודשים"
+  [new RegExp(`${NOT_WORD}ו?[בל]?עוד\\s+(\\d{1,4})\\s*(ימים|יום|שבועות|שבוע|חודשים|חודש|שנים|שנה)(?![\\u0590-\\u05FF])`, 'g'), m => [HEBREW_UNITS[m[2]], Number(m[1])]],
+  // "בעוד שבועיים", "לעוד שנתיים"
+  [new RegExp(`${NOT_WORD}ו?[בל]?עוד\\s+(יומיים|שבועיים|חודשיים|שנתיים)(?![\\u0590-\\u05FF])`, 'g'), m => HEBREW_DUALS[m[1]]],
+  // "בעוד שבוע", "בעוד חודש", "בעוד שנה" (a bare "עוד יום" usually means "another day", so the ב/ל is required)
+  [new RegExp(`${NOT_WORD}ו?[בל]עוד\\s+(יום|שבוע|חודש|שנה)(?![\\u0590-\\u05FF])`, 'g'), m => [HEBREW_UNITS[m[1]], 1]],
+  // "in 355 days", "in a week", "in two months"
+  [/\bin\s+(\d{1,4}|an?|one|two|three)\s+(day|week|month|year)s?\b/gi, m => [m[2].toLowerCase(), Number(m[1]) || { a: 1, an: 1, one: 1, two: 2, three: 3 }[m[1].toLowerCase()]]],
+  // "355 days from now"
+  [/\b(\d{1,4})\s+(day|week|month|year)s?\s+from\s+now\b/gi, m => [m[2].toLowerCase(), Number(m[1])]]
+];
+
+/**
+ * The calendar date (YYYY-MM-DD, in the zone) of a relative day offset in the
+ * user's text: "בעוד 355 ימים", "בעוד שבועיים", "in 3 months". The AI only
+ * returns a weekday name, so anything past a week has to be worked out here.
+ * Returns null when there is no such phrase, or more than one distinct date.
+ */
+function relativeDateFromText(text, timeZone, now = new Date()) {
+  if (typeof text !== 'string' || !text) return null;
+  const today = localParts(now, zoneOrDefault(timeZone));
+  const found = new Set();
+  for (const [re, read] of RELATIVE_PATTERNS) {
+    for (const m of text.matchAll(re)) {
+      const [unit, n] = read(m) || [];
+      if (!unit || !Number.isInteger(n) || n < 1) continue;
+      let { year, month, day } = today;
+      if (unit === 'day' || unit === 'week') {
+        const d = new Date(Date.UTC(year, month - 1, day + n * (unit === 'week' ? 7 : 1)));
+        found.add(dateKey(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate()));
+      } else {
+        const total = (year * 12 + month - 1) + n * (unit === 'year' ? 12 : 1);
+        year = Math.floor(total / 12);
+        month = total % 12 + 1;
+        found.add(dateKey(year, month, Math.min(day, daysInMonth(year, month))));
+      }
+    }
+  }
+  return found.size === 1 ? [...found][0] : null;
+}
+
 /** The next calendar date (YYYY-MM-DD, in the zone) that falls on `dayName` at `time`, after `now`. */
 function nextDateForDayName(dayName, time, timeZone, now = new Date()) {
   const tz = zoneOrDefault(timeZone);
@@ -230,10 +275,16 @@ function nextDateForDayName(dayName, time, timeZone, now = new Date()) {
  *
  * Yearly reminders stay as calendar events (the calendar already repeats them).
  */
-function reminderSpecsFromEvents(events, { timeZone, now = new Date(), todayName } = {}) {
+function reminderSpecsFromEvents(events, { timeZone, now = new Date(), todayName, text } = {}) {
   const remaining = [];
   const groups = new Map();
   const tz = zoneOrDefault(timeZone);
+  const todayKey = (p => dateKey(p.year, p.month, p.day))(localParts(now, tz));
+  // A relative offset in the text ("בעוד 355 ימים") only pins a date when there
+  // is a single one-off reminder for it to belong to.
+  const onceCount = (Array.isArray(events) ? events : []).filter(ev => ev && ev.isReminder === true
+    && String((ev.repeat && ev.repeat.frequency) || ev.recurrence || 'once').toLowerCase() === 'once').length;
+  const relativeDate = onceCount === 1 ? relativeDateFromText(text, tz, now) : null;
 
   for (const ev of Array.isArray(events) ? events : []) {
     const repeat = ev && typeof ev.repeat === 'object' && ev.repeat ? ev.repeat : {};
@@ -262,7 +313,10 @@ function reminderSpecsFromEvents(events, { timeZone, now = new Date(), todayName
     } else if (freq === 'monthly') {
       spec = { frequency: 'monthly', dayOfMonth: Number(repeat.dayOfMonth) || localParts(now, tz).day };
     } else {
-      const date = nextDateForDayName(dayName, time, tz, now);
+      const target = ev.targetDate ? String(ev.targetDate).slice(0, 10) : null;
+      const date = relativeDate
+        || (parseDateKey(target) && target > todayKey ? target : null)
+        || nextDateForDayName(dayName, time, tz, now);
       if (!date) { remaining.push(ev); continue; }
       spec = { frequency: 'once', date };
     }
@@ -313,5 +367,6 @@ module.exports = {
   toRRule,
   sanitizeReminderInput,
   nextDateForDayName,
+  relativeDateFromText,
   reminderSpecsFromEvents
 };

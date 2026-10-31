@@ -5,13 +5,15 @@ import {
   ChevronLeft, ChevronRight, Sun
 } from 'lucide-react';
 import { getTodayHebrewInfo } from '../utils/hebrewCalendar';
+import { ReminderChip } from './Reminders';
 
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
 
 export default function DayView({ 
   date, schedule, dayKey, lang, t, 
   onEditEvent, onRemoveEvent, onSlotClick, 
-  locationFilter, LOCATION_LABELS 
+  locationFilter, LOCATION_LABELS,
+  reminders = [], onOpenReminders
 }) {
   const [hebrewInfo, setHebrewInfo] = useState({ hebDate: '', holidays: [], holidayName: null });
   const isRTL = lang === 'he';
@@ -145,7 +147,8 @@ export default function DayView({
       <div className="space-y-1">
         {HOURS.map(hour => {
           const hourEvents = getEventsForHour(hour);
-          const hasEvents = hourEvents.length > 0;
+          const hourReminders = reminders.filter(r => parseInt(String(r.time), 10) === hour);
+          const hasEvents = hourEvents.length > 0 || hourReminders.length > 0;
           return (
             <div
               key={hour}
@@ -161,6 +164,9 @@ export default function DayView({
               <div className="flex-1 min-w-0 min-h-[40px] py-1">
                 {hasEvents ? (
                   <div className="space-y-1">
+                    {hourReminders.map(r => (
+                      <ReminderChip key={r.id} reminder={r} lang={lang} onClick={onOpenReminders} />
+                    ))}
                     {hourEvents.map((event, idx) => {
                       const actualIndex = schedule[event._dayKey || dayKey]?.findIndex(e => e === event);
                       return (
@@ -218,7 +224,7 @@ export default function DayView({
       </div>
 
       {/* Empty State */}
-      {sortedEvents.length === 0 && !hebrewInfo.holidayName && (
+      {sortedEvents.length === 0 && reminders.length === 0 && !hebrewInfo.holidayName && (
         <div className="text-center py-12">
           <Sun className="w-12 h-12 text-slate-200 mx-auto mb-3" />
           <p className="text-sm text-slate-400">{t.noEvents}</p>

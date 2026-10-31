@@ -6,6 +6,7 @@
 const { google } = require('googleapis');
 const { createOAuth2ClientWithRefresh, zonedDateTime } = require('./googleCalendar');
 const shabbatService = require('./shabbatService');
+const { getScheduleEventsForDate } = require('./scheduleOccurrence');
 
 let LOCATIONS = [];
 try {
@@ -197,12 +198,8 @@ function intersectFree(busyA, busyB, windowStartMin, windowEndMin, minGapMinutes
  * events for this reason; mutual availability must do the same or it can
  * offer/confirm a slot that's actually already taken locally.
  */
-function getLocalScheduleBusy(user, isoDate, dayName) {
-  const dayEvents = (user?.schedule?.[dayName] || []).filter(ev => {
-    if (ev.targetDate && String(ev.targetDate).slice(0, 10) !== isoDate) return false;
-    return true;
-  });
-  return dayEvents
+function getLocalScheduleBusy(user, isoDate, dayName, todayIso = isoDate) {
+  return getScheduleEventsForDate(user?.schedule, isoDate, todayIso)
     .map(ev => ({ start: parseClock12(ev.startTime), end: parseClock12(ev.endTime) }))
     .filter(r => r.start !== null && r.end !== null && r.end > r.start);
 }
@@ -336,8 +333,8 @@ async function isSlotMutuallyFree(host, invitee, { locationId, date, startTime, 
     getFreeBusyForDay(host, date, dayStartHHMM, dayEndHHMM, timeZone),
     getFreeBusyForDay(invitee, date, dayStartHHMM, dayEndHHMM, timeZone)
   ]);
-  const combinedHost = [...busyHost, ...getLocalScheduleBusy(host, date, dayName)];
-  const combinedInvitee = [...busyInvitee, ...getLocalScheduleBusy(invitee, date, dayName)];
+  const combinedHost = [...busyHost, ...getLocalScheduleBusy(host, date, dayName, todayIso)];
+  const combinedInvitee = [...busyInvitee, ...getLocalScheduleBusy(invitee, date, dayName, todayIso)];
 
   const free = intersectFree(combinedHost, combinedInvitee, startMin, endMin, endMin - startMin);
   const ok = free.some(f => f.start <= startMin && f.end >= endMin);
@@ -375,8 +372,8 @@ async function getMutualFreeSlots(host, invitee, { locationId, duration, rangeDa
       getFreeBusyForDay(host, isoDate, dayStartHHMM, dayEndHHMM, timeZone),
       getFreeBusyForDay(invitee, isoDate, dayStartHHMM, dayEndHHMM, timeZone)
     ]);
-    const combinedHost = [...busyHost, ...getLocalScheduleBusy(host, isoDate, dayOfWeek)];
-    const combinedInvitee = [...busyInvitee, ...getLocalScheduleBusy(invitee, isoDate, dayOfWeek)];
+    const combinedHost = [...busyHost, ...getLocalScheduleBusy(host, isoDate, dayOfWeek, todayIsoInTimeZone(timeZone))];
+    const combinedInvitee = [...busyInvitee, ...getLocalScheduleBusy(invitee, isoDate, dayOfWeek, todayIsoInTimeZone(timeZone))];
 
     const windowStartMin = offset === 0 ? Math.max(dayStartMin, currentMinuteOfDay(timeZone)) : dayStartMin;
     // Never list a Friday slot that would run into Shabbat — see

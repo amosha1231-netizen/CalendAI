@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">CalendAI</string>
+    <string name="title_activity_main">CalendAI</string>
+    <string name="package_name">com.amos.calendai</string>
+    <string name="custom_url_scheme">com.amos.calendai</string>
+</resources>
