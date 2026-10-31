@@ -22,7 +22,7 @@ import ChallengeDetail from "./components/ChallengeDetail";
 import DailyJournal from "./components/DailyJournal";
 import SmartAlarm from "./components/SmartAlarm";
 import Routines, { RoutinesTodayCard, consumeSharedRoutineParam, clearSharedRoutineParam } from "./components/Routines";
-import Reminders, { RemindersCard, consumeRemindersParam } from "./components/Reminders";
+import Reminders, { RemindersPinger, ReminderChip, remindersOnDate, consumeRemindersParam } from "./components/Reminders";
 
 // ── Lazy-loaded page chunks ──
 const LandingPage = lazy(() => import("./components/LandingPage"));
@@ -410,12 +410,14 @@ function AppRoutes() {
   // Reminders (components/Reminders.jsx); ?reminders=1 comes from a tapped notification
   const [showReminders, setShowReminders] = useState(() => consumeRemindersParam());
   const [remindersRefresh, setRemindersRefresh] = useState(0);
+  const [reminderList, setReminderList] = useState([]);
   const [sharedRoutineCode, setSharedRoutineCode] = useState(() => consumeSharedRoutineParam());
   // A shared routine link opens once the user is signed in.
   useEffect(() => {
     if (sharedRoutineCode && user) setRoutinesView(view => view || 'today');
   }, [sharedRoutineCode, user]);
   const [showMobileSearch, setShowMobileSearch] = useState(false);
+  const closeMobileSearch = useCallback(() => setShowMobileSearch(false), []);
 
   const [installPrompt, setInstallPrompt] = useState(null);
   const [showPwaPopup, setShowPwaPopup] = useState(false);
@@ -1532,7 +1534,7 @@ function AppRoutes() {
     const nl = getNavLabels(lang);
     const credits = user ? normalizeCredits(user.aiCredits) : undefined;
     const meetOpen = currentView === 'mutual' || showWizard || showProviderDirectory || showProviderProfileEditor;
-    const toolsOpen = showAlarmSettings || showExpenses || showJournal || showPublicGoals || showChallengeDetail || showHistoryModal;
+    const toolsOpen = showReminders || showAlarmSettings || showExpenses || showJournal || showPublicGoals || showChallengeDetail || showHistoryModal;
     const activeNav = isSidebarOpen ? 'me'
       : navSheet || (routinesView ? 'routines' : meetOpen ? 'meet' : toolsOpen ? 'tools' : 'home');
     const tabs = [
@@ -1589,6 +1591,7 @@ function AppRoutes() {
       ],
       tools: [
         { id: 'alarm', label: nl.alarm, sub: nl.alarmSub, icon: AlarmClock, tone: 'bg-amber-50 text-amber-600', onClick: run(() => setShowAlarmSettings(true)) },
+        { id: 'reminders', label: nl.reminders, sub: nl.remindersSub, icon: Bell, tone: 'bg-amber-50 text-amber-600', onClick: run(() => setShowReminders(true)) },
         { id: 'expenses', label: nl.expenses, sub: nl.expensesSub, icon: Wallet, tone: 'bg-emerald-50 text-emerald-600', onClick: run(() => setShowExpenses(true)) },
         { id: 'journal', label: nl.journal, sub: nl.journalSub, icon: BookOpen, tone: 'bg-indigo-50 text-indigo-600', onClick: run(() => setShowJournal(true)) },
         { id: 'challenges', label: nl.challenges, sub: nl.challengesSub, icon: Trophy, tone: 'bg-orange-50 text-orange-600', onClick: run(() => setRoutinesView('discover')) },
@@ -1779,7 +1782,7 @@ function AppRoutes() {
             })()}
             {/* Mobile Search Icon Toggle */}
             <button
-              onClick={() => setShowMobileSearch(prev => !prev)}
+              onClick={() => setShowMobileSearch(true)}
               className="sm:hidden flex items-center justify-center w-8 h-8 rounded-lg hover:bg-slate-100 transition text-slate-500"
               title={lang === "he" ? "חיפוש" : "Search"}
             >
@@ -1805,12 +1808,14 @@ function AppRoutes() {
           </div>
         </header>
 
-        {/* Mobile Search Bar (collapsible, below header) */}
+        {/* Mobile search: the header icon opens the search overlay directly */}
         {showMobileSearch && (
-          <div className="sm:hidden px-4 pb-2 max-w-6xl mx-auto">
+          <div className="sm:hidden">
             <GlobalSearch
               lang={lang}
               user={user}
+              autoOpen
+              onClose={closeMobileSearch}
               onJoinChallenge={(goal) => {
                 fetchSchedule();
                 setSuccess(lang === "he" ? "🎯 הצטרפת לאתגר! האירוע נוסף ליומן." : "🎯 Joined the challenge! Event added to your schedule.");
@@ -1829,7 +1834,7 @@ function AppRoutes() {
             <RoutinesTodayCard lang={lang} user={user} refreshKey={routinesRefresh} onOpen={tab => setRoutinesView(tab)} />
           )}
           {user && (
-            <RemindersCard lang={lang} user={user} refreshKey={remindersRefresh} onOpen={() => setShowReminders(true)} onTryExample={setInputText} />
+            <RemindersPinger lang={lang} user={user} refreshKey={remindersRefresh} onReminders={setReminderList} />
           )}
           {/* ── AI Prompt Floating Card ── */}
           <div className="bg-slate-50 p-3 sm:p-5 rounded-2xl sm:rounded-3xl shadow-sm border border-slate-100">
@@ -2051,6 +2056,12 @@ function AppRoutes() {
                 onSlotClick={handleSlotClick}
                 locationFilter={locationFilter}
                 LOCATION_LABELS={LOCATION_LABELS}
+                reminders={(() => {
+                  const d = new Date();
+                  d.setDate(d.getDate() + dayOffset);
+                  return remindersOnDate(reminderList, d);
+                })()}
+                onOpenReminders={() => setShowReminders(true)}
               />
             )}
 
@@ -2071,6 +2082,12 @@ function AppRoutes() {
                   const isExpanded = expandedDays[dayKey] || false;
                   const visibleEvents = isExpanded ? sortedDayEvents : sortedDayEvents.slice(0, maxVisible);
                   const hasMoreThanMax = sortedDayEvents.length > maxVisible;
+                  // Weekday columns stand for the coming 7 days; "Today" repeats today's column.
+                  const dayReminders = dayKey === 'Today' ? [] : (() => {
+                    const d = new Date();
+                    d.setDate(d.getDate() + ((dayNamesEn.indexOf(dayKey) - d.getDay() + 7) % 7));
+                    return remindersOnDate(reminderList, d);
+                  })();
                   return (
                     <div key={dayKey} className={`rounded-xl p-3 flex flex-col min-h-[120px] ${isTodayColumn ? 'bg-blue-50 border border-blue-300' : 'bg-slate-50 border border-slate-200'}`}>
                       <div
@@ -2081,6 +2098,9 @@ function AppRoutes() {
                         {dayEvents.length > 0 && <span className="text-xs text-slate-400 mr-1">({dayEvents.length})</span>}
                       </div>
                       <div className="flex-1 flex flex-col gap-2">
+                        {dayReminders.map(r => (
+                          <ReminderChip key={r.id} reminder={r} lang={lang} onClick={() => setShowReminders(true)} />
+                        ))}
                         {dayEvents.length > 0 ? (
                           <>
                             {visibleEvents.map((event, index) => {
@@ -2128,7 +2148,7 @@ function AppRoutes() {
                             )}
                           </>
                         ) : (
-                          dayKey !== 'Saturday' && (
+                          dayKey !== 'Saturday' && dayReminders.length === 0 && (
                             <p className="text-xs text-slate-300 text-center my-auto font-light">{t.noEvents}</p>
                           )
                         )}
