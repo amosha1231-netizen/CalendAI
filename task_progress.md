@@ -870,3 +870,65 @@ failures, net +2 tests this run, confirmed by error text to be the same
 clean.
 
 No ambiguous UX decision or open question for the human this run.
+
+## 2026-10-31 run notes (fifteenth overall, third run same day)
+`npm install` in both `frontend/` and `backend/` (fresh clone). Baseline
+before this run's fix: `npm run build` (frontend) clean; `node --test`
+(backend) 217/233 pass, 16 known `fastdl.mongodb.org` sandbox-network
+failures confirmed by error text (not regressions) — see AGENTS.md.
+Re-confirmed task_progress.md items 1-5 still hold (not re-checked in
+depth this run beyond a quick glance, given the last six runs' direct
+re-verification against current code each time).
+
+Delegated a fifteenth independent adversarial review (same 10 mutual/
+provider files + wiring, explicit instructions not to re-derive any of the
+13 bug classes already fixed across the prior 14 rounds, asking for fresh
+angles) to a sub-agent. It found one new, previously-missed bug:
+
+**`providerProfile.availability[].startTime`/`endTime` had no length cap**,
+unlike every sibling string field in the same `PUT /api/providers/me` `$set`
+(`backend/routes/providerRoutes.js`). The validation loop checks
+`typeof row.startTime/endTime === 'string'` and runs both through
+`timeToMinutes()`, but that function's AM/PM regex
+(`/(\d{1,2}):(\d{2})\s*(AM|PM)/i`, defined in `server.js`, exposed via
+`req.app.get('timeToMinutes')`) is **un-anchored** — it matches the pattern
+anywhere in the string rather than requiring the whole string to be just a
+time. So a value like `'09:00 AM' + 'x'.repeat(90000)` parses to a valid
+`540` and sails through every check, while the actual assignment
+(`update['providerProfile.availability'] = availability.map(...)`) stored
+`r.startTime`/`r.endTime` raw, unsliced. Any authenticated user could `PUT`
+up to 50 such rows (bounded only by Express's default 100kb JSON body
+limit, with no rate limiter on this route), bloating their own `User`
+document and every subsequent read of it — `GET /api/providers/me`
+(feeds `ProviderProfileEditor.jsx`) and every guest's
+`computeAvailableSlots` call for that provider. Exact same "type-guarded
+but not length-guarded" shape already fixed twice in this same handler for
+`locationId` (`.slice(0, 50)`) and service `color` (`.slice(0, 20)`), just
+never applied to this pair of fields.
+
+Fixed by adding `.trim().slice(0, 20)` to both `startTime` and `endTime` in
+the `availability.map()` assignment — same cap used for `color`, plenty for
+"HH:MM AM/PM". Did **not** touch `providerAvailabilitySchema` in
+`backend/models/User.js` even though the sub-agent's report suggested a
+`maxlength` there too — that's the shared `User` model, and this branch's
+own rules forbid schema changes to it; the route-level slice is sufficient
+and consistent with how `locationId`/`color` were fixed the same way
+without a schema change. Added one regression test to
+`providerRoutesValidation.test.js` (right after the existing `color`
+length-cap test) asserting both fields are truncated to 20 chars in the
+captured `$set` — verified it fails against the pre-fix route (stashed just
+that file, confirmed failure) and passes against the fix.
+
+The sub-agent's review also tried several fresh angles that came up clean,
+no action needed: pagination/limit params, rate-limiter interactions,
+error-message info leakage, duplicate-key edge cases beyond the ones
+already fixed, React effect cleanup/dependency bugs, decimal/rounding in
+availability slot math, concurrent-edit races on `ProviderDirectory.jsx`'s
+list view, and any other remaining `.save()` that should be atomic — all
+confirmed already correct or not applicable.
+
+Full suite after the fix: 218/234 pass (16 known sandbox-network failures,
+net +1 test this run). `npm run build` (frontend) clean (no frontend code
+touched).
+
+No ambiguous UX decision or open question for the human this run.
