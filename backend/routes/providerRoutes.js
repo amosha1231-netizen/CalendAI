@@ -145,7 +145,7 @@ function mapServicesForSave(services) {
       name: s.name.trim().slice(0, 100),
       duration: Math.round(Number(s.duration)),
       price: s.price !== undefined ? Number(s.price) : 0,
-      color: typeof s.color === 'string' ? s.color : '#6366f1',
+      color: typeof s.color === 'string' ? s.color.trim().slice(0, 20) : '#6366f1',
       active: s.active !== false
     };
     if (s._id && mongoose.Types.ObjectId.isValid(s._id)) svc._id = s._id;
@@ -336,7 +336,7 @@ router.put('/me', async (req, res) => {
     if (businessName !== undefined) update['providerProfile.businessName'] = String(businessName).trim().slice(0, 200);
     if (bio !== undefined) update['providerProfile.bio'] = String(bio).trim().slice(0, 2000);
     if (category !== undefined) update['providerProfile.category'] = String(category).trim().slice(0, 50) || 'general';
-    if (locationId !== undefined) update['providerProfile.locationId'] = String(locationId).trim() || 'jerusalem';
+    if (locationId !== undefined) update['providerProfile.locationId'] = String(locationId).trim().slice(0, 50) || 'jerusalem';
     if (services !== undefined) update['providerProfile.services'] = mapServicesForSave(services);
     if (availability !== undefined) {
       update['providerProfile.availability'] = availability.map(r => ({

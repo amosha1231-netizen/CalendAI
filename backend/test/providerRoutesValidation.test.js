@@ -223,6 +223,52 @@ test('PUT /me: a valid payload reaches User.findByIdAndUpdate and round-trips th
   }
 });
 
+// Mirrors the existing businessName/bio/category length caps right above
+// this field in the route — locationId had no cap at all until this fix,
+// unlike every sibling string field in the same $set.
+test('PUT /me: an oversized locationId is truncated to 50 chars before it reaches the DB write', async (t) => {
+  const userId = new mongoose.Types.ObjectId();
+  let capturedUpdate = null;
+  t.mock.method(User, 'findByIdAndUpdate', (id, update) => {
+    capturedUpdate = update;
+    return { select: () => ({ lean: async () => ({ providerProfile: {} }) }) };
+  });
+  const { server, base } = startApp(freshProviderRoutes(), { userId });
+  try {
+    const res = await fetch(`${base}/api/providers/me`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ locationId: 'x'.repeat(500) })
+    });
+    assert.equal(res.status, 200);
+    assert.equal(capturedUpdate.$set['providerProfile.locationId'].length, 50);
+  } finally {
+    server.close();
+  }
+});
+
+// Mirrors the existing name length cap (mapServicesForSave slices name to
+// 100 chars) — color was type-guarded but had no length cap at all.
+test('PUT /me: an oversized service color is truncated to 20 chars before it reaches the DB write', async (t) => {
+  const userId = new mongoose.Types.ObjectId();
+  let capturedUpdate = null;
+  t.mock.method(User, 'findByIdAndUpdate', (id, update) => {
+    capturedUpdate = update;
+    return { select: () => ({ lean: async () => ({ providerProfile: {} }) }) };
+  });
+  const { server, base } = startApp(freshProviderRoutes(), { userId });
+  try {
+    const res = await fetch(`${base}/api/providers/me`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ services: [{ name: 'Haircut', duration: 30, color: 'x'.repeat(500) }] })
+    });
+    assert.equal(res.status, 200);
+    const savedColor = capturedUpdate.$set['providerProfile.services'][0].color;
+    assert.equal(savedColor.length, 20);
+  } finally {
+    server.close();
+  }
+});
+
 // ── GET /api/providers/me ──
 // Nothing else in test/ exercises this route: providerProfile.test.js only
 // unit-tests mapServicesForSave(), and PUT /me above never calls GET /me.
