@@ -4,6 +4,7 @@
 // peer-to-peer mutual-scheduling path reuse the same OAuth/refresh and
 // event-body logic instead of duplicating it.
 // ──────────────────────────────────────────────
+const crypto = require('crypto');
 const { google } = require('googleapis');
 const User = require('../models/User');
 
@@ -137,7 +138,7 @@ async function createOAuth2ClientWithRefresh(user) {
  * /api/add-to-google-calendar so single-user and mutual (dual-insert)
  * event creation share one implementation.
  */
-function buildGcalEventBody({ title, description, eventDate, startHour, startMinute, endHour, endMinute, timeZone, reminders, recurrenceRule, attendees }) {
+function buildGcalEventBody({ title, description, eventDate, startHour, startMinute, endHour, endMinute, timeZone, reminders, recurrenceRule, attendees, addMeet }) {
   const requestBody = {
     summary: title || 'CalendAI Event',
     start: { dateTime: formatDateTimeWithTimezone(eventDate, startHour, startMinute, timeZone), timeZone },
@@ -147,7 +148,44 @@ function buildGcalEventBody({ title, description, eventDate, startHour, startMin
   if (reminders) requestBody.reminders = reminders;
   if (recurrenceRule) requestBody.recurrence = [recurrenceRule];
   if (attendees && attendees.length) requestBody.attendees = attendees;
+  // Ask Google to attach a fresh Meet link. Only honored when the insert is
+  // sent with conferenceDataVersion: 1 — use insertEventWithOptionalMeet().
+  if (addMeet) {
+    requestBody.conferenceData = {
+      createRequest: {
+        requestId: crypto.randomUUID(),
+        conferenceSolutionKey: { type: 'hangoutsMeet' }
+      }
+    };
+  }
   return requestBody;
+}
+
+/**
+ * Insert an event, creating its Google Meet link when the body asks for one.
+ * Some accounts (e.g. Workspace domains with Meet turned off) reject the
+ * conference request outright — the meeting itself matters more than the
+ * link, so retry once without it instead of failing the whole insert.
+ * Resolves to the inserted event plus its Meet URL (null when none).
+ */
+async function insertEventWithOptionalMeet(calendar, { calendarId = 'primary', requestBody, sendUpdates }) {
+  const params = { calendarId, requestBody };
+  if (sendUpdates) params.sendUpdates = sendUpdates;
+  let response;
+  if (requestBody.conferenceData) {
+    try {
+      response = await calendar.events.insert({ ...params, conferenceDataVersion: 1 });
+    } catch (err) {
+      console.warn('[Google Calendar] Meet link creation failed, inserting without it:', err.message);
+      const { conferenceData, ...withoutMeet } = requestBody;
+      response = await calendar.events.insert({ ...params, requestBody: withoutMeet });
+    }
+  } else {
+    response = await calendar.events.insert(params);
+  }
+  const data = response?.data || {};
+  const videoEntry = (data.conferenceData?.entryPoints || []).find(e => e.entryPointType === 'video');
+  return { event: data, meetLink: data.hangoutLink || videoEntry?.uri || null };
 }
 
 module.exports = {
@@ -155,5 +193,6 @@ module.exports = {
   formatDateTimeWithTimezone,
   zonedDateTime,
   createOAuth2ClientWithRefresh,
-  buildGcalEventBody
+  buildGcalEventBody,
+  insertEventWithOptionalMeet
 };

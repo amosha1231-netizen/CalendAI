@@ -9,7 +9,7 @@
 // ──────────────────────────────────────────────
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
-const { formatDateTimeWithTimezone, zonedDateTime, buildGcalEventBody } = require('../services/googleCalendar');
+const { formatDateTimeWithTimezone, zonedDateTime, buildGcalEventBody, insertEventWithOptionalMeet } = require('../services/googleCalendar');
 
 // ── formatDateTimeWithTimezone(): must keep the caller's calendar day ──
 // Every caller builds `date` from literal Y/M/D components (new Date(y, m-1, d),
@@ -98,4 +98,42 @@ test('buildGcalEventBody: an empty attendees array is omitted, not sent as an em
     timeZone: 'UTC', attendees: []
   });
   assert.equal('attendees' in body, false);
+});
+
+// ── Google Meet links: buildGcalEventBody + insertEventWithOptionalMeet ──
+test('buildGcalEventBody: addMeet requests a hangoutsMeet conference', () => {
+  const body = buildGcalEventBody({ title: 'Sync', eventDate: new Date(2026, 10, 4), startHour: 13, startMinute: 30, endHour: 14, endMinute: 30, timeZone: 'Asia/Jerusalem', addMeet: true });
+  assert.equal(body.conferenceData.createRequest.conferenceSolutionKey.type, 'hangoutsMeet');
+  assert.ok(body.conferenceData.createRequest.requestId);
+  const plain = buildGcalEventBody({ title: 'Sync', eventDate: new Date(2026, 10, 4), startHour: 13, startMinute: 30, endHour: 14, endMinute: 30, timeZone: 'Asia/Jerusalem' });
+  assert.equal(plain.conferenceData, undefined);
+});
+
+test('insertEventWithOptionalMeet: sends conferenceDataVersion and returns the Meet link', async () => {
+  const calls = [];
+  const calendar = { events: { insert: async (params) => { calls.push(params); return { data: { id: 'ev1', hangoutLink: 'https://meet.google.com/abc-defg-hij' } }; } } };
+  const requestBody = buildGcalEventBody({ title: 'Sync', eventDate: new Date(2026, 10, 4), startHour: 9, startMinute: 0, endHour: 10, endMinute: 0, timeZone: 'UTC', addMeet: true });
+  const { event, meetLink } = await insertEventWithOptionalMeet(calendar, { requestBody, sendUpdates: 'all' });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].conferenceDataVersion, 1);
+  assert.equal(calls[0].sendUpdates, 'all');
+  assert.equal(event.id, 'ev1');
+  assert.equal(meetLink, 'https://meet.google.com/abc-defg-hij');
+});
+
+test('insertEventWithOptionalMeet: retries without Meet when the conference request is rejected', async () => {
+  const calls = [];
+  const calendar = { events: { insert: async (params) => {
+    calls.push(params);
+    if (params.requestBody.conferenceData) throw new Error('Invalid conference type value.');
+    return { data: { id: 'ev2' } };
+  } } };
+  const requestBody = buildGcalEventBody({ title: 'Sync', eventDate: new Date(2026, 10, 4), startHour: 9, startMinute: 0, endHour: 10, endMinute: 0, timeZone: 'UTC', addMeet: true, attendees: [{ email: 'a@b.co' }] });
+  const { event, meetLink } = await insertEventWithOptionalMeet(calendar, { requestBody, sendUpdates: 'all' });
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].conferenceDataVersion, undefined);
+  assert.deepEqual(calls[1].requestBody.attendees, [{ email: 'a@b.co' }]);
+  assert.equal(calls[1].sendUpdates, 'all');
+  assert.equal(event.id, 'ev2');
+  assert.equal(meetLink, null);
 });

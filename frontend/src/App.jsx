@@ -16,6 +16,7 @@ import BottomNav, { NavSheet, getNavLabels } from "./components/BottomNav";
 import MeetingWizard from "./components/MeetingWizard";
 import LuxuryLoader from "./components/LuxuryLoader";
 import ManualEventForm from "./components/ManualEventForm";
+import SendInvite from "./components/SendInvite";
 import HistoryModal from "./components/HistoryModal";
 import ParsePreviewCard, { toPreviewItem } from "./components/ParsePreviewCard";
 import PublicGoals from "./components/PublicGoals";
@@ -395,6 +396,7 @@ function AppRoutes() {
   }, [user, lang, setShowLoginPrompt, setError]);
 
   const [showWizard, setShowWizard] = useState(false);
+  const [showSendInvite, setShowSendInvite] = useState(false);
   const [showManualEvent, setShowManualEvent] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [showPublicGoals, setShowPublicGoals] = useState(false);
@@ -1583,7 +1585,7 @@ function AppRoutes() {
   const renderBottomNav = () => {
     const nl = getNavLabels(lang);
     const credits = user ? normalizeCredits(user.aiCredits) : undefined;
-    const meetOpen = currentView === 'mutual' || showWizard || showProviderDirectory || showProviderProfileEditor;
+    const meetOpen = currentView === 'mutual' || showWizard || showSendInvite || showProviderDirectory || showProviderProfileEditor;
     const toolsOpen = showReminders || showAlarmSettings || showExpenses || showJournal || showPublicGoals || showChallengeDetail || showHistoryModal;
     const activeNav = isSidebarOpen ? 'me'
       : navSheet || (routinesView ? 'routines' : meetOpen ? 'meet' : toolsOpen ? 'tools' : 'home');
@@ -1601,6 +1603,7 @@ function AppRoutes() {
       setRoutinesView(null);
       setShowReminders(false);
       setShowWizard(false);
+      setShowSendInvite(false);
       setShowManualEvent(false);
       setShowProviderDirectory(false);
       setShowProviderProfileEditor(false);
@@ -1635,6 +1638,7 @@ function AppRoutes() {
     const sheetItems = {
       meet: [
         { id: 'mutual', label: nl.mutual, sub: nl.mutualSub, icon: Users, tone: 'bg-blue-50 text-blue-600', onClick: run(() => setCurrentView('mutual')) },
+        { id: 'invite', label: nl.invite, sub: nl.inviteSub, icon: CalendarPlus, tone: 'bg-sky-50 text-sky-600', onClick: run(() => setShowSendInvite(true)) },
         { id: 'link', label: nl.shareLink, sub: nl.shareLinkSub, icon: Link2, tone: 'bg-emerald-50 text-emerald-600', onClick: run(() => setShowWizard(true)) },
         { id: 'providers', label: nl.providers, sub: nl.providersSub, icon: Briefcase, tone: 'bg-purple-50 text-purple-600', onClick: run(() => setShowProviderDirectory(true)) },
         ...(user ? [{ id: 'providerProfile', label: nl.providerProfile, sub: nl.providerProfileSub, icon: Settings, tone: 'bg-amber-50 text-amber-600', onClick: run(() => setShowProviderProfileEditor(true)) }] : []),
@@ -2676,6 +2680,16 @@ function AppRoutes() {
             setShowManualEvent(false);
             fetchSchedule();
           }}
+        />
+      )}
+
+      {/* Send Calendar Invite Modal */}
+      {showSendInvite && (
+        <SendInvite
+          lang={lang}
+          user={user}
+          onClose={() => setShowSendInvite(false)}
+          onSent={() => fetchSchedule()}
         />
       )}
 
