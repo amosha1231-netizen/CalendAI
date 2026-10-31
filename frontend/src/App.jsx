@@ -18,12 +18,13 @@ import LuxuryLoader from "./components/LuxuryLoader";
 import ManualEventForm from "./components/ManualEventForm";
 import SendInvite from "./components/SendInvite";
 import HistoryModal from "./components/HistoryModal";
+import ParsePreviewCard, { toPreviewItem } from "./components/ParsePreviewCard";
 import PublicGoals from "./components/PublicGoals";
 import ChallengeDetail from "./components/ChallengeDetail";
 import DailyJournal from "./components/DailyJournal";
 import SmartAlarm from "./components/SmartAlarm";
 import Routines, { RoutinesTodayCard, consumeSharedRoutineParam, clearSharedRoutineParam } from "./components/Routines";
-import Reminders, { RemindersCard, consumeRemindersParam } from "./components/Reminders";
+import Reminders, { RemindersPinger, ReminderChip, remindersOnDate, consumeRemindersParam } from "./components/Reminders";
 
 // ── Lazy-loaded page chunks ──
 const LandingPage = lazy(() => import("./components/LandingPage"));
@@ -196,6 +197,9 @@ function AppRoutes() {
   const [success, setSuccess] = useState("");
   const [placeholderIndex, setPlaceholderIndex] = useState(0);
   const [conflicts, setConflicts] = useState([]);
+  // What the AI understood from the last chat request, awaiting the user's OK.
+  const [parsePreview, setParsePreview] = useState(null);
+  const [previewSaving, setPreviewSaving] = useState(false);
 
   // Voice-to-Text State
   const [isListening, setIsListening] = useState(false);
@@ -412,12 +416,14 @@ function AppRoutes() {
   // Reminders (components/Reminders.jsx); ?reminders=1 comes from a tapped notification
   const [showReminders, setShowReminders] = useState(() => consumeRemindersParam());
   const [remindersRefresh, setRemindersRefresh] = useState(0);
+  const [reminderList, setReminderList] = useState([]);
   const [sharedRoutineCode, setSharedRoutineCode] = useState(() => consumeSharedRoutineParam());
   // A shared routine link opens once the user is signed in.
   useEffect(() => {
     if (sharedRoutineCode && user) setRoutinesView(view => view || 'today');
   }, [sharedRoutineCode, user]);
   const [showMobileSearch, setShowMobileSearch] = useState(false);
+  const closeMobileSearch = useCallback(() => setShowMobileSearch(false), []);
 
   const [installPrompt, setInstallPrompt] = useState(null);
   const [showPwaPopup, setShowPwaPopup] = useState(false);
@@ -489,7 +495,7 @@ function AppRoutes() {
             headers: { "Content-Type": "application/json", ...getAuthHeaders() },
             body: JSON.stringify({
               text: entry.data.text,
-              recurrence: entry.data.recurrence || 'weekly',
+              ...(entry.data.recurrence && { recurrence: entry.data.recurrence }),
               location: entry.data.location || 'jerusalem'
             }),
             credentials: "include"
@@ -1031,6 +1037,33 @@ function AppRoutes() {
 
   const imageInputRef = useRef(null);
 
+  const applyCreditsFromResponse = (data) => {
+    if (data.aiCredits !== undefined && data.aiCredits !== null) {
+      const normalizedCredits = normalizeCredits(data.aiCredits);
+      setUser(prev => prev ? { ...prev, aiCredits: normalizedCredits } : prev);
+      try {
+        const stored = JSON.parse(safeStorage.getItem('calendai-user') || 'null');
+        if (stored) {
+          stored.aiCredits = normalizedCredits;
+          safeStorage.setItem('calendai-user', JSON.stringify(stored));
+        }
+      } catch (e) {}
+    } else {
+      refreshUserCredits();
+    }
+  };
+
+  // Shows the result of a save (events, reminders, overlaps, expense ideas).
+  // Google Calendar sync happens on the server as part of the save.
+  const applySavedParseResult = async (data) => {
+    if (data.conflicts?.length > 0) setConflicts(data.conflicts);
+    else setConflicts([]);
+    if (data.suggestedExpenses?.length > 0) setExpenseSuggestions(data.suggestedExpenses);
+    if (data.reminders?.length > 0) setRemindersRefresh(n => n + 1);
+    await fetchSchedule();
+    setSuccess(data.replyMessage || `${t.successAdded} ${data.events?.length || 0} ${t.successEvents}`);
+  };
+
   const handleParse = async () => {
     if (!inputText.trim()) return;
     if (showShabbatOverlay) {
@@ -1039,24 +1072,27 @@ function AppRoutes() {
     }
     if (handleLoginRequired('parse')) return;
     if (!checkGuestActionLimit()) return;
-    saveScheduleState();
-    // Clear input immediately and reset button state for responsive UX
+    // Clear input immediately and reset button state for responsive UX.
+    // Keep the submitted text so a failed request can put it back.
+    const submittedText = inputText;
+    const restoreInput = () => setInputText(prev => prev || submittedText);
     setInputText("");
     setLoading(true);
     setError("");
     setSuccess("");
+    setParsePreview(null);
     try {
       const res = await fetch(`${API_BASE}/api/parse-schedule`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({ text: inputText, recurrence: DEFAULT_RECURRENCE, location: selectedLocation, eventType: DEFAULT_EVENT_TYPE, duration: DEFAULT_DURATION }),
+        body: JSON.stringify({ text: submittedText, location: selectedLocation, eventType: DEFAULT_EVENT_TYPE, duration: DEFAULT_DURATION, preview: true }),
         credentials: "include"
       });
       if (!res.ok) {
+        restoreInput();
         const errorData = await res.json().catch(() => ({}));
         if (errorData.isBlocked === true) {
           setError(errorData.blockedMessage || errorData.replyMessage || t.shabbatBlockError);
-          setInputText("");
           return;
         }
         if (res.status === 409 && errorData.hasConflict === true) {
@@ -1078,49 +1114,65 @@ function AppRoutes() {
         throw new Error(t.failedRequest + " " + res.status);
       }
       const data = await res.json();
-      if (user && data.events?.length > 0) {
-        const token = safeStorage.getItem('token') || safeStorage.getItem('calendai-jwt');
-        await Promise.allSettled(data.events.map(ev =>
-          fetch(`${API_BASE}/api/add-to-google-calendar`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-            },
-            body: JSON.stringify({ event: ev }),
-            credentials: "include"
-          })
-        ));
+      applyCreditsFromResponse(data);
+      if (!data.preview) {
+        // Server without preview support saved directly.
+        saveScheduleState();
+        await applySavedParseResult(data);
+        return;
       }
-      if (data.conflicts?.length > 0) setConflicts(data.conflicts);
-      else setConflicts([]);
-      if (data.suggestedExpenses?.length > 0) setExpenseSuggestions(data.suggestedExpenses);
-      if (data.aiCredits !== undefined && data.aiCredits !== null) {
-        const normalizedCredits = normalizeCredits(data.aiCredits);
-        setUser(prev => prev ? { ...prev, aiCredits: normalizedCredits } : prev);
-        try {
-          const stored = JSON.parse(safeStorage.getItem('calendai-user') || 'null');
-          if (stored) {
-            stored.aiCredits = normalizedCredits;
-            safeStorage.setItem('calendai-user', JSON.stringify(stored));
-          }
-        } catch (e) {}
-      } else {
-        refreshUserCredits();
+      const items = (data.events || []).map(toPreviewItem);
+      if (items.length === 0) {
+        restoreInput();
+        setError(t.previewEmpty || data.replyMessage || t.failedRequest);
+        return;
       }
-      if (data.reminders?.length > 0) setRemindersRefresh(n => n + 1);
-      await fetchSchedule();
-      setSuccess(data.replyMessage || `${t.successAdded} ${data.events?.length || 0} ${t.successEvents}`);
-      setInputText("");
-      if (!user) {
-        incrementGuestUsage();
-        saveGuestTempData('parse', { text: inputText, recurrence: DEFAULT_RECURRENCE, location: selectedLocation });
-      }
+      setConflicts([]);
+      setParsePreview({ items, text: submittedText, replyMessage: data.replyMessage, edited: false });
     } catch (err) {
+      restoreInput();
       setError(err.message);
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleConfirmPreview = async () => {
+    if (!parsePreview || previewSaving) return;
+    setPreviewSaving(true);
+    setError("");
+    try {
+      const events = parsePreview.items.map(({ key, conflicts: _conflicts, ...ev }) => ev);
+      const res = await fetch(`${API_BASE}/api/parse-schedule/confirm`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ events, text: parsePreview.text, edited: parsePreview.edited, location: selectedLocation }),
+        credentials: "include"
+      });
+      if (!res.ok) {
+        if (res.status === 401) {
+          setShowLoginPrompt(true);
+          return;
+        }
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || `${t.failedRequest} ${res.status}`);
+      }
+      const data = await res.json();
+      saveScheduleState();
+      setParsePreview(null);
+      await applySavedParseResult(data);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setPreviewSaving(false);
+    }
+  };
+
+  const handleCancelPreview = () => {
+    if (previewSaving) return;
+    const text = parsePreview?.text || "";
+    setParsePreview(null);
+    setInputText(prev => prev || text);
   };
 
   const handleTryGuest = () => {
@@ -1534,7 +1586,7 @@ function AppRoutes() {
     const nl = getNavLabels(lang);
     const credits = user ? normalizeCredits(user.aiCredits) : undefined;
     const meetOpen = currentView === 'mutual' || showWizard || showSendInvite || showProviderDirectory || showProviderProfileEditor;
-    const toolsOpen = showAlarmSettings || showExpenses || showJournal || showPublicGoals || showChallengeDetail || showHistoryModal;
+    const toolsOpen = showReminders || showAlarmSettings || showExpenses || showJournal || showPublicGoals || showChallengeDetail || showHistoryModal;
     const activeNav = isSidebarOpen ? 'me'
       : navSheet || (routinesView ? 'routines' : meetOpen ? 'meet' : toolsOpen ? 'tools' : 'home');
     const tabs = [
@@ -1593,6 +1645,7 @@ function AppRoutes() {
       ],
       tools: [
         { id: 'alarm', label: nl.alarm, sub: nl.alarmSub, icon: AlarmClock, tone: 'bg-amber-50 text-amber-600', onClick: run(() => setShowAlarmSettings(true)) },
+        { id: 'reminders', label: nl.reminders, sub: nl.remindersSub, icon: Bell, tone: 'bg-amber-50 text-amber-600', onClick: run(() => setShowReminders(true)) },
         { id: 'expenses', label: nl.expenses, sub: nl.expensesSub, icon: Wallet, tone: 'bg-emerald-50 text-emerald-600', onClick: run(() => setShowExpenses(true)) },
         { id: 'journal', label: nl.journal, sub: nl.journalSub, icon: BookOpen, tone: 'bg-indigo-50 text-indigo-600', onClick: run(() => setShowJournal(true)) },
         { id: 'challenges', label: nl.challenges, sub: nl.challengesSub, icon: Trophy, tone: 'bg-orange-50 text-orange-600', onClick: run(() => setRoutinesView('discover')) },
@@ -1783,7 +1836,7 @@ function AppRoutes() {
             })()}
             {/* Mobile Search Icon Toggle */}
             <button
-              onClick={() => setShowMobileSearch(prev => !prev)}
+              onClick={() => setShowMobileSearch(true)}
               className="sm:hidden flex items-center justify-center w-8 h-8 rounded-lg hover:bg-slate-100 transition text-slate-500"
               title={lang === "he" ? "חיפוש" : "Search"}
             >
@@ -1809,12 +1862,14 @@ function AppRoutes() {
           </div>
         </header>
 
-        {/* Mobile Search Bar (collapsible, below header) */}
+        {/* Mobile search: the header icon opens the search overlay directly */}
         {showMobileSearch && (
-          <div className="sm:hidden px-4 pb-2 max-w-6xl mx-auto">
+          <div className="sm:hidden">
             <GlobalSearch
               lang={lang}
               user={user}
+              autoOpen
+              onClose={closeMobileSearch}
               onJoinChallenge={(goal) => {
                 fetchSchedule();
                 setSuccess(lang === "he" ? "🎯 הצטרפת לאתגר! האירוע נוסף ליומן." : "🎯 Joined the challenge! Event added to your schedule.");
@@ -1833,7 +1888,7 @@ function AppRoutes() {
             <RoutinesTodayCard lang={lang} user={user} refreshKey={routinesRefresh} onOpen={tab => setRoutinesView(tab)} />
           )}
           {user && (
-            <RemindersCard lang={lang} user={user} refreshKey={remindersRefresh} onOpen={() => setShowReminders(true)} onTryExample={setInputText} />
+            <RemindersPinger lang={lang} user={user} refreshKey={remindersRefresh} onReminders={setReminderList} />
           )}
           {/* ── AI Prompt Floating Card ── */}
           <div className="bg-slate-50 p-3 sm:p-5 rounded-2xl sm:rounded-3xl shadow-sm border border-slate-100">
@@ -1976,6 +2031,19 @@ function AppRoutes() {
             {error && <div className="flex items-center gap-2 text-red-600 text-sm mt-3 bg-red-50 p-3 rounded-lg border border-red-200"><AlertCircle className="w-4 h-4 shrink-0" /><span>{error}</span></div>}
             {success && <div className="flex items-center gap-2 text-green-700 text-sm mt-3 bg-green-50 p-3 rounded-lg border border-green-200"><Sparkles className="w-4 h-4 text-green-600 shrink-0" /><span>{success}</span></div>}
 
+            {parsePreview && (
+              <ParsePreviewCard
+                preview={parsePreview}
+                onChange={setParsePreview}
+                onConfirm={handleConfirmPreview}
+                onCancel={handleCancelPreview}
+                saving={previewSaving}
+                t={t}
+                dayTranslations={dayTranslations}
+                isRTL={isRTL}
+              />
+            )}
+
             {conflicts.length > 0 && (
               <div className="mt-3 space-y-3">
                 {conflicts.map((c, idx) => (
@@ -2055,6 +2123,12 @@ function AppRoutes() {
                 onSlotClick={handleSlotClick}
                 locationFilter={locationFilter}
                 LOCATION_LABELS={LOCATION_LABELS}
+                reminders={(() => {
+                  const d = new Date();
+                  d.setDate(d.getDate() + dayOffset);
+                  return remindersOnDate(reminderList, d);
+                })()}
+                onOpenReminders={() => setShowReminders(true)}
               />
             )}
 
@@ -2075,6 +2149,12 @@ function AppRoutes() {
                   const isExpanded = expandedDays[dayKey] || false;
                   const visibleEvents = isExpanded ? sortedDayEvents : sortedDayEvents.slice(0, maxVisible);
                   const hasMoreThanMax = sortedDayEvents.length > maxVisible;
+                  // Weekday columns stand for the coming 7 days; "Today" repeats today's column.
+                  const dayReminders = dayKey === 'Today' ? [] : (() => {
+                    const d = new Date();
+                    d.setDate(d.getDate() + ((dayNamesEn.indexOf(dayKey) - d.getDay() + 7) % 7));
+                    return remindersOnDate(reminderList, d);
+                  })();
                   return (
                     <div key={dayKey} className={`rounded-xl p-3 flex flex-col min-h-[120px] ${isTodayColumn ? 'bg-blue-50 border border-blue-300' : 'bg-slate-50 border border-slate-200'}`}>
                       <div
@@ -2085,6 +2165,9 @@ function AppRoutes() {
                         {dayEvents.length > 0 && <span className="text-xs text-slate-400 mr-1">({dayEvents.length})</span>}
                       </div>
                       <div className="flex-1 flex flex-col gap-2">
+                        {dayReminders.map(r => (
+                          <ReminderChip key={r.id} reminder={r} lang={lang} onClick={() => setShowReminders(true)} />
+                        ))}
                         {dayEvents.length > 0 ? (
                           <>
                             {visibleEvents.map((event, index) => {
@@ -2132,7 +2215,7 @@ function AppRoutes() {
                             )}
                           </>
                         ) : (
-                          dayKey !== 'Saturday' && (
+                          dayKey !== 'Saturday' && dayReminders.length === 0 && (
                             <p className="text-xs text-slate-300 text-center my-auto font-light">{t.noEvents}</p>
                           )
                         )}

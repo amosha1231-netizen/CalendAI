@@ -36,6 +36,7 @@ const rateLimit = require('express-rate-limit');
 const crypto = require('crypto'); // For Lemon Squeezy webhook HMAC signature verification
 const multer = require('multer');
 const { getRequestLocation, getRequestTimeZone, isValidTimeZone } = require('./services/userLocation');
+const { getScheduleEventsForDate, isZeroDurationEvent } = require('./services/scheduleOccurrence');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }); // 10MB max
 
 dotenv.config({ path: path.join(__dirname, '.env') });
@@ -554,6 +555,7 @@ const { classifyRequest } = require('./services/semanticRouter');
 
 // ── Expected Expense suggestion detector (wedding, trip, etc.) ──
 const { detectExpenseSuggestion } = require('./services/expenseSuggestion');
+const { prepareParsedEvent, sanitizeConfirmedEvents } = require('./services/parsedEvents');
 
 // ── Public Goals & Challenges Routes ──
 const goalRoutes = require('./routes/goalRoutes');
@@ -1875,6 +1877,9 @@ function findFreeSlotsForDay(schedule, dayName, locationId, dayEventsOverride = 
   const currentMin = dateISO ? Number(part('hour')) * 60 + Number(part('minute')) : getCurrentMinutes();
   
   const busySlots = dayEvents
+    // Reminders are stored with endTime === startTime; the midnight-crossing
+    // fix below would otherwise turn them into a 24h block.
+    .filter(e => !isZeroDurationEvent(e))
     .map(e => {
       let start = timeToMinutes(e.startTime);
       let end = timeToMinutes(e.endTime);
@@ -1934,7 +1939,11 @@ app.get('/api/schedule/free-slots', async (req, res) => {
     
     const dateISO = req.query.date;
     const actualDay = dateISO ? ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][new Date(`${dateISO}T00:00:00Z`).getUTCDay()] : day === 'Today' ? getTodayDayName() : day;
-    const dayEvents = [...(schedule[actualDay] || [])].filter(event => !dateISO || !event.targetDate || event.targetDate === dateISO);
+    const freeSlotsTimeZone = resolveUserLocation(locationId)?.timezone || 'Asia/Jerusalem';
+    const todayISO = new Intl.DateTimeFormat('en-CA', { timeZone: freeSlotsTimeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+    const dayEvents = dateISO
+      ? getScheduleEventsForDate(schedule, dateISO, todayISO)
+      : (schedule[actualDay] || []).filter(event => !isZeroDurationEvent(event));
     let googleCalendarConnected = false;
     if (dateISO && mongoose.Types.ObjectId.isValid(userId)) {
       try {
@@ -2089,9 +2098,190 @@ app.put('/api/schedule/event', async (req, res) => {
 // 8c. Original parse-schedule route (unchanged)
 // ──────────────────────────────────────────────
 
+// ──────────────────────────────────────────────
+// Parse → preview → confirm helpers
+// ──────────────────────────────────────────────
+
+function locationDayOptions(locationId) {
+  const locData = resolveUserLocation(locationId);
+  return locData ? { dayStart: locData.defaultDayStart, dayEnd: locData.defaultDayEnd } : {};
+}
+
+/**
+ * What /api/parse-schedule would save, without saving it: each event in its
+ * stored shape plus the existing activities it overlaps. Shabbat events are
+ * left out, as the save would drop them too.
+ */
+function buildParsePreview(parsedEvents, schedule, { remindersAsPings, ...prepareOptions }) {
+  const workingSchedule = JSON.parse(JSON.stringify(schedule));
+  const locationOptions = locationDayOptions(prepareOptions.locationId);
+  const previewEvents = [];
+  for (const event of parsedEvents) {
+    const prepared = prepareParsedEvent(event, prepareOptions);
+    if (isShabbat(prepared.day)) continue;
+    // Reminders become pings, not calendar blocks, so they never clash.
+    if (remindersAsPings && prepared.isReminder === true) {
+      previewEvents.push({ ...prepared, conflicts: [] });
+      continue;
+    }
+    const dayEvents = workingSchedule[prepared.day] || [];
+    const { conflicts } = detectConflicts(prepared, dayEvents, { ...locationOptions, day: prepared.day });
+    dayEvents.push(prepared);
+    workingSchedule[prepared.day] = dayEvents;
+    previewEvents.push({ ...prepared, conflicts });
+  }
+  return previewEvents;
+}
+
+/**
+ * Save parsed events for a user: reminders become Reminder pings, the rest go
+ * into the schedule, then Google Calendar sync, undo history and expense
+ * suggestions. Returns the /api/parse-schedule response body (minus credits).
+ */
+async function commitParsedEvents(req, userId, schedule, parsedEvents, { text, todayName, recurrence, locationId, eventType, duration, replyMessage, datesFromText = true }) {
+  // ── REMINDERS: "remind me every day at 8 to take a pill" becomes a Reminder
+  // that pings the user (see routes/reminderRoutes), not a calendar block.
+  // Guests have nowhere to receive pings, so they keep the calendar event.
+  let eventsToSchedule = Array.isArray(parsedEvents) ? parsedEvents : [];
+  let createdReminders = [];
+  if (mongoose.Types.ObjectId.isValid(userId)) {
+    const timeZone = getCurrentRequestTimeZone();
+    // An edited preview may have moved a reminder, so the text's relative date
+    // ("in 3 days") no longer applies to it.
+    const { reminders: reminderSpecs, remainingEvents } = reminderSpecsFromEvents(eventsToSchedule, { timeZone, todayName, text: datesFromText ? text : '' });
+    if (reminderSpecs.length) {
+      createdReminders = await createReminders(userId, reminderSpecs, { timeZone, source: 'ai', sourceText: text });
+      if (createdReminders.length) eventsToSchedule = remainingEvents;
+    }
+  }
+
+  const locationOptions = locationDayOptions(locationId);
+
+  const addedEvents = [];
+  const conflictWarnings = [];
+
+  for (const event of eventsToSchedule) {
+    const eventWithRecurrence = prepareParsedEvent(event, { todayName, recurrence, locationId, eventType, duration });
+    const { day } = eventWithRecurrence;
+
+    // ── HARD SHABBAT GUARD: Filter out any event scheduled on Saturday ──
+    if (isShabbat(day)) {
+      console.warn(`[Shabbat Guard] Blocked event "${event.title}" with day "${day}" from being saved.`);
+      continue;
+    }
+
+    if (schedule[day]) {
+      const { hasConflict, conflicts, suggestions } = detectConflicts(eventWithRecurrence, schedule[day], { ...locationOptions, day });
+      if (hasConflict) {
+        conflictWarnings.push({
+          day: day,
+          event: eventWithRecurrence,
+          conflicts: conflicts,
+          suggestions: suggestions
+        });
+      }
+      schedule[day].push(eventWithRecurrence);
+      addedEvents.push(eventWithRecurrence);
+    } else {
+      schedule['Today'].push(eventWithRecurrence);
+      addedEvents.push({ ...eventWithRecurrence, day: 'Today' });
+    }
+  }
+
+  syncTodayWithCurrentDay(schedule);
+  // Save to MongoDB for logged-in users
+  if (mongoose.Types.ObjectId.isValid(userId)) {
+    await saveScheduleToMongo(userId, schedule);
+  }
+  userSchedules.set(userId, schedule);
+  saveSchedulesNow();
+
+  // ── GOOGLE CALENDAR SYNC: Automatically sync each added event to Google Calendar ──
+  // This is non-blocking — failures are logged but never crash the response.
+  const googleSyncResults = await Promise.allSettled(
+    addedEvents.map(ev => syncEventToGoogleCalendar(userId, ev, locationId))
+  );
+  const googleSyncSuccessCount = googleSyncResults.filter(r => r.status === 'fulfilled' && r.value.success).length;
+  const googleSyncFailedCount = googleSyncResults.filter(r => r.status === 'fulfilled' && !r.value.success).length;
+
+  // ── LOG ACTION HISTORY: Record this parse action for undo ──
+  const googleEventIds = googleSyncResults
+    .filter(r => r.status === 'fulfilled' && r.value.success && r.value.eventId)
+    .map(r => r.value.eventId);
+  const authedUserId = getAuthenticatedUserId(req);
+  if (authedUserId) {
+    // Fire-and-forget: don't block the response
+    logActionHistory(authedUserId, text, googleEventIds, addedEvents, 'parse').catch(() => {});
+  }
+
+  // ── Suggest tracking an "expected expense" for cost-bearing life events ──
+  // (wedding, trip, bar mitzvah, ...). Suggestion only — nothing is saved
+  // until the user confirms it from the Expected Expenses screen.
+  const suggestedExpenses = [];
+  for (const ev of addedEvents) {
+    const match = detectExpenseSuggestion(ev.title);
+    if (match) {
+      suggestedExpenses.push({
+        title: ev.title,
+        category: match.category,
+        day: ev.day,
+        targetDate: ev.targetDate || null,
+        sourceEventTitle: ev.title
+      });
+    }
+  }
+
+  return {
+    events: addedEvents,
+    reminders: createdReminders.length ? createdReminders : undefined,
+    replyMessage: replyMessage || (createdReminders.length ? `נוספו ${createdReminders.length} תזכורות.` : `נוספו ${addedEvents.length} אירועים.`),
+    totalEvents: Object.values(schedule).reduce((sum, arr) => sum + arr.length, 0),
+    conflicts: conflictWarnings.length > 0 ? conflictWarnings : undefined,
+    suggestedExpenses: suggestedExpenses.length > 0 ? suggestedExpenses : undefined,
+    googleCalendar: {
+      synced: googleSyncSuccessCount,
+      failed: googleSyncFailedCount,
+      total: addedEvents.length,
+      link: googleSyncSuccessCount > 0 ? 'https://calendar.google.com' : undefined
+    }
+  };
+}
+
+/**
+ * POST /api/parse-schedule/confirm
+ * Saves the events the user approved (and possibly edited) on the preview card
+ * returned by /api/parse-schedule with { preview: true }. No AI call, no credit.
+ * Body: { events: [...], text?: string, edited?: boolean, location?: string }
+ */
+app.post('/api/parse-schedule/confirm', aiLimiter, async (req, res) => {
+  const userId = getAuthenticatedUserId(req);
+  if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
+    return res.status(401).json({ error: 'Login required.' });
+  }
+  const events = sanitizeConfirmedEvents(req.body?.events);
+  if (!events) {
+    return res.status(400).json({ error: 'Invalid events.' });
+  }
+  const text = typeof req.body?.text === 'string' ? req.body.text.slice(0, 2000) : '';
+
+  try {
+    const schedule = JSON.parse(JSON.stringify(getUserSchedule(userId)));
+    const result = await commitParsedEvents(req, userId, schedule, events, {
+      text,
+      todayName: getTodayDayName(),
+      locationId: req.body?.location || DEFAULT_LOCATION_ID,
+      datesFromText: req.body?.edited !== true
+    });
+    res.json(result);
+  } catch (error) {
+    console.error(error);
+    res.status(error.status || 500).json({ error: error.message || 'Failed to save events.' });
+  }
+});
+
 app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
 
-  const { text, recurrence, location, eventType, duration } = req.body;
+  const { text, recurrence, location, eventType, duration, preview } = req.body;
   if (!text || !text.trim()) {
     return res.status(400).json({ error: 'Text input is required.' });
   }
@@ -2161,167 +2351,28 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
       });
     }
 
-    const { events: parsedEvents, replyMessage } = parsedResult;
-
-    // ── REMINDERS: "remind me every day at 8 to take a pill" becomes a Reminder
-    // that pings the user (see routes/reminderRoutes), not a calendar block.
-    // Guests have nowhere to receive pings, so they keep the calendar event.
-    let eventsToSchedule = Array.isArray(parsedEvents) ? parsedEvents : [];
-    let createdReminders = [];
-    if (mongoose.Types.ObjectId.isValid(userId)) {
-      const timeZone = getCurrentRequestTimeZone();
-      const { reminders: reminderSpecs, remainingEvents } = reminderSpecsFromEvents(eventsToSchedule, { timeZone, todayName, text });
-      if (reminderSpecs.length) {
-        createdReminders = await createReminders(userId, reminderSpecs, { timeZone, source: 'ai', sourceText: text });
-        if (createdReminders.length) eventsToSchedule = remainingEvents;
-      }
-    }
-
+    const parsedEvents = Array.isArray(parsedResult.events) ? parsedResult.events : [];
+    const { replyMessage } = parsedResult;
     const locationId = location || DEFAULT_LOCATION_ID;
-    const locData = resolveUserLocation(locationId);
-    const locationOptions = locData ? {
-      dayStart: locData.defaultDayStart,
-      dayEnd: locData.defaultDayEnd
-    } : {};
 
-    const addedEvents = [];
-    const conflictWarnings = [];
-    const shabbatFilteredEvents = [];
-
-    for (const event of eventsToSchedule) {
-      let day = event.day || todayName;
-      if (day === 'Today') {
-        day = todayName;
-      }
-
-      // ── HARD SHABBAT GUARD: Filter out any event scheduled on Saturday ──
-      if (isShabbat(day)) {
-        console.warn(`[Shabbat Guard] Blocked event "${event.title}" with day "${day}" from being saved.`);
-        shabbatFilteredEvents.push(event);
-        continue;
-      }
-
-      let eventRecurrence = event.recurrence || recurrence || 'weekly';
-      if (event.isSleep) {
-        eventRecurrence = 'daily';
-      }
-
-      // Auto-set createdMonth for yearly events so they only repeat in the correct month
-      const createdMonth = new Date().getMonth();
-
-      // If eventType was specified from the frontend, override duration accordingly
-      const effectiveEventType = eventType || event.eventType || 'activity';
-      const effectiveDuration = effectiveEventType === 'notification' ? 0 : (duration || event.duration || 60);
-
-      const eventWithRecurrence = {
-        ...event,
-        day: day,
-        recurrence: eventRecurrence,
-        location: locationId,
-        eventType: effectiveEventType,
-        duration: effectiveDuration,
-        ...(eventRecurrence === 'yearly' && { createdMonth })
-      };
-
-      // For notification type: override endTime to be 0 duration (same as startTime)
-      if (effectiveEventType === 'notification') {
-        eventWithRecurrence.endTime = eventWithRecurrence.startTime;
-        eventWithRecurrence.isReminder = true;
-      // For activity type: if a duration was specified from frontend, recalculate endTime
-      } else if (duration && duration > 0 && eventWithRecurrence.startTime) {
-        const startMatch = eventWithRecurrence.startTime.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
-        if (startMatch) {
-          let sh = parseInt(startMatch[1], 10);
-          const sm = parseInt(startMatch[2], 10);
-          if (startMatch[3].toUpperCase() === 'PM' && sh !== 12) sh += 12;
-          if (startMatch[3].toUpperCase() === 'AM' && sh === 12) sh = 0;
-          const totalStartMinutes = sh * 60 + sm;
-          const totalEndMinutes = totalStartMinutes + duration;
-          const eh = Math.floor((totalEndMinutes % 1440) / 60);
-          const em = totalEndMinutes % 60;
-          const eAmpm = eh >= 12 ? 'PM' : 'AM';
-          const eDisplayH = eh > 12 ? eh - 12 : (eh === 0 ? 12 : eh);
-          eventWithRecurrence.endTime = `${String(eDisplayH).padStart(2, '0')}:${String(em).padStart(2, '0')} ${eAmpm}`;
-        }
-      }
-
-      if (schedule[day]) {
-        const { hasConflict, conflicts, suggestions } = detectConflicts(eventWithRecurrence, schedule[day], { ...locationOptions, day });
-        if (hasConflict) {
-          conflictWarnings.push({
-            day: day,
-            event: eventWithRecurrence,
-            conflicts: conflicts,
-            suggestions: suggestions
-          });
-        }
-        schedule[day].push(eventWithRecurrence);
-        addedEvents.push(eventWithRecurrence);
-      } else {
-        schedule['Today'].push(eventWithRecurrence);
-        addedEvents.push({ ...eventWithRecurrence, day: 'Today' });
-      }
-    }
-
+    // Charge for the AI call before anything is saved, so a refused charge
+    // never leaves half-saved reminders or events behind.
     const { remainingCredits } = await deductAICredit(userId, parsedResult.usage, parsedResult.modelName || 'deepseek/deepseek-chat', 'parse-schedule');
-    syncTodayWithCurrentDay(schedule);
-    // Save to MongoDB for logged-in users
-    if (mongoose.Types.ObjectId.isValid(userId)) {
-      await saveScheduleToMongo(userId, schedule);
-    }
-    userSchedules.set(userId, schedule);
-    saveSchedulesNow();
 
-    // ── GOOGLE CALENDAR SYNC: Automatically sync each added event to Google Calendar ──
-    // This is non-blocking — failures are logged but never crash the response.
-    const googleSyncResults = await Promise.allSettled(
-      addedEvents.map(ev => syncEventToGoogleCalendar(userId, ev, locationId))
-    );
-    const googleSyncSuccessCount = googleSyncResults.filter(r => r.status === 'fulfilled' && r.value.success).length;
-    const googleSyncFailedCount = googleSyncResults.filter(r => r.status === 'fulfilled' && !r.value.success).length;
-
-    // ── LOG ACTION HISTORY: Record this parse action for undo ──
-    const googleEventIds = googleSyncResults
-      .filter(r => r.status === 'fulfilled' && r.value.success && r.value.eventId)
-      .map(r => r.value.eventId);
-    const authedUserId = getAuthenticatedUserId(req);
-    if (authedUserId) {
-      // Fire-and-forget: don't block the response
-      logActionHistory(authedUserId, text, googleEventIds, addedEvents, 'parse').catch(() => {});
+    // ── PREVIEW: return what the AI understood without saving anything. The
+    // client shows it for confirmation and saves it via /api/parse-schedule/confirm.
+    if (preview === true) {
+      const previewEvents = buildParsePreview(parsedEvents, schedule, {
+        todayName, recurrence, locationId, eventType, duration,
+        remindersAsPings: mongoose.Types.ObjectId.isValid(userId)
+      });
+      return res.json({ preview: true, events: previewEvents, replyMessage, aiCredits: remainingCredits });
     }
 
-    // ── Suggest tracking an "expected expense" for cost-bearing life events ──
-    // (wedding, trip, bar mitzvah, ...). Suggestion only — nothing is saved
-    // until the user confirms it from the Expected Expenses screen.
-    const suggestedExpenses = [];
-    for (const ev of addedEvents) {
-      const match = detectExpenseSuggestion(ev.title);
-      if (match) {
-        suggestedExpenses.push({
-          title: ev.title,
-          category: match.category,
-          day: ev.day,
-          targetDate: ev.targetDate || null,
-          sourceEventTitle: ev.title
-        });
-      }
-    }
-
-    res.json({
-      events: addedEvents,
-      reminders: createdReminders.length ? createdReminders : undefined,
-      replyMessage: replyMessage || (createdReminders.length ? `נוספו ${createdReminders.length} תזכורות.` : `נוספו ${addedEvents.length} אירועים.`),
-      totalEvents: Object.values(schedule).reduce((sum, arr) => sum + arr.length, 0),
-      conflicts: conflictWarnings.length > 0 ? conflictWarnings : undefined,
-      suggestedExpenses: suggestedExpenses.length > 0 ? suggestedExpenses : undefined,
-      aiCredits: remainingCredits,
-      googleCalendar: {
-        synced: googleSyncSuccessCount,
-        failed: googleSyncFailedCount,
-        total: addedEvents.length,
-        link: googleSyncSuccessCount > 0 ? 'https://calendar.google.com' : undefined
-      }
+    const result = await commitParsedEvents(req, userId, schedule, parsedEvents, {
+      text, todayName, recurrence, locationId, eventType, duration, replyMessage
     });
+    res.json({ ...result, aiCredits: remainingCredits });
   } catch (error) {
     console.error(error);
     res.status(error.status || 500).json({ error: error.message || 'Failed to parse schedule.' });

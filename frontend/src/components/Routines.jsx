@@ -31,7 +31,10 @@ const STRINGS = {
     loginNeeded: 'התחבר כדי לשמור רוטינות ולסמן ✓', login: 'התחברות', error: 'משהו השתבש, נסה שוב',
     sharedInvite: 'הוזמנת לרוטינה', challengeDay: 'יום', finished: 'הושלם', back: 'חזרה',
     dayLetters: ['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ש'], todayProgress: 'ההתקדמות של היום',
-    routinesToday: 'הרוטינות של היום', openRoutines: 'לרוטינות'
+    routinesToday: 'הרוטינות של היום', openRoutines: 'לרוטינות',
+    restTimer: 'טיימר מנוחה', restTimerSub: 'כל הקשה מפעילה ספירה לאחור, למשל מנוחה בין סטים',
+    off: 'כבוי', sec: 'שנ׳', tapToRest: 'הקש להתחלת מנוחה', tapToRestart: 'הקש כדי להתחיל מחדש',
+    resting: 'מנוחה', restOver: 'המנוחה נגמרה, קדימה!', stop: 'עצור'
   },
   en: {
     title: 'Routines & Challenges', tabToday: 'Today', tabProgress: 'My progress', tabDiscover: 'Discover',
@@ -58,7 +61,10 @@ const STRINGS = {
     loginNeeded: 'Sign in to save routines and tick ✓', login: 'Sign in', error: 'Something went wrong, try again',
     sharedInvite: "You're invited to", challengeDay: 'Day', finished: 'Finished', back: 'Back',
     dayLetters: ['S', 'M', 'T', 'W', 'T', 'F', 'S'], todayProgress: "Today's progress",
-    routinesToday: "Today's routines", openRoutines: 'Routines'
+    routinesToday: "Today's routines", openRoutines: 'Routines',
+    restTimer: 'Rest timer', restTimerSub: 'Each tap starts a countdown, e.g. rest between sets',
+    off: 'Off', sec: 's', tapToRest: 'Tap to start resting', tapToRestart: 'Tap to restart',
+    resting: 'Resting', restOver: 'Rest is over, go!', stop: 'Stop'
   }
 };
 
@@ -84,13 +90,13 @@ const TEMPLATES = {
   he: [
     { emoji: '☀️', color: 'amber', title: 'רוטינת בוקר', timeOfDay: 'morning', steps: [['🦷', 'צחצוח שיניים'], ['💧', 'כוס מים'], ['💪', 'אימון'], ['🚿', 'מקלחת'], ['🥣', 'ארוחת בוקר']] },
     { emoji: '🌙', color: 'violet', title: 'רוטינת ערב', timeOfDay: 'evening', steps: [['📵', 'בלי מסכים שעה לפני השינה'], ['📖', 'קריאה'], ['🦷', 'צחצוח שיניים'], ['✍️', '3 דברים טובים מהיום']] },
-    { emoji: '💪', color: 'emerald', title: 'כושר', timeOfDay: 'any', days: [0, 2, 4], steps: [['🔥', 'חימום'], ['🏋️', 'אימון כוח'], ['🧘', 'מתיחות']] },
+    { emoji: '💪', color: 'emerald', title: 'כושר', timeOfDay: 'any', days: [0, 2, 4], restSeconds: 45, steps: [['🔥', 'חימום'], ['🏋️', 'אימון כוח'], ['🧘', 'מתיחות']] },
     { emoji: '💧', color: 'sky', title: 'אתגר 21 יום: 8 כוסות מים', kind: 'challenge', challengeDays: 21, steps: [['💧', 'בוקר: 2 כוסות'], ['💧', 'צהריים: 3 כוסות'], ['💧', 'ערב: 3 כוסות']] }
   ],
   en: [
     { emoji: '☀️', color: 'amber', title: 'Morning routine', timeOfDay: 'morning', steps: [['🦷', 'Brush teeth'], ['💧', 'Glass of water'], ['💪', 'Workout'], ['🚿', 'Shower'], ['🥣', 'Breakfast']] },
     { emoji: '🌙', color: 'violet', title: 'Evening routine', timeOfDay: 'evening', steps: [['📵', 'No screens an hour before bed'], ['📖', 'Read'], ['🦷', 'Brush teeth'], ['✍️', '3 good things today']] },
-    { emoji: '💪', color: 'emerald', title: 'Fitness', timeOfDay: 'any', days: [0, 2, 4], steps: [['🔥', 'Warm up'], ['🏋️', 'Strength'], ['🧘', 'Stretch']] },
+    { emoji: '💪', color: 'emerald', title: 'Fitness', timeOfDay: 'any', days: [0, 2, 4], restSeconds: 45, steps: [['🔥', 'Warm up'], ['🏋️', 'Strength'], ['🧘', 'Stretch']] },
     { emoji: '💧', color: 'sky', title: '21-day challenge: 8 glasses of water', kind: 'challenge', challengeDays: 21, steps: [['💧', 'Morning: 2 glasses'], ['💧', 'Noon: 3 glasses'], ['💧', 'Evening: 3 glasses']] }
   ]
 };
@@ -100,14 +106,16 @@ function templateToDraft(tpl) {
     title: tpl.title, emoji: tpl.emoji, color: tpl.color, description: '',
     steps: tpl.steps.map(([emoji, title]) => ({ emoji, title })),
     days: tpl.days || [], timeOfDay: tpl.timeOfDay || 'any',
-    kind: tpl.kind || 'routine', challengeDays: tpl.challengeDays || 21, isPublic: false
+    kind: tpl.kind || 'routine', challengeDays: tpl.challengeDays || 21, restSeconds: tpl.restSeconds || 0, isPublic: false
   };
 }
 
 const EMPTY_DRAFT = {
   title: '', emoji: '✨', color: 'indigo', description: '', steps: [{ emoji: '', title: '' }],
-  days: [], timeOfDay: 'any', kind: 'routine', challengeDays: 21, isPublic: false
+  days: [], timeOfDay: 'any', kind: 'routine', challengeDays: 21, restSeconds: 0, isPublic: false
 };
+
+const REST_PRESETS = [30, 45, 60, 90, 120];
 
 function errorMessage(err, s) {
   return (err && err.response && err.response.data && err.response.data.error) || s.error;
@@ -244,6 +252,101 @@ function StepCircle({ step, done, onToggle, color, busy }) {
   );
 }
 
+function formatClock(total) {
+  const m = Math.floor(total / 60);
+  const sec = total % 60;
+  return `${m}:${String(sec).padStart(2, '0')}`;
+}
+
+// Short beeps when a rest ends. The audio context is created on the tap that
+// starts the timer, since iOS only unlocks audio inside a user gesture.
+function beep(ctx) {
+  try {
+    if (!ctx) return;
+    [0, 0.25, 0.5].forEach(offset => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.frequency.value = 880;
+      gain.gain.setValueAtTime(0.25, ctx.currentTime + offset);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + offset + 0.18);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(ctx.currentTime + offset);
+      osc.stop(ctx.currentTime + offset + 0.2);
+    });
+  } catch (e) {}
+}
+
+/** Countdown that (re)starts on every tap, or when startSignal changes. */
+function RestTimer({ seconds, color, s, startSignal }) {
+  const [endAt, setEndAt] = useState(null);
+  const [now, setNow] = useState(() => Date.now());
+  const [over, setOver] = useState(false);
+  const audioRef = useRef(null);
+
+  const start = useCallback(() => {
+    try {
+      if (!audioRef.current && typeof window !== 'undefined') {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (Ctx) audioRef.current = new Ctx();
+      }
+      if (audioRef.current && audioRef.current.state === 'suspended') audioRef.current.resume();
+    } catch (e) {}
+    setOver(false);
+    setNow(Date.now());
+    setEndAt(Date.now() + seconds * 1000);
+  }, [seconds]);
+
+  const firstSignal = useRef(startSignal);
+  useEffect(() => {
+    if (startSignal !== firstSignal.current) start();
+  }, [startSignal, start]);
+
+  useEffect(() => {
+    if (!endAt) return undefined;
+    const id = setInterval(() => {
+      const t = Date.now();
+      setNow(t);
+      if (t >= endAt) {
+        setEndAt(null);
+        setOver(true);
+        try { if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200]); } catch (e) {}
+        beep(audioRef.current);
+      }
+    }, 250);
+    return () => clearInterval(id);
+  }, [endAt]);
+
+  useEffect(() => () => {
+    try { if (audioRef.current) audioRef.current.close(); } catch (e) {}
+  }, []);
+
+  const running = !!endAt;
+  const remaining = running ? Math.max(0, Math.ceil((endAt - now) / 1000)) : seconds;
+  const elapsed = running ? 1 - (endAt - now) / (seconds * 1000) : 0;
+
+  return (
+    <div className="mt-5 rounded-3xl bg-white border border-slate-200 p-4 flex items-center gap-4">
+      <button type="button" onClick={start} aria-label={running ? s.tapToRestart : s.tapToRest}
+        className="shrink-0 rounded-full active:scale-95 transition-transform">
+        <ProgressRing value={running ? elapsed : (over ? 1 : 0)} size={88} stroke={8} color={color}>
+          <span className="text-xl font-bold text-slate-800 tabular-nums" aria-live="polite">{formatClock(remaining)}</span>
+        </ProgressRing>
+      </button>
+      <button type="button" onClick={start} className="flex-1 min-w-0 text-start min-h-[44px]">
+        <span className="block font-semibold text-slate-800">⏱️ {running ? s.resting : over ? s.restOver : s.restTimer}</span>
+        <span className="block text-sm text-slate-500">{running ? s.tapToRestart : s.tapToRest}</span>
+      </button>
+      {running && (
+        <button type="button" onClick={() => setEndAt(null)} aria-label={s.stop}
+          className="w-11 h-11 shrink-0 rounded-xl text-slate-400 hover:text-slate-600 flex items-center justify-center">
+          <X className="w-5 h-5" />
+        </button>
+      )}
+    </div>
+  );
+}
+
 function DayChips({ days, s }) {
   if (!days || days.length === 0) return <span>{s.everyDay}</span>;
   return <span>{days.map(d => s.dayLetters[d]).join(' · ')}</span>;
@@ -272,6 +375,9 @@ function RoutineDetail({ routine, s, isRtl, onClose, onToggle, onEdit, onDelete,
   }, [count, total]);
 
   const streakAfter = (progress.currentStreak || 0);
+  const restSeconds = routine.restSeconds || 0;
+  // Ticking a step done starts the rest, same as tapping the timer.
+  const [restSignal, setRestSignal] = useState(0);
 
   return (
     <Sheet onClose={onClose} isRtl={isRtl} title={`${routine.emoji} ${routine.title}`} s={s}>
@@ -297,6 +403,8 @@ function RoutineDetail({ routine, s, isRtl, onClose, onToggle, onEdit, onDelete,
 
         {routine.description && <p className="text-slate-600 text-sm mt-4">{routine.description}</p>}
 
+        {restSeconds > 0 && <RestTimer seconds={restSeconds} color={c.ring} s={s} startSignal={restSignal} />}
+
         <div className="grid grid-cols-3 gap-x-3 gap-y-6 mt-6">
           {routine.steps.map(step => (
             <StepCircle
@@ -304,7 +412,11 @@ function RoutineDetail({ routine, s, isRtl, onClose, onToggle, onEdit, onDelete,
               step={step}
               done={done.has(step._id)}
               color={c.ring}
-              onToggle={() => onToggle(routine, step._id, !done.has(step._id))}
+              onToggle={() => {
+                const willBeDone = !done.has(step._id);
+                onToggle(routine, step._id, willBeDone);
+                if (willBeDone && restSeconds > 0 && count + 1 < total) setRestSignal(n => n + 1);
+              }}
             />
           ))}
         </div>
@@ -429,6 +541,22 @@ function RoutineEditor({ initial, s, isRtl, onClose, onSave, saving, error, lang
               <Plus className="w-4 h-4" />{s.addStep}
             </button>
           )}
+        </div>
+
+        <div>
+          <span className="text-sm font-semibold text-slate-600">⏱️ {s.restTimer}</span>
+          <p className="text-xs text-slate-500">{s.restTimerSub}</p>
+          <div className="mt-1 flex gap-2 items-center flex-wrap">
+            {[0, ...REST_PRESETS].map(n => (
+              <button type="button" key={n} onClick={() => set({ restSeconds: n })} aria-pressed={(draft.restSeconds || 0) === n}
+                className={`min-h-[44px] px-3 rounded-xl text-sm font-semibold ${(draft.restSeconds || 0) === n ? 'bg-indigo-600 text-white' : 'bg-white border border-slate-200 text-slate-600'}`}>
+                {n === 0 ? s.off : `${n} ${s.sec}`}
+              </button>
+            ))}
+            <input type="number" min={0} max={600} value={draft.restSeconds || 0}
+              onChange={e => set({ restSeconds: Math.min(600, Math.max(0, parseInt(e.target.value, 10) || 0)) })}
+              aria-label={`${s.restTimer} (${s.sec})`} className="w-20 min-h-[44px] rounded-xl border border-slate-300 px-2 text-base bg-white" />
+          </div>
         </div>
 
         <div>
