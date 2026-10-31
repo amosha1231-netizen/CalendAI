@@ -788,3 +788,85 @@ failures).
 Working tree after this run: `frontend/src/components/MutualScheduler.jsx`,
 `frontend/src/index.css`, and this file are modified; left uncommitted per
 instructions. No ambiguous UX decision or open question for the human.
+
+## 2026-10-31 run notes (fourteenth overall, second run same day)
+`npm install` in both `frontend/` and `backend/` (fresh clone). Baseline
+before this run's fixes: `npm run build` (frontend) clean; `node --test`
+(backend) 215/231 pass, 16 known `fastdl.mongodb.org` sandbox-network
+failures confirmed by error text (not regressions) — see AGENTS.md.
+
+Delegated a fourteenth independent adversarial review (same 10 mutual/
+provider files + wiring, explicit instructions not to re-derive anything
+task_progress.md already lists as fixed/verified across all 13 prior
+rounds) to a sub-agent, asking it to try genuinely fresh angles
+(accessibility, not-yet-checked param validation, N+1 queries, memory
+leaks/unmount cleanup, React effect-dependency bugs, Suspense wiring, rate
+limiting). It found three new, previously-unreported low-severity issues,
+all fixed this run:
+
+**1. The three genuine modal components (`ProviderDirectory.jsx`,
+`ProviderBookingView.jsx`, `ProviderProfileEditor.jsx`) and the full-page
+`MutualScheduler.jsx` had no dialog semantics at all**, unlike the
+established pattern elsewhere in this app (`Reminders.jsx`/`Routines.jsx`
+use `role="dialog" aria-modal="true" aria-label={...}` plus an
+Escape-to-close `useEffect` on the identical overlay/full-screen shape).
+Fixed by mirroring that exact pattern: added `role="dialog"`,
+`aria-modal="true"`, and a step/state-appropriate `aria-label` to every
+dialog panel in all four components (including the loading/error early
+returns in `ProviderBookingView.jsx`); added a guarded
+(`try/catch` + `typeof`-safe via the existing `document.addEventListener`
+browser-global pattern) Escape-key-closes effect to each component, gated
+off while a destructive in-flight request is outstanding
+(`confirming` in `MutualScheduler.jsx`/`ProviderBookingView.jsx`, `saving`
+in `ProviderProfileEditor.jsx`, unconditional in `ProviderDirectory.jsx`
+which has no destructive in-flight state) — mirroring the already-
+established `disabled={confirming}`-style guard pattern used elsewhere on
+this branch; added backdrop-`onClick`-closes-with-`stopPropagation`-on-the-
+panel to the three true modals (not `MutualScheduler.jsx`, which is a
+full-page view with no backdrop element to attach it to), gated by the
+same in-flight flag where one exists. No backend changes; no regression
+test added (frontend has no component test suite, consistent with every
+prior frontend-only fix on this branch); `npx vite build` clean after the
+fix.
+
+**2 & 3. Two client-supplied string fields in `PUT /api/providers/me`
+(`backend/routes/providerRoutes.js`) had no length cap**, unlike every
+sibling field in the same `$set`/`mapServicesForSave` object:
+`providerProfile.locationId` (line ~339, only `.trim() || 'jerusalem'`,
+while `businessName`/`bio`/`category` three lines above are all
+`.slice(...)`-capped) and a service's `color` (`mapServicesForSave`,
+type-guarded but never length-capped, unlike `name` three lines above it).
+Low severity — authenticated, own-profile-only, bounded by Express's
+default JSON body limit, never reaches a Mongo query/regex/operator
+context or any frontend render — but the same "missing length guard" class
+already fixed repeatedly on this branch for other fields. Fixed by adding
+`.slice(0, 50)` to `locationId` (mirroring the exact cap already used for
+this same field's forwarding in `mutualRoutes.js`, added by the tenth run)
+and `.trim().slice(0, 20)` to `color`. Added two regression tests to
+`backend/test/providerRoutesValidation.test.js` asserting the DB-bound
+`$set` value is actually truncated for an oversized `locationId` and an
+oversized service `color`.
+
+The review also tried several fresh angles that came up clean (confirmed,
+no action needed): Suspense/lazy-loading wiring for all four components
+(all correctly covered, just a cosmetic full-page-loader-flash difference
+on `MutualScheduler.jsx`'s first open vs. the other three's local
+`fallback={null}`, not worth fixing); N+1 queries in both route files
+(none); memory leaks/missing unmount cleanup (React 18 makes a
+post-unmount `setState` a safe no-op; the components that need an explicit
+staleness guard already have one from prior rounds);
+`ProviderDirectory.jsx`'s search effect intentionally omitting
+`searchQuery` from its dependency array (by design — explicit-search-button
+UX, not a staleness bug); authorization bypass via crafted IDs (all `:id`
+params are `ObjectId.isValid`-checked; user ids are always server-issued,
+never attacker-controlled); DST/midnight edges (re-traced, still correct);
+rate-limiting gaps on the cancel routes (both are authenticated,
+ownership-checked, and already atomic/idempotent, so not a practical abuse
+vector).
+
+Full suite after the fixes: 217/233 pass (16 known sandbox-network
+failures, net +2 tests this run, confirmed by error text to be the same
+`fastdl.mongodb.org` 403 as every prior run). `npm run build` (frontend)
+clean.
+
+No ambiguous UX decision or open question for the human this run.
