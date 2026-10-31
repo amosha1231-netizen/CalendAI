@@ -16,6 +16,7 @@ const JWT_SECRET = require('../config/jwtSecret');
 
 const MAX_STEPS = 20;
 const MAX_ROUTINES_PER_USER = 50;
+const MAX_REST_SECONDS = 600;
 const LOOKBACK_DAYS = 120;
 const TIMES_OF_DAY = ['morning', 'afternoon', 'evening', 'any'];
 const COLORS = ['indigo', 'violet', 'sky', 'emerald', 'amber', 'rose', 'slate'];
@@ -90,6 +91,7 @@ function parseRoutineInput(body, existing) {
   const challengeDays = kind === 'challenge'
     ? Math.min(365, Math.max(1, parseInt(body.challengeDays, 10) || 21))
     : null;
+  const restSeconds = Math.min(MAX_REST_SECONDS, Math.max(0, parseInt(body.restSeconds, 10) || 0));
 
   return {
     value: {
@@ -102,6 +104,7 @@ function parseRoutineInput(body, existing) {
       timeOfDay: TIMES_OF_DAY.includes(body.timeOfDay) ? body.timeOfDay : 'any',
       kind,
       challengeDays,
+      restSeconds,
       isPublic: body.isPublic === true
     }
   };
@@ -127,6 +130,7 @@ function serializeRoutine(routine, userId, extra = {}) {
     timeOfDay: r.timeOfDay,
     kind: r.kind,
     challengeDays: r.challengeDays,
+    restSeconds: r.restSeconds || 0,
     isPublic: r.isPublic,
     shareCode: r.shareCode,
     participantCount: r.participantCount || (r.participants || []).length,
@@ -429,6 +433,7 @@ router.post('/:id/copy', async (req, res) => {
       timeOfDay: source.timeOfDay,
       kind: source.kind,
       challengeDays: source.challengeDays,
+      restSeconds: source.restSeconds || 0,
       isPublic: false,
       ownerId: userId,
       shareCode: newShareCode(),
