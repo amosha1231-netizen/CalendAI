@@ -146,6 +146,12 @@ export default function ProviderBookingView({ providerId, lang, user, onClose, o
     if (selectedServiceId && selectedDate) fetchSlots(selectedServiceId, selectedDate);
   }, [selectedServiceId, selectedDate, fetchSlots, slotsRefreshNonce]);
 
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape" && !confirming) onClose(); };
+    try { document.addEventListener("keydown", onKey); } catch (e) {}
+    return () => { try { document.removeEventListener("keydown", onKey); } catch (e) {} };
+  }, [onClose, confirming]);
+
   const handleConfirm = async () => {
     if (!selectedSlot || !guestName.trim()) return;
     setConfirming(true);
@@ -195,8 +201,12 @@ export default function ProviderBookingView({ providerId, lang, user, onClose, o
 
   if (loading) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
-        <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-lg p-8 flex items-center justify-center">
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4" onClick={onClose}>
+        <div
+          className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-lg p-8 flex items-center justify-center"
+          role="dialog" aria-modal="true" aria-label={lang === "he" ? "טוען" : "Loading"}
+          onClick={(e) => e.stopPropagation()}
+        >
           <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
         </div>
       </div>
@@ -205,8 +215,12 @@ export default function ProviderBookingView({ providerId, lang, user, onClose, o
 
   if (error || !provider) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
-        <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-md p-6">
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4" onClick={onClose}>
+        <div
+          className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-md p-6"
+          role="dialog" aria-modal="true" aria-label={lang === "he" ? "שגיאה" : "Error"}
+          onClick={(e) => e.stopPropagation()}
+        >
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-bold text-red-600">{lang === "he" ? "שגיאה" : "Error"}</h3>
             <button onClick={onClose} className="p-1 rounded-full hover:bg-gray-100"><X className="w-5 h-5" /></button>
@@ -219,8 +233,12 @@ export default function ProviderBookingView({ providerId, lang, user, onClose, o
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4" dir={isRtl ? "rtl" : "ltr"}>
-      <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4" dir={isRtl ? "rtl" : "ltr"} onClick={confirming ? undefined : onClose}>
+      <div
+        className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col"
+        role="dialog" aria-modal="true" aria-label={provider.businessName || (lang === "he" ? "הזמנת פגישה" : "Book an appointment")}
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
         <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2 min-w-0">

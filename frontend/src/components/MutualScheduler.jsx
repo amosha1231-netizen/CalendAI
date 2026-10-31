@@ -88,6 +88,12 @@ export default function MutualScheduler({ lang, t, locationId, onClose, onFallba
     };
   }, [cancelSession]);
 
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape' && !confirming) onClose(); };
+    try { document.addEventListener('keydown', onKey); } catch (e) {}
+    return () => { try { document.removeEventListener('keydown', onKey); } catch (e) {} };
+  }, [onClose, confirming]);
+
   const fetchAvailability = useCallback(async (sid) => {
     setAvailabilityLoading(true);
     setAvailabilityError("");
@@ -217,7 +223,7 @@ export default function MutualScheduler({ lang, t, locationId, onClose, onFallba
   // ===================== INVITEE EMAIL STEP =====================
   if (step === 'invitee-email') {
     return (
-      <div className="booking-container" dir={isRTL ? 'rtl' : 'ltr'}>
+      <div className="booking-container" dir={isRTL ? 'rtl' : 'ltr'} role="dialog" aria-modal="true" aria-label={t.mutualTitle || (lang === 'he' ? 'תיאום פגישה הדדי' : 'Mutual Scheduling')}>
         <div className="booking-header">
           <button onClick={onClose} className="booking-close-btn">
             <X className="w-5 h-5" />
@@ -321,7 +327,7 @@ export default function MutualScheduler({ lang, t, locationId, onClose, onFallba
   // ===================== SELECT SLOT STEP =====================
   if (step === 'select-slot') {
     return (
-      <div className="booking-container" dir={isRTL ? 'rtl' : 'ltr'}>
+      <div className="booking-container" dir={isRTL ? 'rtl' : 'ltr'} role="dialog" aria-modal="true" aria-label={t.mutualTitle || (lang === 'he' ? 'תיאום פגישה הדדי' : 'Mutual Scheduling')}>
         <div className="booking-header">
           <button onClick={handleBackToEmailStep} className="booking-close-btn">
             <X className="w-5 h-5" />
@@ -392,7 +398,7 @@ export default function MutualScheduler({ lang, t, locationId, onClose, onFallba
   // ===================== CONFIRM STEP =====================
   if (step === 'confirm' && selectedSlot) {
     return (
-      <div className="booking-container" dir={isRTL ? 'rtl' : 'ltr'}>
+      <div className="booking-container" dir={isRTL ? 'rtl' : 'ltr'} role="dialog" aria-modal="true" aria-label={t.mutualTitle || (lang === 'he' ? 'תיאום פגישה הדדי' : 'Mutual Scheduling')}>
         <div className="booking-header">
           {/* Disabled while confirming: without this guard the user could
               navigate back to 'select-slot' mid-request, pick a *different*
@@ -457,7 +463,7 @@ export default function MutualScheduler({ lang, t, locationId, onClose, onFallba
   // ===================== SUCCESS STEP =====================
   if (step === 'success') {
     return (
-      <div className="booking-container" dir={isRTL ? 'rtl' : 'ltr'}>
+      <div className="booking-container" dir={isRTL ? 'rtl' : 'ltr'} role="dialog" aria-modal="true" aria-label={t.mutualTitle || (lang === 'he' ? 'תיאום פגישה הדדי' : 'Mutual Scheduling')}>
         <div className="booking-header">
           <button onClick={onClose} className="booking-close-btn">
             <X className="w-5 h-5" />
