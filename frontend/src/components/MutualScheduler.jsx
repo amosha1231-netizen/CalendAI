@@ -394,7 +394,19 @@ export default function MutualScheduler({ lang, t, locationId, onClose, onFallba
     return (
       <div className="booking-container" dir={isRTL ? 'rtl' : 'ltr'}>
         <div className="booking-header">
-          <button onClick={() => setStep('select-slot')} className="booking-close-btn">
+          {/* Disabled while confirming: without this guard the user could
+              navigate back to 'select-slot' mid-request, pick a *different*
+              slot, and fire a second concurrent POST .../confirm for the
+              same sessionId. The backend's atomic claim (status: 'active' ->
+              'processing') ensures only one of the two requests can actually
+              win, but the two fetches resolve independently in the browser —
+              whichever response lands LAST decides the UI's final state
+              regardless of which one actually succeeded server-side. A
+              losing request's 409 ("already claimed") arriving after the
+              winning request's success response would bounce the user off
+              the success screen back to slot-picking, making an actually-
+              confirmed-on-both-calendars meeting look like it failed. */}
+          <button onClick={() => setStep('select-slot')} className="booking-close-btn" disabled={confirming}>
             <X className="w-5 h-5" />
           </button>
           <div className="booking-header-content">

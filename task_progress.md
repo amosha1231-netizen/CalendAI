@@ -713,3 +713,78 @@ closure/in-flight-mutation guards from prior runs — all still correct.
 Working tree after this run: only `frontend/src/components/
 ProviderBookingView.jsx` and this file are modified; left uncommitted per
 instructions. No ambiguous UX decision or open question for the human.
+
+## 2026-10-31 run notes (thirteenth overall, independent self-review)
+No fresh clone needed (`node_modules` already present in both `frontend/`
+and `backend/`). Baseline before this run's fix: `npm run build` (frontend)
+clean; `node --test` (backend) 215/231 pass, 16 known
+`fastdl.mongodb.org` sandbox-network failures confirmed by error text (not
+regressions) — see AGENTS.md.
+
+Did a full independent adversarial read myself (not delegated) of all 10
+in-scope files plus their test files and the `App.jsx`/`server.js` wiring,
+deliberately not re-trying anything already listed above as fixed/verified.
+Re-confirmed (no new findings): the `category`/`q`/`locationId` type
+guards, both route files' atomic claim/confirm/cancel skeletons and their
+`activeSlot`/schedule-cache-pull-on-cancel fixes under every cancel-vs-
+confirm interleaving, `winsOverlapRace`'s 3-way chain resolution,
+`isSlotMutuallyFree`'s day-window/Shabbat/Friday-cutoff guards,
+`googleCalendar.js`'s token-refresh/freebusy-failure handling (fail-closed
+on a missing `calendars.primary` or a per-calendar `errors` array),
+authorization/ownership checks on every mutual/provider route, and
+`ProviderBookingView.jsx`/`ProviderDirectory.jsx`/`ProviderProfileEditor.jsx`'s
+existing stale-closure/in-flight-mutation guards.
+
+Found and fixed one new, previously-missed bug, confined to
+`frontend/src/components/MutualScheduler.jsx` (the one in-scope component
+whose 'confirm' step none of runs 1-12's notes checked for this specific
+control):
+
+**Missing `disabled` guard on the 'confirm' step's back button let a user
+fire a second, overlapping `POST /sessions/:id/confirm` for the same
+session, whose out-of-order response could overwrite a genuinely successful
+booking's UI with a false "failed" state.** The 'confirm' step's header
+back/X button (`onClick={() => setStep('select-slot')}`, around line 397)
+had no `disabled={confirming}` guard, unlike the "Lock it in" button right
+below it in the same step. So a user who clicked "Lock it in" (starting
+`handleConfirm`, which sets `confirming: true` and fires the POST) could,
+while that request was still in flight, click this back button to return to
+'select-slot', pick a *different* free slot (`handlePickSlot`), and click
+"Lock it in" again — issuing a *second* concurrent confirm request for the
+exact same `sessionId`. The backend's atomic claim
+(`findOneAndUpdate({status:'active'} -> {status:'processing'})`) correctly
+ensures only one of the two requests can actually claim and complete the
+session (the loser gets a clean 409), so there's no server-side data
+corruption or double-booking here — but the two `fetch` promises in the
+browser resolve independently of which one "won" on the backend. If the
+first (winning, now-successful) request's response arrived *after* the
+second (losing) request's 409, `handleConfirm`'s 409 branch
+(`setSlotTakenNotice(...); setStep('select-slot'); fetchAvailability(...)`)
+would run *after* `setStep('success')` already fired for the real booking —
+silently bouncing the user off the success screen back to slot-picking,
+making a meeting that is genuinely confirmed on both Google Calendars look
+like it failed. This is the same "stale request result overwrites a newer
+one" class already fixed repeatedly on this branch for form inputs
+(`ProviderBookingView.jsx`'s slot-grid refresh, `ProviderProfileEditor.jsx`'s
+save-in-flight fields), just manifesting via a missing guard on a
+*navigation* control instead of a form field — a fresh instance no prior
+run's notes mention for this component.
+
+Fixed by adding `disabled={confirming}` to that back button, mirroring the
+existing pattern on the "Lock it in" button in the same step — this closes
+the only UI path back to 'select-slot' while a confirm request is
+outstanding, so a second overlapping confirm for the same session is no
+longer reachable from the UI. Also added a `.booking-close-btn:disabled`
+rule to `frontend/src/index.css` (same dimmed/`cursor: not-allowed` pattern
+as the existing `.booking-confirm-btn:disabled`) since this button class had
+no prior disabled styling at all — without it the button would be
+non-functional but visually indistinguishable from enabled, which is worse
+UX than no fix. Backend untouched; no regression test added (frontend has
+no component test suite, consistent with every prior frontend-only fix on
+this branch). `npx vite build` clean after the fix; full backend suite
+re-run only as a sanity check (same 215/231 baseline, same 16 known sandbox
+failures).
+
+Working tree after this run: `frontend/src/components/MutualScheduler.jsx`,
+`frontend/src/index.css`, and this file are modified; left uncommitted per
+instructions. No ambiguous UX decision or open question for the human.
