@@ -29,6 +29,10 @@ export const DEFAULT_ALARM = {
   snoozeMinutes: 0, // 0 = snooze disabled
   keepScreenAwake: true,
   prepMinutes: 60,
+  // Wake-up bundle (native app): extra rings after the first one, every
+  // `bundleIntervalMinutes`, all cancelled together once the challenge is solved.
+  bundleCount: 3,
+  bundleIntervalMinutes: 5,
   nextFireAt: null
 };
 
@@ -121,6 +125,61 @@ export function findFirstEventOn(schedule, date) {
 
 export function findFirstEventTomorrow(schedule, now = new Date()) {
   return findFirstEventOn(schedule, new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1));
+}
+
+// ── Background (native) schedule ─────────────────────────────────────────
+
+// iOS keeps at most 64 pending local notifications per app; stay well below.
+export const MAX_NATIVE_ALARM_NOTIFICATIONS = 48;
+// How many days ahead a daily alarm is laid out (refreshed every app open).
+export const NATIVE_REPEAT_DAYS = 7;
+
+/** Fire times of one wake-up: the alarm itself, then the bundle's extra rings. */
+export function bundleTimes(fireAt, alarm) {
+  const count = Math.max(0, Math.min(10, Number(alarm?.bundleCount) || 0));
+  const interval = Math.max(1, Number(alarm?.bundleIntervalMinutes) || 5) * 60000;
+  const times = [fireAt];
+  for (let i = 1; i <= count; i++) times.push(fireAt + i * interval);
+  return times;
+}
+
+/**
+ * Every time the OS should ring for this alarm while the app may be closed.
+ * Returns [{ at, occurrence }] sorted by time, where `occurrence` is the
+ * wake-up the ring belongs to (so dismissing it cancels its whole bundle).
+ *
+ * - The armed alarm, plus the next days when it repeats daily.
+ * - A pending snooze.
+ * - The rest of the bundle of an alarm that is ringing and not yet solved.
+ * Rings during Shabbat (`isShabbat(date)`) are left out.
+ */
+export function buildNativeAlarmSchedule(alarm, ringing, { now = Date.now(), isShabbat = () => false } = {}) {
+  const out = [];
+  const add = (occurrence) => {
+    for (const at of bundleTimes(occurrence, alarm)) {
+      if (at <= now) continue;
+      let shabbat = false;
+      try { shabbat = !!isShabbat(new Date(at)); } catch (e) {}
+      if (!shabbat) out.push({ at, occurrence });
+    }
+  };
+
+  if (ringing && !ringing.isTest && ringing.fireAt) add(ringing.fireAt);
+  if (alarm?.snoozeUntil && alarm.snoozeUntil > now) add(alarm.snoozeUntil);
+  if (alarm?.enabled && alarm.nextFireAt) {
+    let fireAt = alarm.nextFireAt;
+    const days = alarm.repeatDaily ? NATIVE_REPEAT_DAYS : 1;
+    for (let d = 0; d < days && fireAt; d++) {
+      add(fireAt);
+      fireAt = computeNextFireAt(alarm.time, fireAt);
+    }
+  }
+
+  const seen = new Set();
+  return out
+    .sort((a, b) => a.at - b.at)
+    .filter(item => (seen.has(item.at) ? false : (seen.add(item.at), true)))
+    .slice(0, MAX_NATIVE_ALARM_NOTIFICATIONS);
 }
 
 // ── Math challenges ──────────────────────────────────────────────────────
