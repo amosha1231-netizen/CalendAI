@@ -36,6 +36,7 @@ const rateLimit = require('express-rate-limit');
 const crypto = require('crypto'); // For Lemon Squeezy webhook HMAC signature verification
 const multer = require('multer');
 const { getRequestLocation, getRequestTimeZone, isValidTimeZone } = require('./services/userLocation');
+const { getScheduleEventsForDate, isZeroDurationEvent } = require('./services/scheduleOccurrence');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }); // 10MB max
 
 dotenv.config({ path: path.join(__dirname, '.env') });
@@ -1875,6 +1876,9 @@ function findFreeSlotsForDay(schedule, dayName, locationId, dayEventsOverride = 
   const currentMin = dateISO ? Number(part('hour')) * 60 + Number(part('minute')) : getCurrentMinutes();
   
   const busySlots = dayEvents
+    // Reminders are stored with endTime === startTime; the midnight-crossing
+    // fix below would otherwise turn them into a 24h block.
+    .filter(e => !isZeroDurationEvent(e))
     .map(e => {
       let start = timeToMinutes(e.startTime);
       let end = timeToMinutes(e.endTime);
@@ -1934,7 +1938,11 @@ app.get('/api/schedule/free-slots', async (req, res) => {
     
     const dateISO = req.query.date;
     const actualDay = dateISO ? ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][new Date(`${dateISO}T00:00:00Z`).getUTCDay()] : day === 'Today' ? getTodayDayName() : day;
-    const dayEvents = [...(schedule[actualDay] || [])].filter(event => !dateISO || !event.targetDate || event.targetDate === dateISO);
+    const freeSlotsTimeZone = resolveUserLocation(locationId)?.timezone || 'Asia/Jerusalem';
+    const todayISO = new Intl.DateTimeFormat('en-CA', { timeZone: freeSlotsTimeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+    const dayEvents = dateISO
+      ? getScheduleEventsForDate(schedule, dateISO, todayISO)
+      : (schedule[actualDay] || []).filter(event => !isZeroDurationEvent(event));
     let googleCalendarConnected = false;
     if (dateISO && mongoose.Types.ObjectId.isValid(userId)) {
       try {
