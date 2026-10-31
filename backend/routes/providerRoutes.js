@@ -341,8 +341,8 @@ router.put('/me', async (req, res) => {
     if (availability !== undefined) {
       update['providerProfile.availability'] = availability.map(r => ({
         day: r.day,
-        startTime: r.startTime,
-        endTime: r.endTime
+        startTime: r.startTime.trim().slice(0, 20),
+        endTime: r.endTime.trim().slice(0, 20)
       }));
     }
 

@@ -269,6 +269,38 @@ test('PUT /me: an oversized service color is truncated to 20 chars before it rea
   }
 });
 
+// timeToMinutes()'s AM/PM regex is un-anchored (matches the pattern
+// anywhere in the string), so a huge garbage string with a valid time
+// embedded in it passes the startMin/endMin validation above untouched —
+// startTime/endTime had no length cap at all, unlike locationId/color.
+test('PUT /me: oversized availability startTime/endTime are truncated to 20 chars before the DB write', async (t) => {
+  const userId = new mongoose.Types.ObjectId();
+  let capturedUpdate = null;
+  t.mock.method(User, 'findByIdAndUpdate', (id, update) => {
+    capturedUpdate = update;
+    return { select: () => ({ lean: async () => ({ providerProfile: {} }) }) };
+  });
+  const { server, base } = startApp(freshProviderRoutes(), { userId });
+  try {
+    const res = await fetch(`${base}/api/providers/me`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        availability: [{
+          day: 'Monday',
+          startTime: '09:00 AM' + 'x'.repeat(500),
+          endTime: '05:00 PM' + 'y'.repeat(500)
+        }]
+      })
+    });
+    assert.equal(res.status, 200);
+    const saved = capturedUpdate.$set['providerProfile.availability'][0];
+    assert.equal(saved.startTime.length, 20);
+    assert.equal(saved.endTime.length, 20);
+  } finally {
+    server.close();
+  }
+});
+
 // ── GET /api/providers/me ──
 // Nothing else in test/ exercises this route: providerProfile.test.js only
 // unit-tests mapServicesForSave(), and PUT /me above never calls GET /me.
