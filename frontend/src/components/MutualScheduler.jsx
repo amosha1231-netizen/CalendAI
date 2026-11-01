@@ -94,7 +94,21 @@ export default function MutualScheduler({ lang, t, locationId, onClose, onFallba
     return () => { try { document.removeEventListener('keydown', onKey); } catch (e) {} };
   }, [onClose, confirming, lookupLoading]);
 
+  // Bumped on every call so a late-arriving response from a superseded
+  // session (e.g. the user went back via the X button or Escape and started
+  // a new session with a different invitee before the previous session's
+  // availability fetch resolved) can't overwrite the slot list with stale
+  // data from the abandoned session — same "latest request wins" guard
+  // ProviderDirectory.jsx's requestRef / ProviderBookingView.jsx's
+  // slotsRequestRef already use for this exact shape, just not yet applied
+  // here. Without it, picking a stale slot still can't double-book (the
+  // backend's /confirm always re-verifies against the real session's own
+  // host/invitee), but the UI would silently show the wrong person's
+  // mutual availability.
+  const availabilityRequestRef = useRef(0);
+
   const fetchAvailability = useCallback(async (sid) => {
+    const requestId = ++availabilityRequestRef.current;
     setAvailabilityLoading(true);
     setAvailabilityError("");
     // Clear any slots from a previous fetch (e.g. the pre-conflict list a
@@ -109,12 +123,14 @@ export default function MutualScheduler({ lang, t, locationId, onClose, onFallba
         credentials: "include"
       });
       const data = await res.json();
+      if (requestId !== availabilityRequestRef.current) return;
       if (!res.ok) throw new Error(data.error || "Failed to load mutual availability.");
       setDays(data.days || []);
     } catch (err) {
+      if (requestId !== availabilityRequestRef.current) return;
       setAvailabilityError(err.message);
     } finally {
-      setAvailabilityLoading(false);
+      if (requestId === availabilityRequestRef.current) setAvailabilityLoading(false);
     }
   }, []);
 

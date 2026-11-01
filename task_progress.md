@@ -992,6 +992,71 @@ route files (all re-confirmed correct, no regression).
 
 No ambiguous UX decision or open question for the human this run.
 
+## 2026-11-01 run notes (eighteenth overall, second run same day)
+Fresh clone, so `npm install` in both `frontend/` and `backend/` first. Baseline
+before this run's fix: `npm run build` (frontend) clean; `node --test`
+(backend) 242/258 pass, 16 known `fastdl.mongodb.org` sandbox-network
+failures confirmed by error text (not regressions) — see AGENTS.md.
+Re-checked task_progress.md items 1-5: all remain checked off, nothing left
+unchecked there.
+
+Delegated an eighteenth independent adversarial review (same 10 mutual/
+provider files + wiring, explicit instructions not to re-derive any of the
+bug classes already fixed/verified across the prior 17 rounds, asking for
+fresh angles) to a sub-agent. It found one new, previously-missed bug,
+confined to `frontend/src/components/MutualScheduler.jsx`:
+
+**`fetchAvailability` had no request-staleness guard, letting an abandoned
+session's late-arriving availability response overwrite the slot grid being
+shown for a brand-new session.** `fetchAvailability(sid)` is called from
+`handleFindMutualTime` (after creating a new session) and from
+`handleConfirm`'s 409 branch — but unlike the identical "fetch whatever is
+currently selected" shape in `ProviderDirectory.jsx`'s `requestRef` and
+`ProviderBookingView.jsx`'s `slotsRequestRef` (added round 12 for this exact
+bug class), it had no mechanism to drop a superseded call's response.
+Trigger: look up invitee A (session1 created, `fetchAvailability(session1)`
+fires, slow network), close back to the email step, look up invitee B
+(session2 created, resolves first), then session1's stale response arrives
+and unconditionally overwrites the grid with person A's availability while
+`sessionId` state still correctly points at session2. Display-only — the
+backend's `/sessions/:id/confirm` always re-verifies the chosen window
+against the real `claimedSession.hostId`/`inviteeId`, so no double-booking
+risk — but a genuine, user-triggerable instance of the same "stale request
+overwrites a newer one" class already fixed twice elsewhere on this branch.
+
+Fixed by adding a monotonically-incrementing `availabilityRequestRef`
+(mirroring the sibling components' pattern) to `fetchAvailability`: captures
+a `requestId` at call start, gates every state-setting line (`setDays`,
+`setAvailabilityError`, `setAvailabilityLoading(false)`) on
+`requestId === availabilityRequestRef.current`, so only the most recently
+issued call can ever update state. No backend changes; no regression test
+added (frontend has no component test suite, consistent with every prior
+frontend-only fix on this branch). `npx vite build` clean after the fix;
+backend untouched, full suite re-run only as a sanity check (same 242/258
+baseline, same 16 known sandbox failures).
+
+The sub-agent's review also considered and ruled out: a theoretical race in
+the mutual-confirm route's cache-sync block (unreachable — no `await`
+between the completed write and the cache push, so Node's run-to-completion
+semantics close it); every cancel-vs-confirm interleaving in both route
+files once more (still correct); `winsOverlapRace`'s same-millisecond
+`_id`-string tie-break (an acceptable tie-break rule, not a bug, for an
+already-ambiguous "which simultaneous booking wins" case); the
+'select-slot' step's close button lacking a loading-guard (ruled out — its
+only in-flight operation is a non-destructive GET, now additionally covered
+by this round's own fix); a theoretical client-crafted duplicate `_id` in a
+`services[]` array on `PUT /api/providers/me` (too speculative, no concrete
+exploit, judged not worth the scope creep); and an extremely narrow
+transient-infra edge case where `rollbackCompletedSession`'s own
+`User.findById` could throw after the atomic cancel already succeeded
+(judged not worth fixing given its narrowness and the existing design's
+already-deliberate best-effort error handling around it).
+
+No other new bugs found this round — review explicitly notes the feature set
+is in a mature state after 17 prior rounds; this is the only previously
+unswept instance of an established bug class found this time. No ambiguous
+UX decision or open question for the human this run.
+
 ## 2026-10-31 run notes (sixteenth overall, fourth run same day)
 `npm install` in both `frontend/` and `backend/` (fresh clone). Baseline
 before this run's fix: `npm run build` (frontend) clean; `node --test`
