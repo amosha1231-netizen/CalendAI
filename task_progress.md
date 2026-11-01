@@ -1057,6 +1057,71 @@ is in a mature state after 17 prior rounds; this is the only previously
 unswept instance of an established bug class found this time. No ambiguous
 UX decision or open question for the human this run.
 
+## 2026-11-01 run notes (twentieth overall, fourth run same day)
+Fresh clone, so `npm install` in both `frontend/` and `backend/` first.
+Baseline before this run's fix: `npm run build` (frontend) clean;
+`node --test` (backend, default discovery — the quoted glob form finds 0
+tests, see prior notes) 242/258 pass, 16 known `fastdl.mongodb.org`
+sandbox-network failures confirmed by error text (not regressions) — see
+AGENTS.md. Re-checked task_progress.md items 1-5: all remain checked off,
+nothing left unchecked there.
+
+Delegated a twentieth independent adversarial review (same 10 mutual/
+provider files + wiring, explicit instructions not to re-derive any of the
+~25 bug classes already fixed/verified across the prior 19 rounds, asking
+for fresh angles) to a sub-agent. It found one new, previously-unreported
+issue — not a production bug, but a test that doesn't exercise the code
+path its own comment claims to:
+
+**`backend/test/mutualBooking.test.js`'s "cancelling a confirmed booking
+with a synced calendar event frees the slot for re-booking" test cancelled
+the booking via `confirmed.status = 'cancelled'; await confirmed.save();`,
+but the real route (`POST /bookings/:id/cancel`,
+`backend/routes/providerRoutes.js:421-425`) cancels via an atomic
+`findOneAndUpdate({_id, status:{$ne:'cancelled'}}, {$set:{status:
+'cancelled', activeSlot:false}})` specifically so a concurrent confirm can't
+win a lost-update race, and `findOneAndUpdate` bypasses
+`ProviderBookingSchema`'s `pre('save')` hook that otherwise auto-derives
+`activeSlot` from `status`. `.save()` runs that hook and recomputes
+`activeSlot` correctly regardless of whether the route's own explicit
+`activeSlot: false` is present — so this test would keep passing even if a
+future edit dropped that field from the route's `$set`, which is exactly the
+regression this branch already shipped once (fixed in round 8, see the
+2026-10-29 "third run" notes above) and which this test's own comment claims
+to guard against. It never actually ran the hook-bypassing code path at all.
+This went unnoticed for 11+ rounds because this test file is one of the 16
+permanently blocked in this sandbox by the `mongodb-memory-server`/
+`fastdl.mongodb.org` network restriction — nobody running this branch has
+been able to execute it to notice the mismatch between its comment and its
+code.
+
+Fixed by replacing the `.save()` call with the same
+`findOneAndUpdate({_id, status:{$ne:'cancelled'}}, {$set:{status:
+'cancelled', activeSlot:false}})` shape the real route uses, so the test now
+actually exercises the hook-bypass path and would catch a future regression
+of the round-8 bug class. `node --check` passes on the edited file. Could not
+run this specific test in this sandbox (per AGENTS.md's known limitation —
+treat it as a live regression check once a future run has real network
+access to `fastdl.mongodb.org`), but traced the logic by hand: `activeSlot:
+false` after the update excludes the cancelled document from the unique
+partial index (`{activeSlot: true}`), so the subsequent
+`ProviderBooking.create` for the same slot succeeds exactly as before: same
+assertion, same expected outcome, now reached via the real route's actual
+write shape instead of a shape that happens to produce the same result for a
+different reason.
+
+Full suite after the fix: 242/258 pass, same 16 known sandbox-network
+failures (no test count change — one existing test's body changed, none
+added/removed). `npm run build` (frontend) clean (no frontend code touched).
+
+The sub-agent's review also re-traced `mutualAvailability.js`'s day-window/
+Shabbat guards, both route files' atomic claim/confirm/cancel skeletons,
+`winsOverlapRace`, `googleCalendar.js`'s DST-converging `zonedDateTime`, and
+all four frontend components' stale-closure/disabled-guard patterns — all
+re-confirmed correct, nothing else new found.
+
+No ambiguous UX decision or open question for the human this run.
+
 ## 2026-11-01 run notes (nineteenth overall, third run same day)
 Fresh clone, so `npm install` in both `frontend/` and `backend/` first.
 Baseline before this run's fix: `npm run build` (frontend) clean;

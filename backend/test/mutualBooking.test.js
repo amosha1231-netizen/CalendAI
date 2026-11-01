@@ -269,10 +269,16 @@ test('provider booking: cancelling a confirmed booking with a synced calendar ev
   );
   assert.equal(confirmed.googleEventId, 'gcal-evt-123', 'googleEventId must round-trip so a later cancel can delete the right calendar event');
 
-  // Mirrors what POST /api/providers/bookings/:id/cancel does once it has
-  // deleted the calendar event and pulled the schedule entry.
-  confirmed.status = 'cancelled';
-  await confirmed.save();
+  // Mirrors the real route's atomic update (findOneAndUpdate, not .save())
+  // once it has deleted the calendar event and pulled the schedule entry.
+  // findOneAndUpdate bypasses the schema's pre('save') hook that recomputes
+  // activeSlot, so the route sets activeSlot explicitly in the same $set —
+  // using .save() here instead would pass even if that explicit field were
+  // dropped from the route, since .save() re-derives activeSlot on its own.
+  await ProviderBooking.findOneAndUpdate(
+    { _id: confirmed._id, status: { $ne: 'cancelled' } },
+    { $set: { status: 'cancelled', activeSlot: false } }
+  );
 
   const rebooked = await ProviderBooking.create(providerBookingDoc({ providerId, status: 'processing' }));
   assert.ok(rebooked._id, 'the slot must be bookable again once the confirmed booking is cancelled');
