@@ -40,7 +40,7 @@ export default function ProviderProfileEditor({ lang, user, onClose, onBookingCa
   const [bookings, setBookings] = useState([]);
   const [bookingsLoading, setBookingsLoading] = useState(false);
   const [bookingsError, setBookingsError] = useState("");
-  const [cancellingId, setCancellingId] = useState(null);
+  const [cancellingIds, setCancellingIds] = useState(() => new Set());
 
   const getToken = () => {
     try {
@@ -109,7 +109,7 @@ export default function ProviderProfileEditor({ lang, user, onClose, onBookingCa
   }, [onClose, saving]);
 
   const handleCancelBooking = async (bookingId) => {
-    setCancellingId(bookingId);
+    setCancellingIds(prev => new Set(prev).add(bookingId));
     try {
       const token = getToken();
       const res = await fetch(`${API_BASE}/api/providers/bookings/${bookingId}/cancel`, {
@@ -126,7 +126,11 @@ export default function ProviderProfileEditor({ lang, user, onClose, onBookingCa
     } catch (err) {
       setBookingsError(err.message);
     } finally {
-      setCancellingId(null);
+      setCancellingIds(prev => {
+        const next = new Set(prev);
+        next.delete(bookingId);
+        return next;
+      });
     }
   };
 
@@ -412,11 +416,11 @@ export default function ProviderProfileEditor({ lang, user, onClose, onBookingCa
                       </div>
                       <button
                         onClick={() => handleCancelBooking(b._id)}
-                        disabled={cancellingId === b._id}
+                        disabled={cancellingIds.has(b._id)}
                         className="shrink-0 p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg disabled:opacity-50"
                         title={lang === "he" ? "בטל הזמנה" : "Cancel booking"}
                       >
-                        {cancellingId === b._id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Ban className="w-4 h-4" />}
+                        {cancellingIds.has(b._id) ? <Loader2 className="w-4 h-4 animate-spin" /> : <Ban className="w-4 h-4" />}
                       </button>
                     </div>
                   ))}

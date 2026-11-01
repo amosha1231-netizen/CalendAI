@@ -1057,6 +1057,65 @@ is in a mature state after 17 prior rounds; this is the only previously
 unswept instance of an established bug class found this time. No ambiguous
 UX decision or open question for the human this run.
 
+## 2026-11-01 run notes (nineteenth overall, third run same day)
+Fresh clone, so `npm install` in both `frontend/` and `backend/` first.
+Baseline before this run's fix: `npm run build` (frontend) clean;
+`node --test "test/**/*.test.js"` (backend) 242/258 pass, 16 known
+`fastdl.mongodb.org` sandbox-network failures confirmed by error text (not
+regressions) — see AGENTS.md. Re-checked task_progress.md items 1-5: all
+remain checked off, nothing left unchecked there.
+
+Delegated a nineteenth independent adversarial review (same 10 mutual/
+provider files + wiring, explicit instructions not to re-derive any of the
+bug classes already fixed/verified across the prior 18 rounds, asking for
+fresh angles) to a sub-agent. It found one new, previously-missed bug,
+confined to `frontend/src/components/ProviderProfileEditor.jsx`:
+
+**`cancellingId` was a single scalar tracking in-flight-cancel state across
+a *list* of bookings, so starting a second cancel silently re-enabled an
+unrelated, still-in-flight first cancel's button.** The "Upcoming bookings"
+list renders one cancel button per booking, each gated with
+`disabled={cancellingId === b._id}` and a spinner on the same condition. A
+provider cancelling booking A (slow network) could, while A's request was
+still outstanding, click "Cancel" on a different booking B — which
+overwrote `cancellingId` to B's id, instantly re-enabling A's button and
+swapping its spinner back to the plain icon even though A's own request
+hadn't resolved yet. A provider seeing A's button look un-clicked could
+click it again, firing a second concurrent cancel for A. The backend route
+is already atomic/idempotent (`findOneAndUpdate({_id, status:{$ne:
+'cancelled'}})`), so this caused no server-side corruption — the duplicate
+request just gets `{ok:true, alreadyCancelled:true}` — but it's a genuine,
+user-triggerable misleading-UI-state bug, and the one place in scope that
+tracks in-flight state for a list of concurrently-actionable items with a
+single scalar instead of a set (every other in-scope component only ever
+has one "current" item on screen, so their single-scalar flags don't have
+this problem).
+
+Fixed by changing `cancellingId` (single id) to `cancellingIds` (a `Set`),
+adding the booking's id to the set when its cancel starts and removing it
+in the `finally` block, with both the button's `disabled` and the
+spinner/icon condition switched from `cancellingId === b._id` to
+`cancellingIds.has(b._id)`. This lets any number of bookings show their own
+independent in-flight state concurrently. No backend changes; no
+regression test added (frontend has no component test suite, consistent
+with every prior frontend-only fix on this branch). `npx vite build` clean
+after the fix; backend untouched, full suite re-run only as a sanity check
+(same 242/258 baseline, same 16 known sandbox failures).
+
+The sub-agent's review also re-walked both route files end to end (every
+previously-fixed injection/type-guard/atomicity/cache-sync fix, all still
+correct), both models, `googleCalendar.js`/`mutualAvailability.js`
+(token-refresh, freebusy fail-closed, DST/Shabbat guards), and specifically
+traced a fresh scenario not in prior notes — two different `MutualBooking`
+sessions sharing a common party (host in one, invitee in the other)
+confirmed concurrently for overlapping times — and confirmed the
+`scheduleRevision` optimistic-concurrency loser's rollback cleanly deletes
+both of its own just-inserted Google Calendar events and resets to
+`active`, so no persistent double-booking survives; not a bug. Also skimmed
+all mutual/provider test files for skipped tests or placeholder assertions
+— none found. No ambiguous UX decision or open question for the human this
+run.
+
 ## 2026-10-31 run notes (sixteenth overall, fourth run same day)
 `npm install` in both `frontend/` and `backend/` (fresh clone). Baseline
 before this run's fix: `npm run build` (frontend) clean; `node --test`
