@@ -218,7 +218,7 @@ export default function ProviderProfileEditor({ lang, user, onClose, onBookingCa
               <span className="text-sm font-medium text-gray-900 dark:text-white">
                 {lang === "he" ? "הצג אותי בספרייה הציבורית ואפשר הזמנות" : "List me in the public directory & accept bookings"}
               </span>
-              <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} className="w-5 h-5 accent-indigo-600" />
+              <input type="checkbox" checked={enabled} disabled={saving} onChange={(e) => setEnabled(e.target.checked)} className="w-5 h-5 accent-indigo-600" />
             </label>
 
             {/* Business info */}
@@ -226,28 +226,32 @@ export default function ProviderProfileEditor({ lang, user, onClose, onBookingCa
               <input
                 type="text"
                 value={businessName}
+                disabled={saving}
                 onChange={(e) => setBusinessName(e.target.value)}
                 placeholder={lang === "he" ? "שם העסק / שלך" : "Business / your name"}
-                className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-xl text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-xl text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
               />
               <textarea
                 value={bio}
+                disabled={saving}
                 onChange={(e) => setBio(e.target.value)}
                 placeholder={lang === "he" ? "ספר קצת על השירות שלך..." : "Tell clients about your service..."}
                 rows={2}
-                className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-xl text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+                className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-xl text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none disabled:opacity-60"
               />
               <select
                 value={category}
+                disabled={saving}
                 onChange={(e) => setCategory(e.target.value)}
-                className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-xl text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-xl text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
               >
                 {CATEGORY_OPTIONS.map(c => <option key={c} value={c}>{categoryLabels[c]}</option>)}
               </select>
               <select
                 value={locationId}
+                disabled={saving}
                 onChange={(e) => setLocationId(e.target.value)}
-                className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-xl text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-xl text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
               >
                 {locations.length === 0 && (
                   <option value={locationId || 'jerusalem'}>{locationId || 'jerusalem'}</option>

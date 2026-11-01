@@ -933,6 +933,65 @@ touched).
 
 No ambiguous UX decision or open question for the human this run.
 
+## 2026-11-01 run notes (seventeenth overall)
+Fresh clone, so `npm install` in both `frontend/` and `backend/` first. Baseline
+before this run's fix: `npm run build` (frontend) clean; `node --test
+"test/**/*.test.js"` (backend) 242/258 pass, 16 known `fastdl.mongodb.org`
+sandbox-network failures confirmed by error text (not regressions) — see
+AGENTS.md.
+
+Re-checked task_progress.md items 1-5 at the top of this file: all remain
+checked off and have been directly re-verified against current code by
+numerous prior runs (`setInputText("")` clearing immediately in
+`handleParse`, `multer` + `/api/parse-image` + `parseImageWithVision` fully
+wired both backend and frontend). Nothing left unchecked there.
+
+Delegated a seventeenth independent adversarial review (same 10 mutual/
+provider files + wiring, explicit instructions not to re-derive any of the
+bug classes already fixed/verified across the prior 16 rounds, asking for
+fresh angles) to a sub-agent. It found one new, previously-missed bug,
+confined to `frontend/src/components/ProviderProfileEditor.jsx`:
+
+**The save-in-flight field-disabling fix from the 2026-10-30 run only
+covered the services/availability rows, never the profile's top-level
+fields.** While `saving === true`, the "List me in the public directory"
+checkbox and the `businessName`/`bio`/`category`/`locationId`
+inputs/selects (lines ~217-258) had no `disabled={saving}` guard, unlike
+every service/availability field a few lines below them. `handleSave`'s PUT
+body is captured synchronously when the request starts; its response
+handler only reconciles `services`/`availability` from the server echo, never
+these top-level fields. So a user who kept typing in `businessName` (or
+flipped the directory-listing toggle) while the save round-trip was still in
+flight would have that edit silently never sent — yet `setSaved(true)` still
+fires the "Saved!" checkmark, falsely confirming success while the database
+still holds the pre-edit value. Same "mutation race during an in-flight
+save" class already fixed for this exact component's services/availability
+subsection, just never extended to these five fields.
+
+Fixed by adding `disabled={saving}` to the checkbox and all four
+business-info inputs/selects, plus `disabled:opacity-60` to their className
+so the disabled state is visible (mirroring the existing visual pattern used
+elsewhere on this branch for disabled form controls). No backend changes;
+no regression test added (frontend has no component test suite, consistent
+with every prior frontend-only fix on this branch). `npx vite build` clean
+after the fix; backend untouched, full suite re-run only as a sanity check
+(same 242/258 baseline, same 16 known sandbox failures).
+
+The sub-agent's review also tried and ruled out several fresh angles as
+non-bugs: missing `credentials:"include"` on fetches in
+`ProviderBookingView.jsx`/`ProviderDirectory.jsx` (moot — auth is
+Bearer-token based, not cookie-based); `ProviderDirectory`'s
+`onSelectProvider` leaving `showProviderDirectory=true` while opening
+`ProviderBookingView` (intentional stacked-modal UX); route-registration
+order between `/me`, `/my-bookings`, `/:id` in `providerRoutes.js` (Express
+matches by registration order, already safe); `zonedDateTime`'s DST
+convergence and GMT-offset parsing in `googleCalendar.js` (re-traced,
+correct); all query/body param type-guards, the atomic cancel/confirm
+skeletons, `winsOverlapRace`, and the `server.js` `app.set` wiring for both
+route files (all re-confirmed correct, no regression).
+
+No ambiguous UX decision or open question for the human this run.
+
 ## 2026-10-31 run notes (sixteenth overall, fourth run same day)
 `npm install` in both `frontend/` and `backend/` (fresh clone). Baseline
 before this run's fix: `npm run build` (frontend) clean; `node --test`
