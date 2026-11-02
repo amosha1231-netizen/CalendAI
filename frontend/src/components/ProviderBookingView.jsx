@@ -127,19 +127,14 @@ export default function ProviderBookingView({ providerId, lang, user, onClose, o
   // Bumped (instead of calling fetchSlots directly with closure-captured
   // arguments) whenever handleConfirm needs to force a re-fetch of the
   // current slot list — a 409 from a slot someone else just took, or a
-  // post-success refresh. handleConfirm is an async closure: if the user
-  // changes the service/date picker while its request is in flight (nothing
-  // disables them, unlike the guest-detail fields below), its own
-  // selectedServiceId/selectedDate locals are the OLD, pre-change values.
-  // Calling fetchSlots(oldServiceId, oldDate) directly from there would bump
-  // slotsRequestRef to a value *newer* than the legitimate fetch the effect
-  // below already kicked off for the service/date the user actually changed
-  // to — so that stale, wrong-date fetch would win the "latest request"
-  // race and silently overwrite the slot grid with availability for a date
-  // that no longer matches what the date picker shows. Routing every forced
-  // refresh through this effect instead means it always reads whichever
-  // selectedServiceId/selectedDate are current at the moment it actually
-  // runs, never a value captured earlier in some other closure.
+  // post-success refresh. handleConfirm is an async closure, so its own
+  // selectedServiceId/selectedDate locals are a snapshot from when the
+  // request started; the service/date picker and guest-detail fields are
+  // all disabled while confirming is true, so they can't drift mid-request,
+  // but routing every forced refresh through this effect (rather than
+  // calling fetchSlots(selectedServiceId, selectedDate) directly from
+  // handleConfirm) still means it always reads whichever values are current
+  // at the moment it actually runs, never a value captured in a closure.
   const [slotsRefreshNonce, setSlotsRefreshNonce] = useState(0);
 
   useEffect(() => {
@@ -294,7 +289,8 @@ export default function ProviderBookingView({ providerId, lang, user, onClose, o
                 <select
                   value={selectedServiceId}
                   onChange={(e) => { setConfirmError(""); setSelectedServiceId(e.target.value); }}
-                  className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-xl text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  disabled={confirming}
+                  className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-xl text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
                 >
                   {(provider.services || []).map(s => (
                     <option key={s._id} value={s._id}>
@@ -315,7 +311,8 @@ export default function ProviderBookingView({ providerId, lang, user, onClose, o
                   min={minDate}
                   value={selectedDate}
                   onChange={(e) => { dateTouchedRef.current = true; setConfirmError(""); setSelectedDate(e.target.value); }}
-                  className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-xl text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  disabled={confirming}
+                  className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-xl text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
                 />
               </div>
 
@@ -383,7 +380,8 @@ export default function ProviderBookingView({ providerId, lang, user, onClose, o
                     onChange={(e) => setGuestName(e.target.value)}
                     placeholder={lang === "he" ? "שם מלא" : "Full name"}
                     maxLength={200}
-                    className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-xl text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    disabled={confirming}
+                    className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-xl text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
                   />
                   <div className="relative">
                     <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
@@ -394,7 +392,8 @@ export default function ProviderBookingView({ providerId, lang, user, onClose, o
                       placeholder={lang === "he" ? "אימייל" : "Email"}
                       dir="ltr"
                       maxLength={200}
-                      className="w-full pl-10 pr-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-xl text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      disabled={confirming}
+                      className="w-full pl-10 pr-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-xl text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
                     />
                   </div>
                   <div className="relative">
@@ -406,7 +405,8 @@ export default function ProviderBookingView({ providerId, lang, user, onClose, o
                       placeholder={lang === "he" ? "טלפון" : "Phone"}
                       dir="ltr"
                       maxLength={50}
-                      className="w-full pl-10 pr-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-xl text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      disabled={confirming}
+                      className="w-full pl-10 pr-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-xl text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
                     />
                   </div>
                   <div className="relative">
@@ -417,7 +417,8 @@ export default function ProviderBookingView({ providerId, lang, user, onClose, o
                       placeholder={lang === "he" ? "הערות (אופציונלי)" : "Notes (optional)"}
                       rows={2}
                       maxLength={2000}
-                      className="w-full pl-10 pr-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-xl text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+                      disabled={confirming}
+                      className="w-full pl-10 pr-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-xl text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60 resize-none"
                     />
                   </div>
 

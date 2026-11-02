@@ -1239,3 +1239,81 @@ all came up clean, consistent with what's already documented as
 fixed/verified.
 
 No ambiguous UX decision or open question for the human this run.
+
+## 2026-11-02 run notes (twenty-first overall)
+Fresh clone, so `npm install` in both `frontend/` and `backend/` first.
+Baseline before this run's fix: `npm run build` (frontend) clean;
+`node --test "test/**/*.test.js"` (backend) 242/258 pass, 16 known
+`fastdl.mongodb.org` sandbox-network failures confirmed by error text (not
+regressions, exactly the same 16 test names as prior runs) — see AGENTS.md.
+Re-checked task_progress.md items 1-5: all remain checked off, nothing left
+unchecked there.
+
+Delegated a twenty-first independent adversarial review (same 10 mutual/
+provider files + wiring, explicit instructions not to re-derive any of the
+~25+ bug classes already fixed/verified across the prior 20 rounds, asking
+for fresh angles — error-shape consistency, rate-limiter config, schema
+defaults/validators, floating-point/rounding, year-boundary date math,
+focus trapping/return, XSS via unescaped strings, CSRF edge cases, hand-
+tracing the sandbox-blocked tests) to a sub-agent. It found one new,
+previously-missed bug, confined to
+`frontend/src/components/ProviderBookingView.jsx`:
+
+**None of the guest-details inputs, nor the service/date pickers, were
+actually disabled while a booking confirm was in flight — contradicting the
+file's own code comment, which claimed the guest-detail fields already
+were.** `fetchSlots` unconditionally calls `setSelectedSlot(null)` every
+time it runs, and the effect that calls it re-runs whenever
+`selectedServiceId`/`selectedDate` change, with no guard on `confirming`.
+The service `<select>` and date `<input type="date">` had no `disabled`
+attribute at all, and neither did the four guest-detail inputs
+(name/email/phone/notes) below them. Trigger: pick a slot, click "Confirm
+Booking" (`confirming` becomes true, `POST /api/providers/:id/book` is
+in flight), then change the service or date while waiting — `fetchSlots`
+fires immediately and nulls `selectedSlot`, which unmounts the entire
+guest-details/Confirm-button block (including the only visible "still
+working" spinner) even though the original request is still pending
+server-side. If that original request then succeeds, the view jumps
+straight to the success screen for the *original* slot, possibly
+surprising a user who had already moved on to picking something else
+believing nothing was in progress. Low severity — no data corruption or
+double-booking risk, since the backend remains atomic/authoritative and the
+in-flight POST body was already captured by closure — but a genuine,
+reproducible UI-state bug distinct from every previously-fixed
+staleness/disabled-guard instance on this branch: round 12's
+`slotsRefreshNonce` fix addressed a different shape in this same file (a
+stale date overwriting the slot grid), not this one (the picker change
+itself clearing `selectedSlot` and collapsing the section mid-confirm).
+`MutualScheduler.jsx`'s equivalent 'confirm' step never hits this shape
+because it doesn't render the pickers at all during confirm.
+
+Fixed by adding `disabled={confirming}` (plus `disabled:opacity-60`
+styling, mirroring `ProviderProfileEditor.jsx`'s established pattern) to
+the service select, the date input, and all four guest-detail inputs — this
+alone prevents the trigger, since the picker can no longer change (and thus
+can't fire `fetchSlots`/`setSelectedSlot(null)`) while a confirm is
+outstanding. Also corrected the `slotsRefreshNonce` comment, which had
+claimed the guest-detail fields were "unlike the... picker" already
+disabled during confirm — they were not, before this fix — so the comment
+now accurately describes the post-fix state instead of a state that never
+actually existed. No backend changes; no regression test added (frontend
+has no component test suite, consistent with every prior frontend-only fix
+on this branch). `npm run build` (frontend) clean after the fix; backend
+untouched, so the backend suite was not re-run beyond this run's own
+baseline check above.
+
+The sub-agent's review also tried several fresh angles that came up clean,
+no action needed: rate-limiter config (`trust proxy = 1` is correctly
+scoped, not a bypass), Mongoose schema defaults/validators not yet
+inspected (`ProviderBooking.guestName`/`price`/`duration` have no
+schema-level `maxlength`/`max`, but all are already bounded at the route
+level, not exploitable), floating-point/rounding in duration math (bounds-
+checked before rounding), year-boundary/leap-year date math in
+`getMutualFreeSlots` (`Date.UTC`/offset arithmetic handles month/year
+rollover correctly), and focus trapping/focus-return-on-close (absent in
+all four frontend components, but judged a pre-existing generic a11y gap
+not scoped to a sharper finding this round, so not reported as a separate
+item). No backend bugs found this round — all route/model/service logic
+re-confirmed correct.
+
+No ambiguous UX decision or open question for the human this run.
