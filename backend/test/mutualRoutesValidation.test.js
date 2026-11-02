@@ -502,6 +502,56 @@ test('POST /sessions/:id/confirm: the server-side race guard finding the slot no
   }
 });
 
+// isSlotMutuallyFree's own fail-closed handling (tested in
+// mutualAvailability.test.js) only covers Google answering HTTP 200 with a
+// degenerate body. If freebusy.query() itself *rejects* instead (quota,
+// API-disabled, revoked grant), the raw googleapis/OAuth error must never
+// reach the client verbatim — unlike the sibling GET /availability route's
+// catch-all, this route's outer catch forwards err.message as-is, so the
+// race-guard call itself must sanitize before that outer catch ever sees it.
+test('POST /sessions/:id/confirm: a raw rejection from the freebusy race guard (quota/auth failure, not the handled errors-field case) surfaces as a sanitized 502, not the raw Google error', async (t) => {
+  const hostId = new mongoose.Types.ObjectId();
+  const inviteeId = new mongoose.Types.ObjectId();
+  const existing = { sessionId: 'mut_x', duration: 30, locationId: 'jerusalem', hostId, inviteeId };
+  const claimedSession = { ...existing, status: 'processing' };
+
+  t.mock.method(MutualBooking, 'findOne', async () => existing);
+  t.mock.method(MutualBooking, 'findOneAndUpdate', async (filter) => {
+    if (filter.status === 'active') return claimedSession;
+    throw new Error('unexpected findOneAndUpdate filter: ' + JSON.stringify(filter));
+  });
+  const mutualUpdateOneMock = t.mock.method(MutualBooking, 'updateOne', async () => ({}));
+
+  const hostUser = { _id: hostId, email: 'host@test.com', googleAccessToken: 'tok-host' };
+  const inviteeUser = { _id: inviteeId, email: 'invitee@test.com', googleAccessToken: 'tok-invitee' };
+  t.mock.method(User, 'findById', async (id) => (String(id) === String(hostId) ? hostUser : inviteeUser));
+  const userUpdateOneMock = t.mock.method(User, 'updateOne', async () => ({ matchedCount: 1 }));
+
+  t.mock.method(mutualAvailability, 'isSlotMutuallyFree', async () => {
+    throw new Error('invalid_grant: Token has been expired or revoked. (project 123456789012, console.developers.google.com)');
+  });
+  const insertMock = t.mock.fn(async () => { throw new Error('must not insert a Google Calendar event once the race guard itself fails'); });
+  t.mock.method(google, 'calendar', () => ({ events: { insert: insertMock } }));
+
+  const { server, base } = startApp(freshMutualRoutes());
+  try {
+    const res = await fetch(`${base}/api/mutual/sessions/mut_x/confirm`, {
+      method: 'POST', headers: authed(hostId),
+      body: JSON.stringify({ date: '2099-12-01', startTime: '10:00 AM', endTime: '10:30 AM' })
+    });
+    const data = await res.json();
+    assert.equal(res.status, 502);
+    assert.equal(data.error, 'Could not verify both calendars right now. Please try again.');
+    assert.doesNotMatch(data.error, /invalid_grant|console\.developers\.google\.com|123456789012/);
+    assert.equal(insertMock.mock.callCount(), 0, 'no calendar event must be inserted once the race guard itself fails');
+    assert.equal(mutualUpdateOneMock.mock.callCount(), 1, 'the claim must be released back to active, not left stuck in processing');
+    assert.deepEqual(mutualUpdateOneMock.mock.calls[0].arguments[1], { $set: { status: 'active' } });
+    assert.equal(userUpdateOneMock.mock.callCount(), 2, 'rollback must still attempt the schedule pull on both sides (a no-op here, since neither was ever pushed)');
+  } finally {
+    server.close();
+  }
+});
+
 test('POST /sessions/:id/confirm: a Google Calendar insertion failure deletes the already-inserted host event and releases the claim back to active', async (t) => {
   const hostId = new mongoose.Types.ObjectId();
   const inviteeId = new mongoose.Types.ObjectId();

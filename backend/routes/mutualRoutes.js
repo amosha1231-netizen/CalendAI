@@ -360,9 +360,24 @@ router.post('/sessions/:id/confirm', mutualAbuseLimiter, requireAuth, async (req
 
     // Race guard: re-check the chosen window is still free on BOTH calendars
     // right before writing (the availability list the client saw may be stale).
-    const { free: stillFree, timeZone } = await isSlotMutuallyFree(host, invitee, {
-      locationId: claimedSession.locationId, date, startTime, endTime
-    });
+    // Unlike the HTTP-200-with-errors-field case (handled inside
+    // getFreeBusyForDay, which already fails closed with a safe message),
+    // freebusy.query() itself can *reject* — quota, API-disabled, or a
+    // revoked grant — raising a raw googleapis/OAuth error whose .message
+    // can contain internal Google details. Catch and replace it with the
+    // same sanitized 502 the sibling GET /availability route's outer catch
+    // already guarantees, instead of letting it fall through to this
+    // route's own outer catch, which (unlike that route's) forwards err.message
+    // verbatim to the client.
+    let stillFree, timeZone;
+    try {
+      ({ free: stillFree, timeZone } = await isSlotMutuallyFree(host, invitee, {
+        locationId: claimedSession.locationId, date, startTime, endTime
+      }));
+    } catch (freebusyErr) {
+      console.error('Mutual confirm freebusy check error:', freebusyErr.message);
+      throw Object.assign(new Error('Could not verify both calendars right now. Please try again.'), { status: 502 });
+    }
     if (!stillFree) throw Object.assign(new Error('This time is no longer available on both calendars.'), { status: 409 });
 
     const [y, m, d] = date.split('-').map(Number);

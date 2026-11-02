@@ -1375,3 +1375,88 @@ together as a spot-check (119/119 pass).
 No ambiguous UX decision or open question for the human this run. The one
 genuine finding this round (the date-rot fragility) is already fixed,
 tested, committed, and pushed.
+
+## 2026-11-02 run notes (twenty-third overall, third run today)
+Fresh clone, so `npm install` in both `frontend/` and `backend/` first (the
+first backend `npm install` attempt this run silently no-opped — "up to
+date, audited 266 packages in 936ms" despite `node_modules/` genuinely not
+existing yet — and a `node --test` run straight after it failed to find
+`suncalc` and only discovered 35 tests instead of the full suite; a second,
+explicit `npm install` in `backend/` actually populated `node_modules`
+this time and the suite ran normally. Re-running `npm install` again if a
+test run looks truncated or throws `MODULE_NOT_FOUND` right after a
+fresh-clone install is worth trying before assuming something is broken).
+Baseline before this run's fix: `npm run build` (frontend) clean;
+`node --test` (backend) 242/258 pass, the same 16 known
+`fastdl.mongodb.org` sandbox-network failures confirmed by name against the
+list in AGENTS.md (not regressions). Re-checked task_progress.md items 1-5:
+all remain checked off, nothing left unchecked there.
+
+Delegated a twenty-third independent adversarial review (same 10 mutual/
+provider files + their test files + wiring, explicit instructions to read
+this entire file first and not re-derive any of the ~26 bug classes already
+fixed/verified across the prior 22 rounds, asking for fresh angles —
+Google API error codes, error-shape leakage, cross-flow mutual/provider
+interactions, bounds, test-assertion mismatches) to a sub-agent. It found
+one new, previously-missed bug:
+
+**`POST /api/mutual/sessions/:id/confirm` could leak a raw Google API/OAuth
+error straight into the JSON response when the race-guard's
+`freebusy.query()` call itself rejected, instead of returning the already-
+handled HTTP-200-with-degenerate-body shape.**
+(`backend/services/mutualAvailability.js`'s `getFreeBusyForDay` has solid
+fail-closed handling for Google answering 200 with a per-calendar `errors`
+array or a missing `calendars.primary` entry — both well covered by
+`mutualAvailability.test.js` — but nothing wraps the `freebusy.query()` call
+itself. A real quota/429, API-disabled/403, or revoked-grant/`invalid_grant`
+failure makes that promise *reject* with a raw googleapis/OAuth error, whose
+`.message` can contain internal Google project/console details.)
+`backend/routes/mutualRoutes.js`'s confirm route called
+`isSlotMutuallyFree(host, invitee, {...})` (which calls `getFreeBusyForDay`
+for both parties) with no try/catch of its own, unlike the Google Calendar
+*insert* call eight lines below it (already wrapped) — so a rejection here
+fell straight through to the route's outer catch, which (unlike the sibling
+`GET /sessions/:id/availability` route's catch-all, which always returns a
+fixed generic message) does `res.status(err.status || 500).json({ error:
+err.message || ... })`, forwarding the raw third-party error text verbatim
+to the authenticated caller. Not a correctness/double-booking bug — the
+claim/rollback logic still runs correctly and resets the session to
+`active` either way — purely an info-disclosure / unhandled-error-shape gap,
+but concrete and reproducible (host or invitee's Google grant revoked
+between creating and confirming a mutual session).
+
+Fixed by wrapping the `isSlotMutuallyFree` call in its own try/catch,
+mirroring the exact pattern `providerRoutes.js`'s `computeAvailableSlots`
+already uses for the identical `getFreeBusyForDay` failure mode: log the
+raw error server-side, then throw a sanitized `Object.assign(new
+Error('Could not verify both calendars right now. Please try again.'),
+{status: 502})` instead of letting the raw error reach the outer catch.
+Added one regression test to `mutualRoutesValidation.test.js` (right after
+the existing "race guard finding the slot no longer free" test, same setup)
+that mocks `isSlotMutuallyFree` to reject with a realistic
+`invalid_grant`-style message containing a fake project number and a
+`console.developers.google.com` reference, and asserts the response is a
+sanitized 502 with none of that raw text present — verified it fails
+against the pre-fix route (`git stash` on just that file: 38/39, one
+failure) and passes against the fix (39/39).
+
+Full suite after the fix: 243/259 pass (16 known sandbox-network failures,
+net +1 test this run). `npm run build` (frontend) clean (no frontend code
+touched).
+
+The sub-agent's review also tried and ruled out several fresh angles as
+either already covered or not applicable: the Google Calendar *insert*
+call's own error message (`Google Calendar insertion failed: ${gcalErr
+.message}`) technically has the same raw-message-forwarding shape, but is a
+pre-existing, 22-rounds-unflagged pattern already explicitly reasoned about
+in round 12's notes (Google Calendar partial-failure/rollback ordering) —
+left as-is rather than opportunistically widening this run's fix beyond the
+one concrete finding handed in; cross-flow races between a `MutualBooking`
+confirm and a `ProviderBooking` confirm for the same two users (no shared
+state between the two models beyond the `User.schedule` cache, already
+covered by round 11's cache-pull-on-cancel fix); provider-directory
+pagination edge cases (none — the route has no pagination); array/object
+bounds on every remaining mutual/provider field (all already
+`typeof`/`String()`/`Number()`-guarded per rounds 10, 14-16).
+
+No ambiguous UX decision or open question for the human this run.
