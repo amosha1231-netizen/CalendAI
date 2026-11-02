@@ -1317,3 +1317,61 @@ item). No backend bugs found this round — all route/model/service logic
 re-confirmed correct.
 
 No ambiguous UX decision or open question for the human this run.
+
+## 2026-11-02 run notes (twenty-second overall, second run today)
+Fresh clone, so `npm install` in both `frontend/` and `backend/` first.
+Baseline `node --test` (backend, no args — the quoted glob finds 0 tests):
+**242/258 pass, 18 fail** — 2 more than the known 16 sandbox-network
+failures. Diffed the failure list against the known set and found the 2
+extra were real `testCodeFailure` assertion failures (not the known
+`fastdl.mongodb.org` download-403 `hookFailed` errors), both in
+`test/providerGoogleAvailability.test.js`.
+
+**Root cause: date-rot, not a product bug.** That file hardcodes
+`MONDAY = '2026-11-02'` and `FRIDAY = '2026-11-06'` as fixture dates chosen
+to be "safely in the future" when the file was written (per its own
+comment, relative to a "today" of 2026-10-16), and never freezes the
+clock. Today's real date reached `2026-11-02` (this run), so
+`computeAvailableSlots`' own "never offer an already-started slot"
+same-day cutoff (`routes/providerRoutes.js`, keyed off the real wall
+clock) started filtering the 09:00-12:00 fixture slots against whatever
+the actual time-of-day happened to be when the suite ran, breaking the
+`slots.length === 6` / `=== 5` assertions. Confirmed by error text
+(`1 !== 6`, `1 !== 5` — plain assertion failures, no download/network
+error) and by the fact every other known-failing test in the 16-member set
+still showed the `fastdl.mongodb.org` 403 `hookFailed` shape unchanged.
+
+Fixed by adding `beforeEach`/`afterEach` with
+`mock.timers.enable({ apis: ['Date'], now: ... })` /
+`mock.timers.reset()` to `providerGoogleAvailability.test.js`, freezing
+"now" to `2026-10-16T08:00:00Z` — mirroring the exact pattern already
+established in `mutualAvailability.test.js` for the same class of
+same-day-cutoff test. This isn't a one-off patch; it permanently removes
+the file's dependency on wall-clock time, so it can't go stale again the
+way it just did. Verified `node --test test/providerGoogleAvailability.test.js`
+is 5/5 green, then reran the full suite: back to the expected 242/258
+(16/258 failing, all confirmed by error text to be the known sandbox
+limitation). `npm run build` (frontend) clean, untouched by this fix.
+Committed and pushed alone (`c088232`) as its own logical change before
+starting this round's adversarial review, per this run's own instruction
+to verify build/tests pass before committing.
+
+Delegated a twenty-second independent adversarial review (same 10 mutual/
+provider files + wiring) to a sub-agent, explicitly also asking it to grep
+every `backend/test/*.test.js` file for the same wall-clock-vs-hardcoded-
+date fragility class in case other files share it. It found no new
+correctness bugs in any of the 10 files (re-walked all of them; nothing
+new after 21 prior rounds of hardening), and confirmed no other test file
+has the date-freeze gap: `mutualBooking.test.js` /
+`providerRoutesValidation.test.js` / `mutualProviderModels.test.js` either
+use far-future dates as inert fixture data never compared to the real
+clock, or already freeze time via `mock.timers.enable`
+(`providerRoutesValidation.test.js` lines 804/915/972); `reminders.test.js`
+/ `scheduleOccurrence.test.js` / `routineStats.test.js` take `now`/`today`
+as explicit function arguments rather than reading the real clock, so
+they're immune by construction. Ran the four most relevant test files
+together as a spot-check (119/119 pass).
+
+No ambiguous UX decision or open question for the human this run. The one
+genuine finding this round (the date-rot fragility) is already fixed,
+tested, committed, and pushed.
