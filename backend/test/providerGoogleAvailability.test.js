@@ -17,12 +17,28 @@
 // Run with: npm test  (from backend/)
 // ──────────────────────────────────────────────
 const assert = require('node:assert/strict');
-const { test } = require('node:test');
+const { test, mock, beforeEach, afterEach } = require('node:test');
 const mongoose = require('mongoose');
 
 const mutualAvailability = require('../services/mutualAvailability');
 const ProviderBooking = require('../models/ProviderBooking');
 const { computeAvailableSlots } = require('../routes/providerRoutes');
+
+// computeAvailableSlots clips today's slots to the current wall-clock time
+// (its "never offer an already-started slot" guard). This suite's MONDAY/
+// FRIDAY fixture dates are only "safely in the future" relative to whatever
+// day the suite happens to run on, so without freezing "now" these tests
+// silently go flaky — and eventually fail outright — the moment the real
+// calendar catches up to them, hitting the same-day cutoff mid-test-run
+// depending only on the time of day. Freeze "now" to well before either
+// fixture date, mirroring mutualAvailability.test.js's established pattern,
+// so these stay pure day-of-week/Shabbat-cutoff tests forever.
+beforeEach(() => {
+  mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-16T08:00:00Z').getTime() });
+});
+afterEach(() => {
+  mock.timers.reset();
+});
 
 // Mirrors providerRoutes.js' req.app.get('timeToMinutes') (server.js), which
 // computeAvailableSlots reads off the request rather than importing directly.
