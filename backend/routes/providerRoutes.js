@@ -779,7 +779,21 @@ router.post('/:id/book', bookLimiter, async (req, res) => {
     if (provider.googleAccessToken && syncEventToGoogleCalendar) {
       const syncResult = await syncEventToGoogleCalendar(provider._id.toString(), eventToPersist, eventToPersist.location);
       if (!syncResult.success) {
-        throw Object.assign(new Error(`הוספה ליומן Google נכשלה: ${syncResult.error || 'שגיאה לא ידועה'}`), { status: 502 });
+        // syncEventToGoogleCalendar (server.js) returns the raw googleapis/OAuth
+        // error's own .message on failure (e.g. a quota/429, API-disabled/403 —
+        // which can name the provider's internal Google Cloud project number and
+        // a console.developers.google.com link — or a revoked-grant/invalid_grant
+        // message). This route is reachable by anonymous guests with no account
+        // of their own, so forwarding that text verbatim (as this used to do by
+        // interpolating syncResult.error into the thrown message below) would
+        // hand any booking visitor internal details about the PROVIDER's Google
+        // account. Same info-disclosure shape already closed for
+        // mutualRoutes.js's POST /sessions/:id/confirm (its isSlotMutuallyFree
+        // call) — log the raw reason server-side and reply with the same
+        // sanitized, fixed message computeAvailableSlots' own Google-fetch-
+        // failure case above already uses.
+        console.error('Provider booking Google Calendar sync failed:', syncResult.error);
+        throw Object.assign(new Error('הוספה ליומן Google נכשלה. נסה שוב.'), { status: 502 });
       }
       syncedEventId = syncResult.eventId;
       googleCalendar = { success: true, eventId: syncedEventId };

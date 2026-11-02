@@ -946,6 +946,15 @@ test('POST /:id/book: a Google Calendar sync failure after the schedule push alr
     const data = await res.json();
     assert.equal(res.status, 502);
     assert.match(data.error, /הוספה ליומן Google נכשלה/);
+    // Regression: syncEventToGoogleCalendar's raw error ("Quota exceeded" here,
+    // but in production a real googleapis/OAuth failure whose .message can
+    // name the provider's internal Google Cloud project number or a
+    // console.developers.google.com link) must never reach this response —
+    // this route is reachable by anonymous booking guests with no account of
+    // their own, unlike mutualRoutes.js's authenticated /confirm route whose
+    // analogous freebusy-check leak was already fixed. The raw reason still
+    // belongs in the server-side log only.
+    assert.doesNotMatch(data.error, /Quota exceeded/);
     assert.equal(updateOneMock.mock.callCount(), 2, '1 successful push + 1 rollback pull undoing it');
     assert.deepEqual(updateOneMock.mock.calls[1].arguments[1], { $pull: { 'schedule.Monday': { providerBookingId: createdBooking._id.toString() }, 'schedule.Today': { providerBookingId: createdBooking._id.toString() } } });
     assert.equal(deleteMock.mock.callCount(), 1, 'the booking document must still be deleted even though the failure happened after the push');

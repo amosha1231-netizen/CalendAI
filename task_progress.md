@@ -1460,3 +1460,59 @@ bounds on every remaining mutual/provider field (all already
 `typeof`/`String()`/`Number()`-guarded per rounds 10, 14-16).
 
 No ambiguous UX decision or open question for the human this run.
+
+## 2026-11-02 run notes (twenty-fourth overall, fourth run today)
+Fresh clone, so `npm install` in both `frontend/` and `backend/` first.
+Baseline: `npm run build` (frontend) clean; `node --test` (backend)
+243/259 pass, 16 known `fastdl.mongodb.org` sandbox-network failures
+(`criticalPaths.test.js`, `mutualBooking.test.js`,
+`providerRoutesValidation.test.js`'s 2 racing tests, `ownerCredits.test.js`)
+confirmed by name/error text against AGENTS.md's documented list — not
+regressions. Re-checked task_progress.md items 1-5: all remain checked,
+nothing left unchecked.
+
+Delegated a twenty-fourth independent adversarial review (same 10 mutual/
+provider files + test files + wiring, explicit instructions to read this
+entire file first and not re-derive any of the ~27 bug classes already
+fixed/verified across the prior 23 rounds) to a sub-agent. It found one
+new, previously-missed bug — the same raw-Google-error-leak shape fixed
+in round 23, but in a more severe, unauthenticated instance:
+
+**`POST /api/providers/:id/book` (the public, anonymous guest-facing
+provider-booking route) could leak a raw Google Calendar API error to the
+client.** When a provider has Google Calendar connected and the sync call
+in `syncEventToGoogleCalendar` (`backend/server.js`) fails (quota/429,
+API-disabled/403, revoked grant), it returns the raw third-party
+`error.message` as `syncResult.error`. `providerRoutes.js`'s `/:id/book`
+route interpolated that raw text directly into the message it threw
+(`` `הוספה ליומן Google נכשלה: ${syncResult.error}` ``), which its outer
+catch then forwarded verbatim in the JSON response. Round 23 closed this
+exact leak shape for `mutualRoutes.js`'s authenticated `/confirm` route;
+this instance is worse because `/:id/book` requires no authentication at
+all — any anonymous visitor booking a slot with a provider whose Google
+grant is flaky can trigger it, potentially seeing the provider's internal
+Google Cloud project number or a `console.developers.google.com` link.
+
+Fixed by mirroring the round-23 pattern exactly: log `syncResult.error`
+server-side via `console.error`, then throw the same fixed, sanitized
+message (`'הוספה ליומן Google נכשלה. נסה שוב.'`) the sibling
+`computeAvailableSlots` Google-fetch-failure path already uses, instead of
+interpolating the raw error text. Extended the existing regression test
+in `providerRoutesValidation.test.js` ("a Google Calendar sync failure
+after the schedule push already landed rolls back both the push and the
+booking") with `assert.doesNotMatch(data.error, /Quota exceeded/)`.
+Verified it fails against the pre-fix route (reproduced the leak via
+`git stash` on just that file: response was
+`הוספה ליומן Google נכשלה: Quota exceeded`) and passes after the fix.
+
+Verification: `node --check` clean on both touched files;
+`node --test test/providerRoutesValidation.test.js` 53/53 pass; full
+suite `node --test` 243/259 pass, the same 16 known sandbox-network
+failures confirmed by error text (none weakened or skipped). No frontend
+files touched, so no build-verification needed for this fix, but
+`npm run build` (frontend) was already run clean as part of this run's
+baseline.
+
+No ambiguous UX decision or open question for the human this run. The one
+genuine finding this round is fixed, tested, and will be committed and
+pushed with this run.
