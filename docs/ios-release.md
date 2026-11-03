@@ -27,6 +27,17 @@ Distribute App → App Store Connect.
   `com.amos.calendai://auth/?oauth_code=...`, which `src/utils/nativeApp.js`
   turns into the usual `/?oauth_code=...` exchange. No new Google client is
   needed: the redirect URI is still the backend's `/api/auth/google/callback`.
+- **Sign in with Apple** (guideline 4.8): on iOS only, an Apple button sits
+  above Google on every sign-in screen. `App/SignInWithApplePlugin.swift` (a
+  local plugin registered in `App/MainViewController.swift`) shows the native
+  sheet and returns Apple's identity token; the app posts it to
+  `POST /api/auth/apple`, which verifies it against Apple's keys
+  (`backend/services/appleAuth.js`, audience `com.amos.calendai`) and returns
+  the usual JWT. `App/App.entitlements` enables the capability; with automatic
+  signing Xcode adds it to the App ID the first time you sign with the team.
+  No backend env vars are needed. Accounts are matched by Apple's `sub`; an
+  existing account is linked by email only when Apple marks it verified, using
+  the same rules as Google login.
 - **CORS**: the backend always allows `capacitor://localhost` (iOS) and
   `https://localhost` (Android).
 - **Purchases**: App Store guideline 3.1.1 requires Apple in-app purchase for

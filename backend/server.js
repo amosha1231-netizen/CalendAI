@@ -28,6 +28,7 @@ const mongoose = require('mongoose');
 const ProcessedPaymentEvent = require('./models/ProcessedPaymentEvent');
 const Booking = require('./models/Booking');
 const OAuthHandoff = require('./models/OAuthHandoff');
+const { verifyAppleIdentityToken } = require('./services/appleAuth');
 const { google } = require('googleapis');
 const { createOAuth2ClientWithRefresh, buildGcalEventBody, insertEventWithOptionalMeet } = require('./services/googleCalendar');
 const fs = require('fs');
@@ -1567,6 +1568,78 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
   } catch (err) {
     console.error('Login error:', err);
     res.status(500).json({ error: 'Login failed.' });
+  }
+});
+
+/**
+ * POST /api/auth/apple
+ * Sign in with Apple from the iOS app. Body: { identityToken, givenName?, familyName? }.
+ * Apple only sends the name on the very first sign-in, so the app forwards it.
+ */
+app.post('/api/auth/apple', authLimiter, async (req, res) => {
+  let apple;
+  try {
+    apple = await verifyAppleIdentityToken(req.body?.identityToken);
+  } catch (err) {
+    console.warn('Apple sign-in token rejected:', err.message);
+    return res.status(401).json({ error: 'Apple sign-in could not be verified.' });
+  }
+
+  try {
+    const cleanName = (v) => (typeof v === 'string' ? v.trim().slice(0, 60) : '');
+    const fullName = [cleanName(req.body?.givenName), cleanName(req.body?.familyName)].filter(Boolean).join(' ');
+
+    let user = await User.findOne({ appleId: apple.sub });
+    if (!user && apple.email) {
+      const existing = await User.findOne({ email: apple.email });
+      if (existing) {
+        // Same rules as Google: only link when Apple has verified the address,
+        // and never hand over an account whose email came from Microsoft,
+        // which does not verify it.
+        if (!apple.emailVerified || (existing.microsoftId && !existing.googleId)) {
+          console.warn(`Apple login refused to link to existing account ${existing._id}`);
+          return res.status(409).json({ error: 'apple_email_in_use' });
+        }
+        existing.appleId = apple.sub;
+        if (existing.password) {
+          console.warn(`Apple login cleared the unverified password on account ${existing._id}`);
+          existing.password = undefined;
+        }
+        if (!existing.displayName && fullName) existing.displayName = fullName;
+        await existing.save();
+        user = existing;
+      }
+    }
+    if (!user) {
+      const email = apple.email
+        || `apple_${crypto.createHash('sha256').update(apple.sub).digest('hex').slice(0, 24)}@users.calendai.invalid`;
+      user = await User.create({
+        appleId: apple.sub,
+        email,
+        displayName: fullName || (apple.email && !apple.isPrivateEmail ? apple.email.split('@')[0] : 'CalendAI user'),
+        photo: ''
+      });
+    }
+
+    const token = jwt.sign(
+      { id: user._id.toString(), email: user.email, displayName: user.displayName },
+      JWT_SECRET,
+      { expiresIn: '30d' }
+    );
+    return res.json({
+      ok: true,
+      token,
+      user: {
+        id: user._id,
+        email: user.email,
+        displayName: user.displayName,
+        aiCredits: user.aiCredits,
+        isPro: user.isPro
+      }
+    });
+  } catch (err) {
+    console.error('Apple sign-in error:', err);
+    return res.status(500).json({ error: 'Apple sign-in failed.' });
   }
 });
 

@@ -17,6 +17,7 @@ const providerAvailabilitySchema = new mongoose.Schema({
 const userSchema = new mongoose.Schema({
   googleId: { type: String, sparse: true },
   microsoftId: { type: String, sparse: true },
+  appleId: { type: String, index: { unique: true, sparse: true } }, // Sign in with Apple `sub`
   email: { type: String, required: true, unique: true, lowercase: true },
   password: { type: String },
   displayName: { type: String },
