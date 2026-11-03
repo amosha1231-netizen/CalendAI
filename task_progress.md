@@ -1560,3 +1560,68 @@ open question for the human. Twenty-five rounds across six days have now
 independently re-read this feature set; the mutual/provider hardening and
 all five top-of-file task_progress items remain in the same mature,
 fully-verified state.
+
+## 2026-11-03 run notes (twenty-sixth overall, second run today)
+`npm install` in both `frontend/` and `backend/` (fresh clone). Baseline:
+`npm run build` (frontend) clean; `node --test "test/**/*.test.js"`
+(backend) 243/259 pass, the same 16 known `fastdl.mongodb.org`
+sandbox-network failures confirmed by name/error text against AGENTS.md's
+documented list (`criticalPaths.test.js` tests 1-4, `mutualBooking.test.js`'s
+racing tests, 3 `providerRoutesValidation.test.js` racing tests,
+`ownerCredits.test.js` tests) — not regressions. Re-checked task_progress.md
+items 1-5: all remain checked off, nothing left unchecked there.
+
+Delegated a twenty-sixth independent adversarial review (same 10 mutual/
+provider files + test files + wiring, explicit instructions not to
+re-derive any of the ~29 bug classes already fixed/verified across the
+prior 25 rounds, asking for fresh angles) to a sub-agent. Unlike every prior
+round, which reviewed each in-scope component in isolation, it looked at how
+`App.jsx` *composes* them together and found one new, previously-missed bug
+confined to that composition:
+
+**Escape key closed two modal layers at once instead of one.**
+`App.jsx` keeps `ProviderDirectory` mounted (not hidden, not unmounted)
+while `ProviderBookingView` opens on top of it after a provider is
+selected — intentional, so closing the booking view returns to the
+still-populated directory list underneath. But both components
+independently attach their own `document`-level Escape `keydown` listener.
+`ProviderBookingView`'s is gated on `!confirming` (from round 14); the
+otherwise-identical listener round 14 added to `ProviderDirectory.jsx` was
+unconditional. So a single Escape press while the booking modal was open
+(and not mid-confirm) fired *both* listeners on the same keypress, closing
+both layers simultaneously and bouncing the user straight back to the
+dashboard instead of just one level back to the provider directory — a real,
+reproducible UX regression in round 14's own feature, only visible by
+tracing the two components' wiring together in `App.jsx` rather than
+reviewing either component alone, which is exactly why 25 prior per-file
+reviews missed it.
+
+Fixed by adding a `nestedModalOpen` prop to `ProviderDirectory`, gating its
+Escape handler (`if (e.key === "Escape" && !nestedModalOpen) onClose();`),
+and wiring it from `App.jsx` as `nestedModalOpen={showProviderBooking &&
+!!selectedProviderId}` — exactly mirroring the condition that actually
+mounts `ProviderBookingView` a few lines below. No backend changes. No
+regression test added (frontend has no component test suite, consistent
+with every prior frontend-only fix on this branch). `npm run build`
+(frontend) clean after the fix. Backend untouched; full suite re-run as a
+sanity check only (same 243/259 baseline, same 16 known sandbox failures).
+
+The sub-agent's review also tried and ruled out several fresh angles as
+already correct or not bugs: `mutualRoutes.js`'s confirm-route
+claim/verify/insert/persist/rollback skeleton and its leak-sanitizing
+try/catch around `isSlotMutuallyFree` under both race interleavings;
+`providerRoutes.js`'s `winsOverlapRace` and atomic cancel/confirm handling;
+`mutualAvailability.js`'s day-window/Shabbat/Friday-cutoff guards and
+`getFreeBusyForDay`'s fail-closed handling; a dead unused `dayName`
+parameter on `getLocalScheduleBusy` in `mutualAvailability.js` (confirmed
+harmless — `getScheduleEventsForDate` re-derives the day name from `isoDate`
+itself, so the unused param has no behavioral effect; not fixed, noted here
+only so a future run doesn't re-flag it); `MutualScheduler.jsx`'s
+stale-closure/disabled-guard coverage including the round-13 back-button
+fix; `ProviderBookingView.jsx`'s `slotsRefreshNonce`/stale-request-ref
+guards; `ProviderProfileEditor.jsx`'s in-flight-save field disabling and
+functional-updater state — all re-confirmed correct.
+
+No ambiguous UX decision or open question for the human this run. The one
+genuine finding this round is fixed, verified, and will be committed and
+pushed with this run.

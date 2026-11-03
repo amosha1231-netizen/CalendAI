@@ -2791,6 +2791,7 @@ function AppRoutes() {
             lang={lang}
             user={user}
             onClose={() => setShowProviderDirectory(false)}
+            nestedModalOpen={showProviderBooking && !!selectedProviderId}
             onSelectProvider={(providerId) => {
               setSelectedProviderId(providerId);
               setShowProviderBooking(true);

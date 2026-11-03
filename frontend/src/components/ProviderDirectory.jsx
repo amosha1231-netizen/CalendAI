@@ -22,7 +22,7 @@ const CATEGORIES_EN = [
   { value: "general", label: "⭐ General" }
 ];
 
-export default function ProviderDirectory({ lang, user, onClose, onSelectProvider }) {
+export default function ProviderDirectory({ lang, user, onClose, onSelectProvider, nestedModalOpen }) {
   const isRtl = lang === "he";
   const categories = lang === "he" ? CATEGORIES : CATEGORIES_EN;
 
@@ -73,11 +73,19 @@ export default function ProviderDirectory({ lang, user, onClose, onSelectProvide
     fetchProviders(searchQuery, selectedCategory);
   }, [selectedCategory, fetchProviders]);
 
+  // App.jsx keeps this component mounted (not hidden) while ProviderBookingView
+  // opens on top of it for a selected provider, so this component's own
+  // document-level Escape listener stays active the whole time that nested
+  // modal is open — alongside ProviderBookingView's own Escape listener.
+  // Without nestedModalOpen, a single Escape press while the booking modal
+  // is open (and not mid-confirm) would fire BOTH listeners and close both
+  // layers at once, bouncing the user straight back to the dashboard instead
+  // of just one level back to this directory.
   useEffect(() => {
-    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    const onKey = (e) => { if (e.key === "Escape" && !nestedModalOpen) onClose(); };
     try { document.addEventListener("keydown", onKey); } catch (e) {}
     return () => { try { document.removeEventListener("keydown", onKey); } catch (e) {} };
-  }, [onClose]);
+  }, [onClose, nestedModalOpen]);
 
   const handleSearch = () => fetchProviders(searchQuery, selectedCategory);
   const handleKeyDown = (e) => { if (e.key === "Enter") handleSearch(); };
