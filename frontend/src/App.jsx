@@ -1606,6 +1606,15 @@ function AppRoutes() {
       setShowSendInvite(false);
       setShowManualEvent(false);
       setShowProviderDirectory(false);
+      // ProviderBookingView (stacked on top of ProviderDirectory, per
+      // onSelectProvider below) is its own independent `show*` flag, not
+      // nested under showProviderDirectory's own condition — closing the
+      // directory here alone leaves this full-screen modal mounted and
+      // visible on top of whatever screen the user just switched to via the
+      // bottom nav, since nothing else ever unsets it on a tab switch. Reset
+      // both halves of its open state, same as every other screen in this list.
+      setShowProviderBooking(false);
+      setSelectedProviderId(null);
       setShowProviderProfileEditor(false);
       setShowAlarmSettings(false);
       setShowExpenses(false);

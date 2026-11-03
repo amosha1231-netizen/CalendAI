@@ -1625,3 +1625,78 @@ functional-updater state — all re-confirmed correct.
 No ambiguous UX decision or open question for the human this run. The one
 genuine finding this round is fixed, verified, and will be committed and
 pushed with this run.
+
+## 2026-11-03 run notes (twenty-seventh overall, third run today)
+`npm install` in both `frontend/` and `backend/` (fresh clone). Baseline:
+`npm run build` (frontend) clean; `node --test` (backend, bare — the quoted
+glob finds 0 tests in this sandbox, see prior notes) 243/259 pass, the same
+16 known `fastdl.mongodb.org` sandbox-network failures confirmed by name
+against AGENTS.md's documented list (`criticalPaths.test.js` tests 1-4,
+`mutualBooking.test.js`'s racing/cancel tests 76-84, `ownerCredits.test.js`
+tests 134-136) — not regressions. Re-checked task_progress.md items 1-5:
+all remain checked off, nothing left unchecked there.
+
+Delegated a twenty-seventh independent adversarial review (same 10 mutual/
+provider files + their test files + wiring, explicit instructions to read
+this entire file first and not re-derive any of the ~30 bug classes already
+fixed/verified across the prior 26 rounds, asking for fresh angles) to a
+sub-agent. Unlike every prior round except round 26 — which looked at how
+`App.jsx` composes these components together via the Escape-key handler —
+this one looked at a different composition seam and found one new,
+previously-missed bug:
+
+**Switching bottom-nav tabs while `ProviderBookingView` was open left it
+stuck on screen, floating on top of whatever tab the user just switched
+to.** (`frontend/src/App.jsx`, `closeOpenScreens()`.) That handler fires on
+every bottom-nav tab switch and explicitly resets every other mutual/
+provider screen flag (`showProviderDirectory`, `showProviderProfileEditor`)
+— but never touched `showProviderBooking`/`selectedProviderId`, the two
+flags that mount `ProviderBookingView`, which renders as its own
+independent `fixed inset-0 z-50` overlay stacked on top of
+`ProviderDirectory` (not nested under its condition) once a provider is
+selected. `BottomNav` renders at `z-[9990]`/`z-[9985]`, well above the
+booking modal's `z-50`, so the nav stays clickable while the modal is open.
+Reachable sequence: open Provider Directory, pick a provider (booking modal
+opens on top), tap a different bottom-nav tab without using the modal's own
+close/backdrop — `closeOpenScreens()` closes the directory underneath but
+leaves the booking modal mounted and visible over the newly-selected tab's
+content. Not a double-booking/data-integrity issue (the modal's own
+close/backdrop controls still work), but the same "two independently-built
+components composed in `App.jsx`, with a cleanup path that only ever
+assumed one of them" class round 26 found for the Escape key — this time
+via the bottom-nav tab-switch cleanup path instead of a keydown listener,
+and genuinely novel: round 26's own re-check of this area confirmed only
+the Escape-key path, not this one.
+
+Fixed by adding `setShowProviderBooking(false); setSelectedProviderId(null);`
+to `closeOpenScreens()`, mirroring how every other screen flag in that same
+function is unconditionally reset on tab switch (including the existing
+precedent that `ProviderProfileEditor`'s reset there is already
+unconditional despite its own `saving` in-flight state, so no new
+conditional was introduced here either). No backend changes. No regression
+test added (frontend has no component test suite, consistent with every
+prior frontend-only fix on this branch). `npm run build` (frontend) clean
+after the fix. Backend untouched; full suite re-run as a sanity check only
+(same 243/259 baseline, same 16 known sandbox failures) — independently
+re-verified by this run after the sub-agent's own report, not just taken on
+trust.
+
+The sub-agent's review also re-traced and ruled out as already-correct (no
+new findings): both route files' full atomic claim/confirm/cancel
+skeletons including `activeSlot` sync and schedule-cache pull-on-cancel,
+`winsOverlapRace`'s 3-way chain, day-window/Shabbat/Friday-cutoff guards,
+the raw-Google-error-leak sanitization in both the mutual confirm route and
+the provider book route, `MutualScheduler.jsx`'s full state machine and its
+round-13/16/18 disabled-guard and staleness-ref fixes,
+`ProviderBookingView.jsx`'s round-21 full-field disabled coverage and
+`slotsRefreshNonce` guard, `ProviderDirectory.jsx`'s round-26
+`nestedModalOpen` Escape-key fix specifically (confirming it closes a
+different path than the bottom-nav one found this round),
+`ProviderProfileEditor.jsx`'s `cancellingIds` Set and full-field
+`disabled={saving}` coverage, and the round-22 test-date-rot sweep (no
+sibling found). It also checked for any other `show*` flag omitted from
+`closeOpenScreens` the same way — found none beyond the one fixed here.
+
+No ambiguous UX decision or open question for the human this run. The one
+genuine finding this round is fixed, verified, and committed/pushed with
+this run.
