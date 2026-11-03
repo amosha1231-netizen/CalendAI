@@ -1516,3 +1516,47 @@ baseline.
 No ambiguous UX decision or open question for the human this run. The one
 genuine finding this round is fixed, tested, and will be committed and
 pushed with this run.
+
+## 2026-11-03 run notes (twenty-fifth overall)
+`npm install` in both `frontend/` and `backend/` (fresh clone). Baseline:
+`npm run build` (frontend) clean; `node --test test/*.test.js` (backend,
+explicit glob — bare `node --test` finds 0 tests in this sandbox) 243/259
+pass, 16 known `fastdl.mongodb.org` sandbox-network failures confirmed by
+name against AGENTS.md's documented list (`criticalPaths.test.js`,
+`mutualBooking.test.js`, `providerRoutesValidation.test.js`'s 2 racing
+tests, `ownerCredits.test.js`) — not regressions. Re-checked
+task_progress.md items 1-5: all remain checked off, nothing left
+unchecked there (not re-verified line-by-line this run, given how many
+direct prior re-checks are already on record above).
+
+Delegated a twenty-fifth independent adversarial review (same 10 mutual/
+provider files + their test files + wiring, explicit instructions to read
+this entire file first and not re-derive any of the ~29 bug classes
+already fixed/verified across the prior 24 rounds, asking for fresh
+angles) to a sub-agent. It reported no new bugs after a genuinely thorough
+pass — explicitly chased and ruled out, with reasoning: a fresh
+wall-clock/date-rot check across every in-scope test file's hardcoded date
+literals (traced each one that compares against the real clock; all
+either fail before reaching a date check or already freeze time via
+`mock.timers.enable`, so no sibling to round 22's bug survived); the
+`getUserSchedule()` cold-cache/wholesale-write-back risk already
+identified and deliberately left unfixed in round 12 as a legacy,
+server.js-wide, out-of-scope class (confirmed unchanged, no new
+exploitable path through these routes); the one remaining unsanitized
+`Google Calendar insertion failed: ${gcalErr.message}` in
+`mutualRoutes.js`'s confirm route, which round 23 already reasoned about
+and deliberately left as-is (narrower scope than the two leaks it fixed);
+and a re-walk of `winsOverlapRace`, the `activeSlot`/atomic-cancel/atomic-
+confirm interactions, the Shabbat/Friday/day-window guards, every
+`category`/`q`/`locationId`/`color`/`availability` type/length guard, and
+all four frontend components' disabled-guard and stale-request-ref
+coverage (`availabilityRequestRef`, `slotsRequestRef`/`slotsRefreshNonce`,
+`cancellingIds`, `requestRef`) — all re-confirmed correct. `node --check`
+clean on all 6 in-scope backend files; the 5 in-scope test files it could
+run in this sandbox: 158/158 pass.
+
+No code changes this run beyond this file. No ambiguous UX decision or
+open question for the human. Twenty-five rounds across six days have now
+independently re-read this feature set; the mutual/provider hardening and
+all five top-of-file task_progress items remain in the same mature,
+fully-verified state.
