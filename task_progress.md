@@ -1700,3 +1700,58 @@ sibling found). It also checked for any other `show*` flag omitted from
 No ambiguous UX decision or open question for the human this run. The one
 genuine finding this round is fixed, verified, and committed/pushed with
 this run.
+
+## 2026-11-03 run notes (twenty-eighth overall, fourth run today)
+`npm install` in both `frontend/` and `backend/` (fresh clone). Baseline:
+`npm run build` (frontend) clean; `node --test` (backend, bare) 243/259
+pass, the same 16 known `fastdl.mongodb.org`/mongodb-memory-server
+sandbox-network failures confirmed by exact test name against AGENTS.md's
+documented list (`criticalPaths.test.js` tests 1-4, `mutualBooking.test.js`'s
+racing/cancel tests 76-84, `ownerCredits.test.js` tests 134-136) — not
+regressions. Re-checked task_progress.md items 1-5: all remain checked off.
+
+Delegated a twenty-eighth independent adversarial review (same 10 mutual/
+provider files + test files + wiring, explicit instructions to read this
+entire file first and not re-derive any of the ~31 bug classes already
+fixed/verified across the prior 27 rounds, asking for fresh angles) to a
+sub-agent. It tried several new angles that came up clean (cross-feature
+interaction with the reminder/notification ping effect in `App.jsx` —
+provider/mutual schedule entries never set `reminderMinutesBefore` so they're
+silently and harmlessly skipped by that effect; route-mounting/middleware
+order in `server.js` — no global auth sits in front of the intentionally
+public routes; `createOAuth2ClientWithRefresh`'s dead pre-check `expiry_date`
+branch — harmless, covered by google-auth-library's own 401-triggered
+refresh regardless; DST/year-boundary math in `getMutualFreeSlots`/
+`zonedDateTime`/`isSlotMutuallyFree` — re-traced, still correct; a legacy
+`server.js`-wide date-parsing pattern in `expandEventForMonth` that is
+out-of-scope pre-existing code, not part of this feature, consistent with
+round 12's own decision not to touch it) and found one new, previously-missed
+bug:
+
+**`ProviderBookingView.jsx` and `ProviderProfileEditor.jsx` gated their
+backdrop-click-to-close during an in-flight destructive request, but never
+gated the dedicated header "X" close button — a distinct control from the
+backdrop that every prior round's "missing disabled guard" fixes (round 13's
+`MutualScheduler` back button, round 16's email-step close button, round
+21's `ProviderBookingView` pickers/guest fields) happened to leave
+unaddressed in these two specific files.** A user could click that header
+button (not the backdrop) while `POST /:id/book` or `PUT /api/providers/me`
+was in flight, unmounting the view/editor mid-request with no way to see
+whether it actually succeeded. Fixed by adding `disabled={confirming}`
+(`ProviderBookingView.jsx`) / `disabled={saving}` (`ProviderProfileEditor.jsx`)
+plus matching `disabled:opacity-50 disabled:cursor-not-allowed` styling to
+each header close button — confirmed by contrast that `MutualScheduler.jsx`
+already guards all its header buttons correctly, and that
+`ProviderDirectory.jsx`'s header button is correctly left unguarded (no
+destructive in-flight state), so the gap was isolated to these two files.
+
+No backend changes; no regression test added (frontend has no component
+test suite, consistent with every prior frontend-only fix on this branch).
+`npm run build` (frontend) clean after the fix. Backend untouched; full
+suite re-run as a sanity check only (same 243/259 baseline, same 16 known
+sandbox failures) — independently re-verified by this run, not just taken
+on the sub-agent's own report.
+
+No ambiguous UX decision or open question for the human this run. The one
+genuine finding this round is fixed, verified, and committed/pushed with
+this run.

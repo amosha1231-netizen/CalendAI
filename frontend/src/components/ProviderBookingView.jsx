@@ -245,7 +245,16 @@ export default function ProviderBookingView({ providerId, lang, user, onClose, o
               {provider.bio && <p className="text-xs text-gray-500 dark:text-gray-400 truncate">{provider.bio}</p>}
             </div>
           </div>
-          <button onClick={onClose} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full transition shrink-0">
+          {/* Disabled while confirming, mirroring the backdrop's own
+              onClick={confirming ? undefined : onClose} a few lines above —
+              without this guard a user could use this dedicated header
+              button (not the backdrop) to unmount the view mid-request,
+              leaving the in-flight POST /:id/book to land with nobody able
+              to see its success/failure (same "missing disabled guard on a
+              close control" class already fixed for MutualScheduler's
+              header buttons and this file's own pickers/guest-detail
+              fields). */}
+          <button onClick={onClose} disabled={confirming} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full transition shrink-0 disabled:opacity-50 disabled:cursor-not-allowed">
             <X className="w-5 h-5 text-gray-500" />
           </button>
         </div>

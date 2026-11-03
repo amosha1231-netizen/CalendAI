@@ -206,7 +206,16 @@ export default function ProviderProfileEditor({ lang, user, onClose, onBookingCa
               {lang === "he" ? "💼 פרופיל נותן שירות" : "💼 Provider Profile"}
             </h2>
           </div>
-          <button onClick={onClose} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full transition">
+          {/* Disabled while saving, mirroring the backdrop's own
+              onClick={saving ? undefined : onClose} a few lines above —
+              without this guard a user could use this dedicated header
+              button (not the backdrop) to unmount the editor mid-request,
+              so the in-flight PUT /api/providers/me lands with nobody able
+              to see whether it actually saved (same "missing disabled guard
+              on a close control" class already fixed for MutualScheduler's
+              header buttons and this file's own service/availability
+              fields). */}
+          <button onClick={onClose} disabled={saving} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full transition disabled:opacity-50 disabled:cursor-not-allowed">
             <X className="w-5 h-5 text-gray-500" />
           </button>
         </div>
