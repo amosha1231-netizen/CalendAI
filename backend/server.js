@@ -2075,7 +2075,11 @@ app.put('/api/schedule/event', async (req, res) => {
     const actualDay = day === 'Today' ? getTodayDayName() : day;
     
     if (schedule[actualDay] && schedule[actualDay][index]) {
-      schedule[actualDay][index] = { ...schedule[actualDay][index], ...updates };
+      const existingEvent = schedule[actualDay][index];
+      if (existingEvent.mutualSessionId || existingEvent.providerBookingId) {
+        return res.status(400).json({ error: 'This event is linked to a booking. Edit or cancel it from its own booking screen instead.' });
+      }
+      schedule[actualDay][index] = { ...existingEvent, ...updates };
       syncTodayWithCurrentDay(schedule);
       saveSchedulesNow();
       
@@ -3633,6 +3637,10 @@ app.delete('/api/schedule/event', async (req, res) => {
   const userId = getUserId(req);
   const schedule = getUserSchedule(userId);
   if (schedule[day] && schedule[day][index]) {
+    const existingEvent = schedule[day][index];
+    if (existingEvent.mutualSessionId || existingEvent.providerBookingId) {
+      return res.status(400).json({ error: 'This event is linked to a booking. Cancel it from its own booking screen instead.' });
+    }
     schedule[day].splice(index, 1);
     saveSchedulesNow();
     

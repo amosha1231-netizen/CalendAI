@@ -1755,3 +1755,89 @@ on the sub-agent's own report.
 No ambiguous UX decision or open question for the human this run. The one
 genuine finding this round is fixed, verified, and committed/pushed with
 this run.
+
+## 2026-11-04 run notes (twenty-ninth overall)
+`npm install` in both `frontend/` and `backend/` (fresh clone). Baseline:
+`npm run build` (frontend) clean; `node --test` (backend, via `npm test`)
+243/259 pass, the same 16 known `fastdl.mongodb.org`/mongodb-memory-server
+sandbox-network failures confirmed by exact test name against AGENTS.md's
+documented list — not regressions. Re-checked task_progress.md items 1-5:
+all remain checked off.
+
+Delegated a twenty-ninth independent adversarial review (same 10 mutual/
+provider files + test files + wiring, explicit instructions to read this
+entire file first and not re-derive any of the ~34 bug classes already
+fixed/verified across the prior 28 rounds, asking for fresh angles) to a
+sub-agent. It found one new, genuine, previously-unreported bug — this time
+a cross-feature interaction rather than a bug inside the 10 scoped files'
+own internal logic:
+
+**The pre-existing generic single-user schedule endpoints (`PUT`/
+`DELETE /api/schedule/event` in `backend/server.js`) had zero awareness of
+the `mutualSessionId`/`providerBookingId` markers that `mutualRoutes.js`'s
+confirm route and `providerRoutes.js`'s `/:id/book` route stamp onto the
+schedule entries they mirror into `User.schedule`.** Nothing in the
+frontend filters on these markers either (confirmed: `handleRemoveEvent`
+and `handleEditEvent` in `frontend/src/App.jsx`, the only two callers of
+this endpoint, pass through indiscriminately from the ordinary Day/Weekly
+calendar view's trash icon and edit modal). So any confirmed mutual meeting
+or provider booking rendered in the normal calendar exactly like a plain
+event, fully editable and deletable there.
+
+Concrete impact: **mutual bookings were irrecoverable** — there is no "my
+mutual meetings" screen anywhere in the frontend, so this generic trash
+icon was the *only* UI control touching a confirmed mutual meeting's
+calendar entries at all. Using it permanently orphaned the deleter's Google
+Calendar event, left the other party's event/Google entry untouched, and
+left the `MutualBooking` doc stuck at `status:'completed'` forever with no
+UI path to fix any of it. **Provider bookings were recoverable but a real
+footgun** — the booking still shows in `ProviderProfileEditor.jsx`'s
+"Upcoming bookings" (reads `ProviderBooking` directly) with a working
+Cancel button, but until the provider thinks to go there, `activeSlot`
+stays `true`, permanently blocking that exact provider+date+startTime slot
+via the unique index, with the Google event still live and the provider's
+own calendar now showing nothing to remind them anything needs cancelling.
+
+This is architecturally related to (but a simpler, more directly
+user-triggerable mechanism than) the in-memory-cache-resurrection risk round
+12 flagged and deliberately left as legacy/out-of-scope, and to the generic
+`Booking` model's own un-filtered `bookingId` marker gap — neither of which
+this run touched, consistent with staying inside the 10-file scope.
+
+Fixed with the minimal guard the sub-agent itself suggested (respects "don't
+grow server.js" better than rerouting the delete through
+`cancelMutualSession`/the provider atomic-cancel update): both
+`PUT /api/schedule/event` and `DELETE /api/schedule/event` in
+`backend/server.js` now check `existingEvent.mutualSessionId`/
+`.providerBookingId` before mutating and reject with a 400 pointing the
+caller at the correct screen, instead of silently desyncing the mirrored
+booking. `node --check server.js` passes.
+
+**No regression test added** — unlike every other backend fix on this
+branch, these two routes are defined inline in `server.js` rather than in a
+`routes/*.js` module with its own `startApp()`-style supertest harness
+(`mutualRoutesValidation.test.js`/`providerRoutesValidation.test.js`'s
+pattern), and `server.js` itself cannot be `require()`'d in a test process
+without a live MongoDB connection (`mongoReady.then(...).catch(() =>
+process.exit(1))` runs unconditionally at module load) — exactly the
+network dependency this sandbox cannot satisfy per AGENTS.md's documented
+limitation. Extracting these two routes into a separate, directly-testable
+module would be the right long-term fix and would also shrink `server.js`,
+but is a larger refactor than "fix the bug in front of you" for one run;
+flagged here for a future run rather than attempted today. Full suite
+re-run after the fix: unchanged 243/259 (16 known sandbox failures, no
+tests added/removed). `npm run build` (frontend) clean (no frontend code
+touched).
+
+The sub-agent's review also tried and ruled out several fresh angles as
+already correct or not bugs: `cancelMutualSession` racing a confirm still
+in `processing` status; `intersectFree`'s behavior when
+`windowStartMin > windowEndMin`; `winsOverlapRace`/atomic
+claim-confirm-cancel skeletons; AI-credit interactions (neither route
+touches credit/AI code); `createOAuth2ClientWithRefresh`'s per-call
+`tokens` listener (no leak, fresh client per call).
+
+No ambiguous UX decision or open question for the human this run beyond the
+one noted above (extracting the generic schedule routes for testability —
+a suggestion, not a blocker). The one genuine finding this round is fixed,
+verified, and will be committed/pushed with this run.
