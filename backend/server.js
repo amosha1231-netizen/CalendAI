@@ -1072,10 +1072,17 @@ function shiftScheduleForward(schedule, delayMinutes) {
     const oldStart = timeToMinutes(event.startTime);
     const oldEnd = timeToMinutes(event.endTime);
     if (oldStart === null || oldEnd === null) continue;
-    
+    // Never shift a confirmed mutual meeting or provider booking: its real
+    // time lives on Google Calendar (and, for a provider booking, the other
+    // party's own calendar) and in the MutualBooking/ProviderBooking doc —
+    // this local-schedule-only "running late" shift has no way to move
+    // either, so silently moving just the displayed time here would desync
+    // CalendAI's calendar from the actual appointment.
+    if (event.mutualSessionId || event.providerBookingId) continue;
+
     const newStart = oldStart + accumulatedDelay;
     const newEnd = oldEnd + accumulatedDelay;
-    
+
     event.startTime = minutesToTime(newStart);
     event.endTime = minutesToTime(newEnd);
   }
@@ -1126,6 +1133,11 @@ function mergeGaps(schedule) {
           const oldStart = timeToMinutes(sorted[j].startTime);
           const oldEnd = timeToMinutes(sorted[j].endTime);
           if (oldStart === null || oldEnd === null) continue;
+          // Same guard as shiftScheduleForward above — never move a
+          // confirmed mutual meeting/provider booking's displayed time,
+          // since this local-only merge has no way to also move the real
+          // Google Calendar event or the other party's own calendar.
+          if (sorted[j].mutualSessionId || sorted[j].providerBookingId) continue;
           sorted[j].startTime = minutesToTime(oldStart - gap.gapMinutes);
           sorted[j].endTime = minutesToTime(oldEnd - gap.gapMinutes);
         }
@@ -3379,15 +3391,19 @@ function addBreaksBetweenEvents(schedule) {
       }
     }
     
-    if (appliedShift > 0) {
+    // Never move a confirmed mutual meeting/provider booking's displayed
+    // time — same guard as shiftScheduleForward/mergeGaps above, since this
+    // local-only break-insertion has no way to also move the real Google
+    // Calendar event or the other party's own calendar.
+    if (appliedShift > 0 && !(event.mutualSessionId || event.providerBookingId)) {
       event.startTime = minutesToTime(oldStart + appliedShift);
       event.endTime = minutesToTime(oldEnd + appliedShift);
     }
   }
-  
+
   newSchedule[todayName] = sorted.sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
   syncTodayWithCurrentDay(newSchedule);
-  
+
   return {
     newSchedule,
     summary: `הוספתי ${breaksAdded} הפסקות של 10 דקות בין האירועים להיום.`,
@@ -3411,20 +3427,28 @@ function postponeUncompletedToTomorrow(schedule) {
   const todayIndex = dayNames.indexOf(todayName);
   const tomorrowName = dayNames[(todayIndex + 1) % 7];
   
-  // Find events that are past their start time or currently happening
+  // Find events that are past their start time or currently happening.
+  // Never postpone a confirmed mutual meeting or provider booking — its
+  // real date lives on Google Calendar (and, for a provider booking, the
+  // other party's own calendar) and in the MutualBooking/ProviderBooking
+  // doc; moving it to a different day here only in this local schedule
+  // would desync CalendAI's calendar from the actual appointment with no
+  // way to move either of the real copies to match.
   const uncompletedEvents = todayEvents.filter(event => {
     const eventStart = timeToMinutes(event.startTime);
-    return eventStart !== null && eventStart <= currentMin;
+    return eventStart !== null && eventStart <= currentMin && !event.mutualSessionId && !event.providerBookingId;
   });
-  
+
   if (uncompletedEvents.length === 0) {
     return { newSchedule, summary: 'אין משימות שלא בוצעו לדחות למחר.' };
   }
-  
-  // Remove uncompleted events from today
+
+  // Remove uncompleted events from today (kept complementary to the filter
+  // above — a mutual/provider-marked event always stays, even if "past its
+  // start time" by this same clock check).
   newSchedule[todayName] = todayEvents.filter(event => {
     const eventStart = timeToMinutes(event.startTime);
-    return eventStart === null || eventStart > currentMin;
+    return eventStart === null || eventStart > currentMin || !!(event.mutualSessionId || event.providerBookingId);
   });
   
   // Schedule them tomorrow starting at 09:00 AM

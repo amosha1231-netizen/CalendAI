@@ -1900,3 +1900,74 @@ correct, nothing else to report.
 No ambiguous UX decision or open question for the human this run. The one
 genuine finding this round is fixed, verified, and committed/pushed with
 this run.
+
+## 2026-11-04 run notes (thirty-first overall, third run today)
+`npm install` in both `frontend/` and `backend/` (fresh clone). Baseline:
+`npm run build` (frontend) clean; `node --test` (backend, via `npm test`)
+243/259 pass, the same 16 known `fastdl.mongodb.org`/mongodb-memory-server
+sandbox-network failures confirmed by exact test name against AGENTS.md's
+documented list (`criticalPaths.test.js` 1-4, `mutualBooking.test.js` 76-84,
+`ownerCredits.test.js` 134-136) — not regressions. Re-checked
+task_progress.md items 1-5: all remain checked off (not re-traced in depth
+this run beyond a quick glance, given how many consecutive runs have already
+re-verified them directly against current code).
+
+Delegated a thirty-first independent adversarial review (same 10 mutual/
+provider files + wiring, explicit instructions to read this entire file
+first and not re-derive any of the ~37 bug classes already fixed/verified
+across the prior 30 rounds, asking for fresh angles) to a sub-agent. It found
+one new, genuine, previously-unreported bug — a third instance of the
+"generic schedule-mutation code has no idea a mutual/provider marker means
+the real appointment lives elsewhere" class first found in round 29 (which
+fixed the direct single-event `PUT`/`DELETE /api/schedule/event` routes),
+this time in four *different*, bulk "quick action" helpers:
+
+**`shiftScheduleForward`, `mergeGaps`, `addBreaksBetweenEvents`, and
+`postponeUncompletedToTomorrow`** (`backend/server.js`, backing
+`/api/reschedule/shift`, `/api/reschedule/merge-gaps`,
+`/api/reschedule/add-breaks`, `/api/reschedule/postpone-tomorrow`, and the
+Gemini-fallback path of `/api/reschedule`) all read today's event list and
+reshuffle/shift/postpone start or end times in the local-only `schedule`
+copy, then write the result straight back to Mongo/cache — with no
+exception for an event carrying `mutualSessionId`/`providerBookingId`.
+Unlike round 29's direct-edit routes (an explicit user action on one event),
+these are one-tap bulk actions ("I'm running late," "merge my gaps," "add
+breaks," "postpone what I didn't finish to tomorrow") that silently moved
+the *displayed* time/day of a confirmed mutual meeting or provider booking
+in CalendAI's own calendar, while the real Google Calendar event(s), the
+other party's calendar, and the authoritative `MutualBooking`/
+`ProviderBooking` document all stayed exactly where they were — desyncing
+CalendAI's calendar from the actual appointment with no warning and no way
+to undo it from the UI.
+
+Fixed with a one-line guard at each function's time-mutation step — skip
+(leave untouched) any event carrying `mutualSessionId` or `providerBookingId`
+while all other events around it still shift/merge/postpone normally; for
+`postponeUncompletedToTomorrow`, kept the "stays today" filter the exact
+logical complement of the "gets postponed" filter so no event is dropped
+from both buckets. Did not touch the Gemini free-form AI-rewrite path itself
+or `/api/schedule/extend-event` — both already flagged in rounds 12/29 as a
+separately-scoped, harder class (arbitrary LLM output / unlikely to target a
+`recurrence:'once'` event), consistent with not over-reaching past the bug
+actually found.
+
+No regression test added: these four functions are private, un-exported
+helpers inside `server.js` (no `module.exports` for them), and `server.js`
+cannot be `require()`'d in a test process without a live MongoDB connection
+— the same documented limitation round 29 hit fixing the sibling bug in the
+same file. `node --check server.js` passes. Full suite re-run after the fix:
+unchanged 243/259 (16 known sandbox failures, no tests added/removed).
+`npm run build` (frontend) clean (no frontend code touched).
+
+The sub-agent's review also re-confirmed (no new findings) all 10 files'
+previously-fixed disabled-guards/staleness-refs, dialog ARIA/Escape
+handling, atomic claim/confirm/cancel skeletons, `winsOverlapRace`,
+day-window/Shabbat/Friday-cutoff guards, and `App.jsx`'s modal-composition
+wiring; also checked and ruled out self-booking-by-a-provider-on-their-own-
+profile (intentional, documented), duration/locationId array-coercion
+quirks (benign), and IDOR on cancel/my-bookings routes (correct). No
+AI-credit/Lemon-Squeezy code touched.
+
+No ambiguous UX decision or open question for the human this run. The one
+genuine finding this round is fixed, verified, and committed/pushed with
+this run.
