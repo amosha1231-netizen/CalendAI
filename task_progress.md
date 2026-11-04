@@ -1841,3 +1841,62 @@ No ambiguous UX decision or open question for the human this run beyond the
 one noted above (extracting the generic schedule routes for testability —
 a suggestion, not a blocker). The one genuine finding this round is fixed,
 verified, and will be committed/pushed with this run.
+
+## 2026-11-04 run notes (thirtieth overall, second run today)
+`npm install` in both `frontend/` and `backend/` (fresh clone). Baseline:
+`npm run build` (frontend) clean; `node --test` (backend, via `npm test`)
+243/259 pass, the same 16 known `fastdl.mongodb.org`/mongodb-memory-server
+sandbox-network failures confirmed by exact test name against AGENTS.md's
+documented list (`criticalPaths.test.js` 1-4, `mutualBooking.test.js` 76-84,
+`ownerCredits.test.js` 134-136) — not regressions. Re-checked
+task_progress.md items 1-5 directly against current code (`setInputText("")`
+in `App.jsx:1079`; `multer` + `upload.single('image')` +
+`POST /api/parse-image` + `parseImageWithVision` all present and wired in
+`server.js`/`aiService.js`): all remain genuinely done.
+
+Delegated a thirtieth independent adversarial review (same 10 mutual/
+provider files + wiring, explicit instructions to read this entire file
+first and not re-derive any of the ~35 bug classes already fixed/verified
+across the prior 29 rounds, asking for fresh angles) to a sub-agent. It
+found one new, genuine, previously-unreported bug — another instance of the
+"missing `disabled` guard on a control that mutates state during an
+in-flight destructive request" class already fixed elsewhere on this branch
+(rounds 13, 16, 21, 28), but a fresh control this time:
+
+**`ProviderBookingView.jsx`'s slot-time buttons themselves had no
+`disabled={confirming}` guard**, unlike every other control in the same
+confirm flow (header close button, service select, date input, all 4
+guest-detail fields, and the Confirm button itself all already had it —
+round 21 covered the pickers/guest fields, round 28 covered the header
+close button, but neither touched the slot buttons' own toggle behavior).
+Concretely: once `confirming=true` (`POST /:id/book` in flight), the slot
+buttons stayed clickable. Clicking the already-selected slot button runs
+`setSelectedSlot(isSelected ? null : slot)`, which unmounts the entire
+guest-details block — including the Confirm button and its spinner, since
+that block is gated on `{selectedSlot && (...)}` — leaving the user looking
+at a UI with no visible indication a request is still in flight. Clicking a
+*different* slot instead silently swapped the on-screen "you're booking X"
+summary while the original request was still pending. No backend/security
+impact (the server stays atomic and authoritative, and the in-flight POST
+body was already closure-captured) — purely a client-side display/confusion
+bug, same severity class as the prior frontend-only fixes on this branch.
+
+Fixed by adding `disabled={confirming}` to the slot-time button plus
+matching `disabled:opacity-50 disabled:cursor-not-allowed` styling,
+mirroring the identical pattern already used on this file's own header
+close button. No regression test added — consistent with every other
+frontend-only fix on this branch (no frontend component test suite exists).
+`npm run build` (frontend) clean after the fix. Backend untouched; full
+suite re-run as a sanity check, independently re-verified by this run (not
+just taken on the sub-agent's report): unchanged 243/259, same 16 known
+sandbox failures.
+
+The sub-agent's review also tried and ruled out several fresh angles:
+`cancelMutualSession` races, `winsOverlapRace`/atomic claim-confirm-cancel
+skeletons, AI-credit interactions (route doesn't touch credit code),
+`createOAuth2ClientWithRefresh` token-listener lifecycle — all re-confirmed
+correct, nothing else to report.
+
+No ambiguous UX decision or open question for the human this run. The one
+genuine finding this round is fixed, verified, and committed/pushed with
+this run.
