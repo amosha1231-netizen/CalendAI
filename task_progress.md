@@ -1971,3 +1971,76 @@ AI-credit/Lemon-Squeezy code touched.
 No ambiguous UX decision or open question for the human this run. The one
 genuine finding this round is fixed, verified, and committed/pushed with
 this run.
+
+## 2026-11-04 run notes (thirty-second overall, fourth run today)
+`npm install` in both `frontend/` and `backend/` (fresh clone). Baseline:
+`npm run build` (frontend) clean; `node --test` (backend, via `npm test`)
+243/259 pass, the same 16 known `fastdl.mongodb.org`/mongodb-memory-server
+sandbox-network failures confirmed by exact test name against AGENTS.md's
+documented list (`criticalPaths.test.js` 1-4, `mutualBooking.test.js` 76-84,
+`ownerCredits.test.js` 134-136) — not regressions. Re-checked
+task_progress.md items 1-5: all remain checked off (not re-traced in depth
+this run, consistent with how many prior runs have already re-verified them
+directly against current code).
+
+Delegated a thirty-second independent adversarial review (same 10 mutual/
+provider files + wiring, explicit instructions to read this entire file
+first and not re-derive any of the ~39 bug classes already fixed/verified
+across the prior 31 rounds, asking for fresh angles) to a sub-agent. It
+re-confirmed as correct (no new findings) the atomic claim/confirm/cancel
+skeletons, `activeSlot` sync, `winsOverlapRace`, day-window/Shabbat/Friday
+guards, `googleCalendar.js`'s token-refresh/freebusy fail-closed handling,
+all type/length guards (`category`/`q`/`locationId`/`color`/availability
+times), all four frontend components' disabled-guards and stale-request
+refs, and dialog ARIA/Escape handling — and found one new, genuine,
+previously-unreported bug, this time in `frontend/src/App.jsx`'s own generic
+schedule-mutation wiring rather than inside the 10 scoped files themselves:
+
+**`handleRemoveEvent` in `frontend/src/App.jsx` ignored the DELETE
+response's status and unconditionally removed the event from local UI
+state, silently defeating round 29's backend guard that rejects deleting a
+mutual-meeting/provider-booking-linked event.** `fetch()` resolves (does not
+reject) on a 4xx response, so the function's `try/catch` never caught the
+400 that `DELETE /api/schedule/event` (`backend/server.js`, added by round
+29) correctly returns for an event carrying `mutualSessionId`/
+`providerBookingId` — `setSchedule` ran right after the `fetch` call
+regardless of status, exactly as if the delete had succeeded. Concretely: a
+user clicks the trash icon on a confirmed mutual meeting or provider booking
+in the ordinary Day/Weekly calendar view (wired at two call sites —
+`App.jsx`'s day-view trash button and the day-detail-modal trash button,
+both calling `handleRemoveEvent`); the backend correctly does nothing and
+returns 400, but the event visually vanished from the calendar anyway, with
+no error shown, until the next `fetchSchedule()` (e.g. a reload) made it
+silently reappear — looking like a glitch, giving the user no indication the
+booking/meeting is still fully live server-side, and defeating the exact
+confusion round 29's backend fix was meant to prevent, just one layer closer
+to the user. The day-detail-modal call site compounded this further by
+unconditionally filtering its own local `events` list the same way,
+independent of `handleRemoveEvent`'s outcome. Not a security or backend
+data-integrity issue (the server-side state stayed correct throughout) —
+purely a client-side false-success display bug, the same severity class as
+the other frontend-only fixes on this branch.
+
+Fixed by mirroring `handleEditEvent`'s own pattern (the sibling PUT caller
+a few lines below, which already did this correctly): `handleRemoveEvent`
+now awaits and parses the response, checks `res.ok`, throws with the
+backend's `data.error` on failure (caught and surfaced via the existing
+`setError` state, same as every other mutation error path in this file),
+and only calls `setSchedule` on success; it now returns a boolean so callers
+can tell. Updated the day-detail-modal's trash button to await that
+boolean and only filter its own local `events` list when it's `true`,
+closing the second, compounding instance of the same bug at that call site.
+The plain day-view trash button needed no further change — it never had its
+own extra local-state mutation beyond calling `handleRemoveEvent`, so the
+fix inside that function alone covers it.
+
+No backend changes; no regression test added (frontend has no component
+test suite, consistent with every prior frontend-only fix on this branch).
+`npm run build` (frontend) clean after the fix. Backend untouched; full
+suite re-run as a sanity check, independently re-verified by this run (not
+just taken on the sub-agent's report): unchanged 243/259, same 16 known
+sandbox failures.
+
+No ambiguous UX decision or open question for the human this run. The one
+genuine finding this round is fixed, verified, and committed/pushed with
+this run.

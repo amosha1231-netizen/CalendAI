@@ -1183,18 +1183,21 @@ function AppRoutes() {
   const handleRemoveEvent = async (day, index) => {
     saveScheduleState();
     try {
-      await fetch(`${API_BASE}/api/schedule/event`, {
+      const res = await fetch(`${API_BASE}/api/schedule/event`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ day, index }),
         credentials: "include"
       });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Failed");
       setSchedule(prev => {
         const u = { ...prev };
         if (u[day]) u[day] = u[day].filter((_, i) => i !== index);
         return u;
       });
-    } catch (err) { console.error(err); }
+      return true;
+    } catch (err) { setError(err.message); return false; }
   };
 
   const handleOpenReschedule = () => {
@@ -2514,7 +2517,7 @@ function AppRoutes() {
                         </div>
                         <div className="flex items-center gap-1 shrink-0">
                           {actualIndex >= 0 && (
-                            <button onClick={e => { e.stopPropagation(); handleRemoveEvent(dayDetailModal.dayKey, actualIndex); setDayDetailModal(prev => prev ? { ...prev, events: prev.events.filter((_, i) => i !== index) } : null); }}
+                            <button onClick={async e => { e.stopPropagation(); const ok = await handleRemoveEvent(dayDetailModal.dayKey, actualIndex); if (ok) setDayDetailModal(prev => prev ? { ...prev, events: prev.events.filter((_, i) => i !== index) } : null); }}
                               className="p-1.5 rounded-lg bg-red-50 text-red-500 hover:bg-red-100 transition opacity-0 group-hover:opacity-100" title={t.delete || 'מחק'}>
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
