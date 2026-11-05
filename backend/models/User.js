@@ -54,10 +54,20 @@ const userSchema = new mongoose.Schema({
   },
   siriKeyHash: { type: String, index: { unique: true, sparse: true } }, // SHA-256 of the personal Siri/Shortcuts key
   siriKeyCreatedAt: { type: Date },
+  // Evening digest: a push the evening before with tomorrow's schedule (services/eveningDigest).
+  eveningDigest: {
+    enabled: { type: Boolean, default: false },
+    time: { type: String, default: '21:00' }, // "HH:mm" in `timezone`
+    timezone: { type: String },
+    lang: { type: String, default: 'he' },
+    nextFireAt: { type: Date },
+    lastSentAt: { type: Date }
+  },
   createdAt: { type: Date, default: Date.now }
 });
 
 // Index for the public provider directory browse/search queries.
 userSchema.index({ 'providerProfile.enabled': 1, 'providerProfile.category': 1 });
+userSchema.index({ 'eveningDigest.enabled': 1, 'eveningDigest.nextFireAt': 1 }, { sparse: true });
 
 module.exports = mongoose.models.User || mongoose.model('User', userSchema);
