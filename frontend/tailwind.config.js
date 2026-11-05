@@ -14,6 +14,17 @@ export default {
       // generic slate/blue/indigo defaults. See design reference:
       // https://claude.ai/artifact/XSTUR5zAgEYvw3RJyftLBm
       colors: {
+        // "Aurora" app tokens (2026-11 redesign). Brand violet + gradient stops,
+        // a soft lavender canvas, and the dark "night" used for hero cards.
+        brand: {
+          DEFAULT: '#5B4BFF',
+          600: '#4A3AE0',
+          violet: '#9B5CFF',
+          pink: '#FF6FA8',
+          soft: '#EEEBFF'
+        },
+        canvas: '#F6F5FB',
+        night: '#141233',
         ink: {
           900: '#14181A',
           800: '#1E2320',
@@ -44,15 +55,18 @@ export default {
         muted: '#5B6058'
       },
       fontFamily: {
-        display: ['Rubik', 'Noto Sans Hebrew', 'system-ui', 'sans-serif'],
-        he: ['Noto Sans Hebrew', 'Rubik', 'system-ui', 'sans-serif'],
+        sans: ['Heebo', 'Noto Sans Hebrew', 'system-ui', 'sans-serif'],
+        display: ['Heebo', 'Rubik', 'Noto Sans Hebrew', 'system-ui', 'sans-serif'],
+        he: ['Heebo', 'Noto Sans Hebrew', 'system-ui', 'sans-serif'],
         en: ['Work Sans', 'system-ui', 'sans-serif'],
         mono: ['JetBrains Mono', 'ui-monospace', 'monospace']
       },
       boxShadow: {
         stamp: '3px 3px 0 #14181A',
         'stamp-sm': '2px 2px 0 #14181A',
-        'stamp-paper': '3px 3px 0 #EEF0E9'
+        'stamp-paper': '3px 3px 0 #EEF0E9',
+        soft: '0 1px 0 rgba(14,16,32,.03), 0 8px 24px -12px rgba(40,30,120,.14)',
+        glow: '0 12px 24px -12px rgba(91,75,255,.75)'
       },
       keyframes: {
         "fade-in": {

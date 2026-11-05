@@ -3,9 +3,29 @@
 @tailwind utilities;
 
 :root {
-  color: #14181A;
-  background-color: #EEF0E9;
-  font-family: 'Noto Sans Hebrew', 'Rubik', 'Work Sans', system-ui, sans-serif;
+  color: #0E1020;
+  background-color: #F6F5FB;
+  font-family: 'Heebo', 'Noto Sans Hebrew', 'Work Sans', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ──────────────────────────────────────────── */
+/* "Aurora" primitives (2026-11 redesign)       */
+/* ──────────────────────────────────────────── */
+.bg-aurora {
+  background-image: linear-gradient(135deg, #5B4BFF 0%, #9B5CFF 55%, #FF6FA8 100%);
+}
+.text-aurora {
+  background-image: linear-gradient(135deg, #5B4BFF 0%, #9B5CFF 55%, #FF6FA8 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.aurora-blob {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(50px);
+  pointer-events: none;
 }
 
 /* ──────────────────────────────────────────── */
