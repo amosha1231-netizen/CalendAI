@@ -15,9 +15,7 @@ const CATEGORY_KEYWORDS = {
 
 const LANGUAGE_NAMES = {
   he: 'עברית',
-  en: 'English',
-  fr: 'Français',
-  es: 'Español'
+  en: 'English'
 };
 
 function categorizeEvent(title) {
@@ -563,18 +561,22 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangC
               {/* Language Selector */}
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">{t.settingsLanguage}</label>
-                <select
-                  value={lang}
-                  onChange={(e) => {
-                    if (onLangChange) onLangChange(e.target.value);
-                  }}
-                  className="w-full max-w-full box-border px-3 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="he">עברית</option>
-                  <option value="en">English</option>
-                  <option value="fr">Français</option>
-                  <option value="es">Español</option>
-                </select>
+                {/* Only Hebrew and English are fully translated; the partial French/Spanish
+                    copies mixed languages on screen, so they are no longer offered. */}
+                <div className="flex p-1 gap-1 rounded-xl bg-slate-100" role="radiogroup" aria-label={t.settingsLanguage}>
+                  {['he', 'en'].map(code => (
+                    <button
+                      key={code}
+                      type="button"
+                      role="radio"
+                      aria-checked={lang === code}
+                      onClick={() => { if (onLangChange && code !== lang) onLangChange(code); }}
+                      className={`flex-1 h-10 rounded-lg text-sm font-semibold transition ${lang === code ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                    >
+                      {LANGUAGE_NAMES[code]}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {/* Timezone Selector */}
