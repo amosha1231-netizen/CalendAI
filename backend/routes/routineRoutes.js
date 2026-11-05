@@ -82,7 +82,8 @@ function parseRoutineInput(body, existing) {
       return step;
     })
     .filter(s => s.title);
-  if (steps.length === 0) return { error: 'הוסף לפחות שלב אחד.' };
+  // No steps given (e.g. a routine that's just a rest timer): one step named after the routine.
+  if (steps.length === 0) steps.push({ title, emoji: cleanText(body.emoji, 16) });
 
   const days = Array.isArray(body.days)
     ? [...new Set(body.days.map(Number).filter(d => Number.isInteger(d) && d >= 0 && d <= 6))].sort()

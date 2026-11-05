@@ -4559,6 +4559,14 @@ mongoReady
       push: require('./services/webPush'),
       isShabbatAt: reminderRoutes.isShabbatAt
     }).start(30000, () => mongoose.connection.readyState === 1);
+    // Evening digest: tomorrow's schedule, pushed the evening before (services/eveningDigest).
+    require('./services/eveningDigest').createDigestDispatcher({
+      User,
+      PushSubscription: require('./models/PushSubscription'),
+      push: require('./services/webPush'),
+      isShabbatAt: reminderRoutes.isShabbatAt,
+      fetchGoogleEvents: require('./services/googleCalendar').listGoogleEventsForDay
+    }).start(60000, () => mongoose.connection.readyState === 1);
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`Backend running at http://localhost:${PORT}`);
     });

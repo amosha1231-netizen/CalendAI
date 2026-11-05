@@ -10,7 +10,7 @@ const STRINGS = {
     title: 'רוטינות ואתגרים', tabToday: 'היום', tabProgress: 'איך אני עומד', tabDiscover: 'גלה',
     newRoutine: 'רוטינה חדשה', create: 'צור', save: 'שמור', cancel: 'ביטול', close: 'סגור',
     emptyTitle: 'עוד אין לך רוטינות', emptySub: 'בחר תבנית או בנה רוטינה משלך. כל יום תסמן ✓ על מה שעשית.',
-    startFrom: 'התחל מתבנית', notToday: 'לא מתוכנן להיום', doneToday: 'הושלם היום',
+    startFrom: 'רוצה להתחיל מתבנית? (לא חובה)', notToday: 'לא מתוכנן להיום', doneToday: 'הושלם היום',
     steps: 'שלבים', of: 'מתוך', streak: 'רצף', days: 'ימים', day: 'יום', bestStreak: 'שיא',
     allDone: 'כל הכבוד! סיימת את הרוטינה', keepGoing: 'ימים ברצף, תמשיך ככה',
     tapToCheck: 'הקש על עיגול כדי לסמן ✓',
@@ -40,7 +40,7 @@ const STRINGS = {
     title: 'Routines & Challenges', tabToday: 'Today', tabProgress: 'My progress', tabDiscover: 'Discover',
     newRoutine: 'New routine', create: 'Create', save: 'Save', cancel: 'Cancel', close: 'Close',
     emptyTitle: 'No routines yet', emptySub: 'Pick a template or build your own. Every day, tick ✓ what you did.',
-    startFrom: 'Start from a template', notToday: 'Not scheduled today', doneToday: 'Done today',
+    startFrom: 'Start from a template? (optional)', notToday: 'Not scheduled today', doneToday: 'Done today',
     steps: 'steps', of: 'of', streak: 'Streak', days: 'days', day: 'day', bestStreak: 'Best',
     allDone: 'Well done! Routine complete', keepGoing: 'days in a row, keep it up',
     tapToCheck: 'Tap a circle to tick it ✓',
@@ -463,7 +463,8 @@ function RoutineEditor({ initial, s, isRtl, onClose, onSave, saving, error, lang
     const next = current.includes(day) ? current.filter(x => x !== day) : [...current, day].sort();
     return { ...d, days: next.length === 7 || next.length === 0 ? [] : next };
   });
-  const canSave = draft.title.trim() && draft.steps.some(st => st.title.trim());
+  // Steps are optional: a routine with just a name (e.g. only a rest timer) saves as one step named after it.
+  const canSave = !!draft.title.trim();
   const templates = TEMPLATES[lang] || TEMPLATES.en;
 
   return (
@@ -1056,6 +1057,7 @@ export default function Routines({ lang = 'he', user, onClose, initialTab = 'tod
       ...draft,
       steps: draft.steps.filter(st => st.title.trim()).map(st => ({ _id: st._id, title: st.title.trim(), emoji: (st.emoji || '').trim() }))
     };
+    if (!body.steps.length) body.steps = [{ title: draft.title.trim(), emoji: (draft.emoji || '').trim() }];
     try {
       if (draft._id) {
         await api.put(`/api/routines/${draft._id}`, body);

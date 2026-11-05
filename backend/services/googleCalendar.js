@@ -7,6 +7,7 @@
 const crypto = require('crypto');
 const { google } = require('googleapis');
 const User = require('../models/User');
+const { zonedTimeToInstant } = require('./reminderSchedule');
 
 const isProduction = process.env.NODE_ENV === 'production' || !!process.env.RENDER;
 const PRODUCTION_BACKEND_URL = 'https://calendai-backend-dfmi.onrender.com';
@@ -188,11 +189,43 @@ async function insertEventWithOptionalMeet(calendar, { calendarId = 'primary', r
   return { event: data, meetLink: data.hangoutLink || videoEntry?.uri || null };
 }
 
+/**
+ * A day's events from the user's primary Google calendar, as
+ * { title, startTime: "HH:mm", allDay } in `timeZone`. Cancelled and
+ * "free" (transparent) events are left out. Used by the evening digest.
+ */
+async function listGoogleEventsForDay(user, isoDate, timeZone) {
+  const [y, m, d] = isoDate.split('-').map(Number);
+  const start = zonedTimeToInstant(y, m, d, 0, 0, timeZone);
+  const next = new Date(Date.UTC(y, m - 1, d + 1));
+  const end = zonedTimeToInstant(next.getUTCFullYear(), next.getUTCMonth() + 1, next.getUTCDate(), 0, 0, timeZone);
+  const auth = await createOAuth2ClientWithRefresh(user);
+  const calendar = google.calendar({ version: 'v3', auth });
+  const result = await calendar.events.list({
+    calendarId: 'primary', timeMin: start.toISOString(), timeMax: end.toISOString(),
+    singleEvents: true, orderBy: 'startTime', maxResults: 100, timeZone
+  });
+  const clock = value => new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(value));
+  const out = [];
+  for (const event of result.data.items || []) {
+    if (event.status === 'cancelled' || event.transparency === 'transparent' || !event.start) continue;
+    const title = event.summary || 'Google Calendar';
+    if (event.start.date) {
+      if (event.start.date <= isoDate && (!event.end || !event.end.date || event.end.date > isoDate)) out.push({ title, startTime: '', allDay: true });
+    } else if (event.start.dateTime) {
+      const s = new Date(event.start.dateTime);
+      out.push({ title, startTime: s < start ? '00:00' : clock(s), allDay: false });
+    }
+  }
+  return out;
+}
+
 module.exports = {
   GOOGLE_CALLBACK_URL,
   formatDateTimeWithTimezone,
   zonedDateTime,
   createOAuth2ClientWithRefresh,
   buildGcalEventBody,
-  insertEventWithOptionalMeet
+  insertEventWithOptionalMeet,
+  listGoogleEventsForDay
 };

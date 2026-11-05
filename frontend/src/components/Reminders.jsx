@@ -32,6 +32,9 @@ const STRINGS = {
     reminder: 'תזכורת', gotIt: 'בוצע', open: 'לתזכורות', count: 'תזכורות',
     days: ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'],
     dayLetters: ['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ש'], dayPrefix: 'ביום ', dayJoin: ', ',
+    digestTitle: 'סיכום ערב: הלו״ז של מחר', digestSub: 'כל ערב תקבל התראה עם האירועים של מחר (גם מגוגל קלנדר)',
+    digestAt: 'שעת ההתראה', digestNext: 'הסיכום הבא', digestNeedsPush: 'כדי לקבל את הסיכום כשהאפליקציה סגורה, הפעל התראות למעלה.',
+    digestShabbat: 'לא נשלח בשבת',
     fieldErrors: { title: 'כתוב על מה להזכיר', time: 'בחר שעה', daysOfWeek: 'בחר לפחות יום אחד', date: 'בחר תאריך עתידי' }
   },
   en: {
@@ -56,6 +59,9 @@ const STRINGS = {
     reminder: 'Reminder', gotIt: 'Done', open: 'Reminders', count: 'reminders',
     days: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
     dayLetters: ['S', 'M', 'T', 'W', 'T', 'F', 'S'], dayPrefix: '', dayJoin: ', ',
+    digestTitle: "Evening digest: tomorrow's schedule", digestSub: "Every evening, get a notification with tomorrow's events (Google Calendar too)",
+    digestAt: 'Send at', digestNext: 'Next digest', digestNeedsPush: 'To get it while the app is closed, turn on notifications above.',
+    digestShabbat: 'Not sent on Shabbat',
     fieldErrors: { title: 'Say what to remind you about', time: 'Pick a time', daysOfWeek: 'Pick at least one day', date: 'Pick a future date' }
   }
 };
@@ -389,6 +395,66 @@ function ReminderEditor({ s, lang, isRtl, initial, onCancel, onSaved }) {
 }
 
 // ── Full-screen sheet ──
+// ── Evening digest (tomorrow's schedule, the evening before) ──
+function EveningDigestPanel({ s, lang, push }) {
+  const [digest, setDigest] = useState(null); // { enabled, time, nextFireAt }
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState('');
+
+  useEffect(() => {
+    let alive = true;
+    api.get('/api/reminders/evening-digest')
+      .then(res => { if (alive) setDigest(res.data.digest); })
+      .catch(() => { if (alive) setDigest({ enabled: false, time: '21:00', nextFireAt: null }); });
+    return () => { alive = false; };
+  }, []);
+
+  const save = async patch => {
+    const next = { ...digest, ...patch };
+    setDigest(next);
+    setBusy(true); setNote('');
+    try {
+      const res = await api.put('/api/reminders/evening-digest', {
+        enabled: next.enabled, time: next.time, lang: lang === 'he' ? 'he' : 'en', timezone: getUserTimeZone()
+      });
+      setDigest(res.data.digest);
+    } catch (e) {
+      setNote(errorMessage(e, s));
+    }
+    setBusy(false);
+  };
+
+  if (!digest) return null;
+  return (
+    <div className="rounded-2xl border border-indigo-200 bg-indigo-50/60 p-3">
+      <div className="flex items-start gap-3">
+        <span className="text-2xl w-10 h-10 shrink-0 rounded-xl bg-white flex items-center justify-center">🌙</span>
+        <div className="flex-1 min-w-0">
+          <p className="font-semibold text-slate-800 text-sm">{s.digestTitle}</p>
+          <p className="text-sm text-slate-600">{s.digestSub}</p>
+        </div>
+        <button onClick={() => save({ enabled: !digest.enabled })} disabled={busy} role="switch" aria-checked={digest.enabled} aria-label={s.digestTitle}
+          className={`relative w-12 h-7 shrink-0 rounded-full transition disabled:opacity-60 ${digest.enabled ? 'bg-indigo-600' : 'bg-slate-300'}`}>
+          <span className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow transition-all ${digest.enabled ? 'start-6' : 'start-1'}`} />
+        </button>
+      </div>
+      {digest.enabled && (
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+          <label className="flex items-center gap-2 text-slate-700">
+            {s.digestAt}
+            <input type="time" value={digest.time} disabled={busy}
+              onChange={e => { if (e.target.value) save({ time: e.target.value }); }}
+              className="min-h-[40px] rounded-xl border border-slate-200 bg-white px-2 text-slate-800" />
+          </label>
+          {digest.nextFireAt && <span className="text-xs text-indigo-600">{s.digestNext}: {describeNext(digest.nextFireAt, lang)}</span>}
+          <span className="text-xs text-slate-500 w-full">{s.digestShabbat}{push && !push.subscriptions ? ` · ${s.digestNeedsPush}` : ''}</span>
+        </div>
+      )}
+      {note && <p className="text-sm text-rose-600 mt-1" role="alert">{note}</p>}
+    </div>
+  );
+}
+
 export default function Reminders({ lang = 'he', user, onClose, onChanged, onRequireLogin }) {
   const s = getStrings(lang);
   const isRtl = lang === 'he';
@@ -457,6 +523,7 @@ export default function Reminders({ lang = 'he', user, onClose, onChanged, onReq
           ) : (
             <>
               <NotificationsPanel s={s} lang={lang} push={push} />
+              <EveningDigestPanel s={s} lang={lang} push={push} />
               {error && <p className="text-sm text-rose-600" role="alert">{error}</p>}
               {reminders === null ? (
                 <div className="flex justify-center py-10"><Loader2 className="w-6 h-6 animate-spin text-indigo-500" /></div>
