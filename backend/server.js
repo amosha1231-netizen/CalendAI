@@ -38,6 +38,7 @@ const multer = require('multer');
 const { getRequestLocation, getRequestTimeZone, isValidTimeZone } = require('./services/userLocation');
 const { getScheduleEventsForDate, isZeroDurationEvent } = require('./services/scheduleOccurrence');
 const { preserveLinkedEntries } = require('./services/linkedScheduleEntries');
+const { warmScheduleCache } = require('./services/scheduleCache');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }); // 10MB max
 
 dotenv.config({ path: path.join(__dirname, '.env') });
@@ -3219,7 +3220,14 @@ app.post('/api/reschedule', aiLimiter, async (req, res) => {
     if (!creditCheck.allowed) {
       return res.status(creditCheck.status || 402).json({ error: creditCheck.error });
     }
-    
+
+    // Warm the cache from Mongo first: on a cold cache (e.g. right after a
+    // server restart) getUserSchedule() would otherwise hand back an empty
+    // default schedule, and saving that over the user's real stored
+    // schedule below would wipe it (and defeat preserveLinkedEntries, which
+    // trusts currentSchedule as the real pre-AI-call state). Same guard
+    // runQuickAdd already uses for the Siri/quick-add cold-start case.
+    await warmScheduleCache({ mongoose, User, userSchedules, userId, source: 'reschedule' });
     const currentSchedule = getUserSchedule(userId);
     const result = await rescheduleWithGemini(currentSchedule, effectiveReason);
 
@@ -3264,6 +3272,10 @@ app.post('/api/reschedule', aiLimiter, async (req, res) => {
     // Fallback: extract delay minutes from text and use mathematical shift
     try {
       const userId = getUserId(req);
+      // Same cold-cache guard as the primary path above — the cache may
+      // still be cold here if checkAICredits/rescheduleWithGemini threw
+      // before the primary path's own warm-up ran.
+      await warmScheduleCache({ mongoose, User, userSchedules, userId, source: 'reschedule-fallback' });
       const currentSchedule = getUserSchedule(userId);
 
       // Try to extract delay minutes from the reason text
@@ -3299,6 +3311,8 @@ app.post('/api/reschedule/shift', async (req, res) => {
 
   try {
     const userId = getUserId(req);
+    // Cold-cache guard: see the comment on the same call in POST /api/reschedule.
+    await warmScheduleCache({ mongoose, User, userSchedules, userId, source: 'reschedule-shift' });
     const currentSchedule = getUserSchedule(userId);
     const result = shiftScheduleForward(currentSchedule, delayMinutes);
 
@@ -3323,6 +3337,8 @@ app.post('/api/reschedule/shift', async (req, res) => {
 app.post('/api/reschedule/merge-gaps', async (req, res) => {
   try {
     const userId = getUserId(req);
+    // Cold-cache guard: see the comment on the same call in POST /api/reschedule.
+    await warmScheduleCache({ mongoose, User, userSchedules, userId, source: 'reschedule-merge-gaps' });
     const currentSchedule = getUserSchedule(userId);
     const result = mergeGaps(currentSchedule);
 
@@ -3520,6 +3536,8 @@ function postponeUncompletedToTomorrow(schedule) {
 app.post('/api/reschedule/add-breaks', async (req, res) => {
   try {
     const userId = getUserId(req);
+    // Cold-cache guard: see the comment on the same call in POST /api/reschedule.
+    await warmScheduleCache({ mongoose, User, userSchedules, userId, source: 'reschedule-add-breaks' });
     const currentSchedule = getUserSchedule(userId);
     const result = addBreaksBetweenEvents(currentSchedule);
 
@@ -3545,6 +3563,8 @@ app.post('/api/reschedule/add-breaks', async (req, res) => {
 app.post('/api/reschedule/postpone-tomorrow', async (req, res) => {
   try {
     const userId = getUserId(req);
+    // Cold-cache guard: see the comment on the same call in POST /api/reschedule.
+    await warmScheduleCache({ mongoose, User, userSchedules, userId, source: 'reschedule-postpone-tomorrow' });
     const currentSchedule = getUserSchedule(userId);
     const result = postponeUncompletedToTomorrow(currentSchedule);
 

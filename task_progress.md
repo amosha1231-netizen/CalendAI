@@ -2177,3 +2177,90 @@ No AI-credit/Lemon Squeezy code touched, no schema changes, no secrets.
 No ambiguous UX decision or open question for the human this run. The one
 genuine finding this round is fixed, verified, and committed/pushed with
 this run.
+
+## 2026-11-05 run notes (thirty-fifth overall, third run today)
+Fresh clone, so `npm install` in both `frontend/` and `backend/` first.
+Baseline: `npm run build` (frontend) clean; `node --test test/*.test.js`
+(backend) 248/264 pass, the same 16 known
+`fastdl.mongodb.org`/mongodb-memory-server sandbox-network failures
+confirmed by exact test name — not regressions. task_progress.md items 1-5
+already all checked off; nothing left to implement there.
+
+Delegated a thirty-fifth independent adversarial review (same focus files +
+wiring, explicit instructions to read this entire file first and not
+re-derive any already-fixed bug class) to a sub-agent. It found one
+genuinely new bug, independently re-verified by this run before fixing:
+
+**The five `/api/reschedule*` mutating routes (`backend/server.js`:
+`POST /api/reschedule` and its fallback branch, `POST
+/api/reschedule/shift`, `/merge-gaps`, `/add-breaks`, and
+`/postpone-tomorrow`) all read the schedule via `getUserSchedule(userId)` —
+the in-memory `userSchedules` cache — without ever reloading it from
+MongoDB first.** `getUserSchedule()` auto-vivifies an **empty** default
+schedule on a cache miss (server.js `getUserSchedule`); it never falls back
+to Mongo on its own. The in-memory cache is seeded at boot from a local
+JSON snapshot that does not survive a deploy/restart on typical hosting —
+exactly the cold-start risk `runQuickAdd` (the Siri/quick-add pipeline)
+already guards against by reloading from Mongo before reading the cache
+(its own comment: "after a server restart the in-memory cache is empty...
+This matters most for Siri, which often wakes a cold server"). The five
+reschedule routes never got that same treatment.
+
+Concrete failure scenario: a user has the app open from before a routine
+backend restart (an ordinary deploy, not an attack). Their first action
+afterward is "running late" / "merge gaps" / "add breaks" / "postpone to
+tomorrow" / "reschedule my day" — none of which re-fetch the schedule
+first. On the now-cold server process, `getUserSchedule(userId)` returns
+the empty default, not the user's real schedule from Mongo.
+`POST /api/reschedule` (primary AI path) and `POST /api/reschedule/shift`
+both call `saveScheduleToMongo` **unconditionally**, so the empty schedule
+is written straight over the user's real stored schedule — erasing every
+event for every day, including confirmed mutual meetings and provider
+bookings mirrored there. This is strictly worse than (and undermines the
+precondition of) the "generic schedule-mutation code has no idea a mutual/
+provider marker means the real appointment lives elsewhere" class fixed in
+rounds 29/31/34 via `preserveLinkedEntries`: that helper trusts its
+`current`/stored-schedule argument as ground truth, and this bug meant that
+argument itself could be silently wrong, with the resulting write wiping
+the *entire* schedule rather than just a linked entry. (The other three
+routes — `merge-gaps`/`add-breaks`/`postpone-tomorrow` — happen to no-op
+safely against an empty input today because they gate the save on their own
+"anything actually changed" counter being > 0, but that's incidental, not a
+guard against this bug, so they're fixed too for consistency and in case
+that incidental protection ever changes.)
+
+Fixed by extracting the same reload-from-Mongo guard `runQuickAdd` already
+uses into a new, independently testable service,
+`backend/services/scheduleCache.js` (`fetchStoredSchedule`/
+`warmScheduleCache`, both pure dependency-injected functions — no module-
+level Mongoose/cache coupling, so they're unit-testable without
+`mongodb-memory-server`). Each of the five routes now calls
+`warmScheduleCache({ mongoose, User, userSchedules, userId, source })`
+before its own `getUserSchedule(userId)` read, repopulating the cache from
+the user's real stored schedule first when the cache is cold (a no-op when
+the cache is already warm, or for an anonymous/invalid userId). New
+`backend/test/scheduleCache.test.js` (7 tests): returns the stored schedule
+for a valid user, returns null for an invalid/anonymous id without
+touching Mongo, returns null when the user has no stored schedule, never
+throws on a Mongo lookup error, warms a stale cache entry from Mongo,
+never blanks an already-cached schedule when Mongo has nothing to offer,
+and — the exact regression scenario — populates a genuinely cold (empty
+`Map`) cache before any route would read it. All 7 pass.
+
+`node --check` clean on `backend/server.js` and the new service/test files.
+Full suite re-verified independently by this run (not just taken on the
+sub-agent's report): 255/271 pass (7 new, all green), same 16 known sandbox
+failures, numbers shifted only by the new tests. `npm run build` (frontend)
+clean (no frontend files touched).
+
+`GET /api/reschedule/gaps` has the same stale-cache read but is read-only
+(no save) — left alone; a cold cache there means a stale/incomplete gaps
+list for one request, not data loss, and it self-corrects on the next
+`GET /api/schedule` call (which already reloads from Mongo). Noted but not
+acted on, per prior rounds' judgment call not to touch it without a
+concrete harmful scenario.
+
+No AI-credit/Lemon Squeezy code touched, no schema changes, no secrets. No
+ambiguous UX decision or open question for the human this run. The one
+genuine finding this round is fixed, verified, and committed/pushed with
+this run.
