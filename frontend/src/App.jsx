@@ -940,12 +940,15 @@ function AppRoutes() {
     setActionHistoryCount(prev => prev - 1);
     setSchedule(previousSchedule);
     try {
-      await fetch(`${API_BASE}/api/schedule`, {
+      const res = await fetch(`${API_BASE}/api/schedule`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ schedule: previousSchedule }),
         credentials: "include"
       });
+      // The server keeps booking-linked entries as they are now, so show what it saved.
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.schedule) setSchedule(data.schedule);
       const toastId = Date.now();
       setToasts(prev => [...prev, {
         id: toastId,

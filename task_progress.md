@@ -2044,3 +2044,68 @@ sandbox failures.
 No ambiguous UX decision or open question for the human this run. The one
 genuine finding this round is fixed, verified, and committed/pushed with
 this run.
+
+## 2026-11-05 run notes (thirty-third overall)
+Fresh clone, so `npm install` in both `frontend/` and `backend/` first.
+Baseline: `npm run build` (frontend) clean; `node --test` (backend) 243/259
+pass, the same 16 known `fastdl.mongodb.org`/mongodb-memory-server
+sandbox-network failures confirmed by exact test name against AGENTS.md's
+documented list — not regressions. task_progress.md items 1-5 already all
+checked off; nothing left to implement there.
+
+Delegated a thirty-third independent adversarial review (same 10 mutual/
+provider files + wiring, explicit instructions to read this entire file
+first and not re-derive any already-fixed bug class, asking for fresh
+angles — this time explicitly prompted to also look at adjacent app code
+that intersects the mutual/provider feature, not just the 10-file list) to
+a sub-agent. It found one new, genuine, previously-unreported bug, a fourth
+instance of the "generic schedule-mutation code has no idea a mutual/
+provider marker means the real appointment lives elsewhere" class (after
+rounds 29/31/32), this time via the calendar's **Undo** button:
+
+**`PUT /api/schedule` (backend/server.js), called by `handleUndo` in
+`frontend/src/App.jsx`, wrote the client's full schedule snapshot straight
+to Mongo/cache with no exception for `mutualSessionId`/`providerBookingId`
+entries.** Every mutating action in `App.jsx` (parse, image parse, remove,
+edit, free-slot add, reschedule) first snapshots the current schedule for
+undo. Pressing Undo after that snapshot either (a) drops a mutual meeting
+or provider booking that got confirmed after the snapshot was taken — no
+UI anywhere lets a user bring a lost mutual meeting back — or (b) resurrects
+a booking that was since cancelled by the other party/provider, with no
+real booking or Google Calendar event behind it. Same severity class and
+blast radius as the three prior rounds' instances: CalendAI's own calendar
+view desyncs from the authoritative `MutualBooking`/`ProviderBooking`
+documents and Google Calendar, silently and with no warning.
+
+Fixed with a new pure helper, `backend/services/linkedScheduleEntries.js`
+(`preserveLinkedEntries(incoming, current)`): takes unlinked entries from
+the incoming (client) schedule, takes linked entries only from the current
+(stored) schedule, per day key. `PUT /api/schedule` now re-fetches the
+user's stored schedule from Mongo right before merging and saving (tighter
+than relying on the in-memory cache), returns the merged schedule in the
+response, and 400s on a non-object payload. `handleUndo` in `App.jsx` now
+applies the server's returned schedule instead of assuming its own snapshot
+was saved verbatim, so the client can't drift from what the server actually
+persisted. New `backend/test/linkedScheduleEntries.test.js` (4 tests: booking
+added after snapshot survives Undo, cancelled booking isn't resurrected,
+unlinked entries still round-trip from the snapshot, non-object input
+rejected) — all pass. `node --check` passes on `server.js` and the new
+service. Full suite re-verified independently by this run (not just taken
+on the sub-agent's report): 247/263 pass (4 new, all green), same 16 known
+sandbox failures, numbers shifted only by the new tests. `npm run build`
+(frontend) clean.
+
+Noted but not acted on (narrower, pre-existing, not part of this round's
+fix): a small read-then-write race remains in `PUT /api/schedule` — a
+booking confirmed between the Mongo read and the write could still be
+overwritten; `saveScheduleToMongo` has no revision guard on any wholesale
+schedule write in `server.js`. Also noted: `DELETE /api/schedule/clear`
+has the same unguarded-wipe shape, but the frontend never calls it, so it
+was left alone; the same helper could cover it, and the `/api/reschedule`
+AI-rewrite path round 31 explicitly left out, if a future run wants to
+extend this.
+
+No AI-credit/Lemon Squeezy code touched, no schema changes, no secrets.
+No ambiguous UX decision or open question for the human this run. The one
+genuine finding this round is fixed, verified, and committed/pushed with
+this run.

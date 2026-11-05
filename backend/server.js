@@ -37,6 +37,7 @@ const crypto = require('crypto'); // For Lemon Squeezy webhook HMAC signature ve
 const multer = require('multer');
 const { getRequestLocation, getRequestTimeZone, isValidTimeZone } = require('./services/userLocation');
 const { getScheduleEventsForDate, isZeroDurationEvent } = require('./services/scheduleOccurrence');
+const { preserveLinkedEntries } = require('./services/linkedScheduleEntries');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }); // 10MB max
 
 dotenv.config({ path: path.join(__dirname, '.env') });
@@ -3563,13 +3564,18 @@ app.get('/api/reschedule/gaps', (req, res) => {
 });
 
 app.put('/api/schedule', async (req, res) => {
-  const { schedule } = req.body;
-  if (!schedule) {
+  if (!req.body.schedule) {
     return res.status(400).json({ error: 'schedule is required.' });
   }
   const userId = getUserId(req);
+  // Booking-linked entries come from the stored schedule, never the client
+  // snapshot (Undo), so a restore can't drop or resurrect a booking.
+  let schedule = preserveLinkedEntries(req.body.schedule, getUserSchedule(userId));
+  if (!schedule) return res.status(400).json({ error: 'schedule must be an object.' });
   if (mongoose.Types.ObjectId.isValid(userId)) {
     try {
+      const stored = await User.findById(userId).select('schedule').lean();
+      schedule = preserveLinkedEntries(req.body.schedule, stored?.schedule);
       await saveScheduleToMongo(userId, schedule);
     } catch (error) {
       return res.status(503).json({ error: 'Could not persist the schedule.' });
@@ -3578,7 +3584,7 @@ app.put('/api/schedule', async (req, res) => {
   userSchedules.set(userId, schedule);
   saveSchedulesNow();
   
-  res.json({ ok: true, message: 'Schedule restored.' });
+  res.json({ ok: true, message: 'Schedule restored.', schedule });
 });
 
 app.get('/api/schedule', async (req, res) => {
