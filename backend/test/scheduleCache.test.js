@@ -24,7 +24,7 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const mongoose = require('mongoose');
 
-const { fetchStoredSchedule, warmScheduleCache } = require('../services/scheduleCache');
+const { fetchStoredSchedule, warmScheduleCache, isEffectivelyEmpty } = require('../services/scheduleCache');
 
 function fakeUserWithSchedule(schedule) {
   return {
@@ -100,4 +100,45 @@ test('warmScheduleCache: a cold cache (cache miss) for a logged-in user is popul
   const userSchedules = new Map(); // nothing cached yet, as after a restart
   await warmScheduleCache({ mongoose, User, userSchedules, userId: validId, source: 'test' });
   assert.deepEqual(userSchedules.get(validId), schedule, 'the linked entry must be loaded, not lost to a cold cache');
+});
+
+test('isEffectivelyEmpty: treats the default all-empty-arrays shape (and a cache miss) as empty, a schedule with any event as not', () => {
+  assert.equal(isEffectivelyEmpty(undefined), true);
+  assert.equal(isEffectivelyEmpty(null), true);
+  assert.equal(isEffectivelyEmpty({}), true);
+  assert.equal(isEffectivelyEmpty({ Sunday: [], Monday: [], Today: [] }), true);
+  assert.equal(isEffectivelyEmpty({ Sunday: [{ title: 'Real' }] }), false);
+});
+
+test('warmScheduleCache: never overwrites an already-warm cache entry, even with a concurrent write racing the Mongo read', async () => {
+  // Regression for the bug this fix closes: warmScheduleCache used to
+  // unconditionally re-fetch from Mongo and blindly Map.set() the result on
+  // every call, not just on a genuine cold-cache miss. Because the Mongo
+  // read is async, any other request that mutated this same cached object
+  // in place (exactly what mutualRoutes.js/providerRoutes.js's best-effort
+  // confirm-side cache sync does — getUserSchedule(id) then push the new
+  // event directly onto the returned object) during that read's flight time
+  // got silently reverted the instant the stale read resolved and replaced
+  // the whole Map entry — permanently losing a just-confirmed mutual
+  // meeting/provider booking from both the cache and (via the caller's own
+  // unconditional saveScheduleToMongo right after) MongoDB itself.
+  const staleFromMongo = { Wednesday: [{ title: 'Stale, pre-confirm snapshot' }] };
+  const User = fakeUserWithSchedule(staleFromMongo);
+  let findByIdCalls = 0;
+  const countingUser = {
+    findById: (...args) => {
+      findByIdCalls += 1;
+      return User.findById(...args);
+    }
+  };
+  // Simulate the real shape: an already-warm cache entry that a concurrent
+  // confirm route has *already* pushed a new, real event onto in place —
+  // i.e. the up-to-date state warmScheduleCache must not clobber.
+  const warmAndUpToDate = { Wednesday: [{ title: 'Just-confirmed mutual meeting', mutualSessionId: 'sess1' }] };
+  const userSchedules = new Map([[validId, warmAndUpToDate]]);
+
+  await warmScheduleCache({ mongoose, User: countingUser, userSchedules, userId: validId, source: 'test' });
+
+  assert.equal(findByIdCalls, 0, 'an already-warm cache must never trigger a Mongo read at all, closing the race window');
+  assert.deepEqual(userSchedules.get(validId), warmAndUpToDate, 'the concurrently-written, up-to-date entry must survive untouched');
 });

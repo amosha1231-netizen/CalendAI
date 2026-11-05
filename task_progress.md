@@ -2264,3 +2264,110 @@ No AI-credit/Lemon Squeezy code touched, no schema changes, no secrets. No
 ambiguous UX decision or open question for the human this run. The one
 genuine finding this round is fixed, verified, and committed/pushed with
 this run.
+
+## 2026-11-05 run notes (thirty-sixth overall, fourth run today)
+`npm install` in both `frontend/` and `backend/` (fresh clone). Baseline:
+`npm run build` (frontend) clean; `node --test` (backend) 255/271 pass, the
+same 16 known `fastdl.mongodb.org`/mongodb-memory-server sandbox-network
+failures confirmed by exact test name — not regressions. task_progress.md
+items 1-5 already all checked off; nothing left to implement there.
+
+Delegated a thirty-sixth independent adversarial review (same focus files +
+wiring, explicitly pointed at round 35's own new files
+`scheduleCache.js`/`linkedScheduleEntries.js`, since those hadn't had a
+dedicated review yet, and told to read this entire file first and not
+re-derive any already-fixed bug class) to a sub-agent. It found one new,
+genuine, previously-missed bug — a flaw in round 35's own fix, found by
+tracing the new helper itself rather than its callers:
+
+**`warmScheduleCache` (`backend/services/scheduleCache.js`, added last
+round) unconditionally re-fetched from Mongo and blindly overwrote the
+in-memory cache entry on *every* call, not just on a genuine cold-cache
+miss — despite its own docstring and this file's prior note both claiming
+it was "a no-op when the cache is already warm."** Nothing in the code
+checked `userSchedules.has(userId)` (or anything else) before issuing
+`User.findById(userId)` and replacing the Map entry with whatever came
+back. Because that Mongo read is a real async round-trip — on every single
+call to all five `/api/reschedule*` routes, called unconditionally at the
+top of each handler — it opened a read-then-blind-overwrite race window on
+*every* reschedule request, not only right after a server restart.
+Concrete trigger: host U has a pending `MutualBooking`; U taps "I'm running
+late" (`POST /api/reschedule/shift`), which starts `warmScheduleCache`'s
+Mongo read; while that read is in flight, the invitee confirms the session
+— `mutualRoutes.js`'s confirm route correctly writes Mongo, then does its
+best-effort cache sync by mutating the *same* cached object in place
+(`getUserSchedule(host)` returns it by reference, pushes the new event,
+calls `saveSchedulesNow()`); U's stale `User.findById` (issued before that
+write landed) then resolves and `userSchedules.set(U, <stale schedule>)`
+clobbers the Map entry wholesale, discarding the just-added meeting; the
+route then runs its own logic over the now-reverted cache and calls
+`saveScheduleToMongo` unconditionally, permanently erasing the confirmed
+meeting's mirrored entry from Mongo too — while the `MutualBooking` doc
+stays `completed`, both Google Calendar events exist, and the invitee's own
+schedule still shows it. The primary AI-rewrite path of `POST
+/api/reschedule` has the same shape with a much larger window (an entire
+LLM call sits between the stale warm-read and the final save). This
+defeats the precondition `preserveLinkedEntries` (rounds 33/34) depends on
+— it only protects an entry present in *both* the incoming and current
+schedules it's handed; it can't protect an entry that's simply missing from
+`current` because the cache was just stale-overwritten before
+`preserveLinkedEntries` ever ran.
+
+Fixed by making `warmScheduleCache` skip the Mongo read entirely once the
+cache already holds real (non-empty) data for that user: added
+`isEffectivelyEmpty(schedule)` (true for a cache miss, `null`/`undefined`,
+or a schedule whose every day-bucket array is empty — i.e. the literal
+`getDefaultSchedule()` shape) and short-circuit before fetching when the
+existing cache entry isn't effectively empty. This closes the race for the
+common case (a route running against an already-warm cache, which is every
+request except the first one for a given user after a cold start) by
+removing the async read-then-overwrite step altogether — no fetch, no await
+gap, no window for a concurrent write to get clobbered. It also correctly
+still re-fetches when the cache holds only the auto-vivified empty default
+(e.g. if some other route had called `getUserSchedule()` directly without
+a Mongo preload first), unlike a naive `userSchedules.has(userId)` check
+would have, so the original cold-start fix from round 35 is preserved for
+the narrower cases that still need it. A theoretical window remains on the
+very first (genuinely cold) access for a given user, mirroring the same
+narrow, pre-existing, already-accepted (round 12) legacy risk class —
+deliberately not solved here, consistent with that precedent, since closing
+it fully would need a revision-guarded Mongo write or distributed lock, a
+larger change than this round's actual finding calls for.
+
+Added two regression tests to `backend/test/scheduleCache.test.js`: one for
+the new `isEffectivelyEmpty` export directly, and one reproducing the exact
+race this fix closes — an already-warm cache entry holding a
+concurrently-written, up-to-date schedule must survive `warmScheduleCache`
+completely untouched, and must trigger zero `User.findById` calls (asserted
+via a call-counting wrapper), proving the race window itself is gone, not
+just that the final state happens to match. Verified both new tests fail
+against the pre-fix code (temporarily reverted just the one guard line,
+confirmed `findByIdCalls` was 1 and the up-to-date entry got clobbered) and
+pass against the fix. The three pre-existing `warmScheduleCache` tests
+needed no changes — their premises (a cold cache, or a cache holding only
+an empty/stale-default entry) are exactly the cases this fix still fetches
+for. `node --check` clean on both changed files. `node --test
+test/scheduleCache.test.js` 9/9 pass. Full suite after the fix: 257/273
+pass (16 known sandbox-network failures, net +2 tests this run). `npm run
+build` (frontend) clean (no frontend files touched).
+
+The sub-agent's review also checked and ruled out: `preserveLinkedEntries`'s
+day-key handling when a linked entry's day bucket is entirely absent from
+`incoming` (correctly re-added, not lost); `DELETE /api/schedule/clear`
+(confirmed via grep still unreachable from any frontend code, consistent
+with round 35's judgment); `GET /api/reschedule/gaps` (confirmed still
+read-only, low severity, self-corrects on the next `GET /api/schedule`,
+consistent with round 35's judgment). Noted but deliberately not fixed
+(pre-existing, out-of-scope legacy code predating this branch, same
+unconditional-overwrite shape as the bug fixed this round, flagged for a
+future run with a broader mandate): `runQuickAdd`'s own cold-cache guard
+(`backend/server.js` ~line 2548) has the identical "always fetch from Mongo
+and overwrite on every call" shape `warmScheduleCache` just had — it
+predates this branch and sits outside the designated 10-file + newly-added
+scope, consistent with round 12's own decision not to touch comparable
+legacy `server.js`-wide risk.
+
+No AI-credit/Lemon Squeezy code touched, no schema changes, no secrets. No
+ambiguous UX decision or open question for the human this run. The one
+genuine finding this round is fixed, verified, and will be committed/pushed
+with this run.
