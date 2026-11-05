@@ -2109,3 +2109,71 @@ No AI-credit/Lemon Squeezy code touched, no schema changes, no secrets.
 No ambiguous UX decision or open question for the human this run. The one
 genuine finding this round is fixed, verified, and committed/pushed with
 this run.
+
+## 2026-11-05 run notes (thirty-fourth overall, second run today)
+Fresh clone, so `npm install` in both `frontend/` and `backend/` first.
+Baseline: `npm run build` (frontend) clean; `node --test test/*.test.js`
+(backend) 247/263 pass, the same 16 known
+`fastdl.mongodb.org`/mongodb-memory-server sandbox-network failures
+confirmed by exact test name — not regressions. task_progress.md items 1-5
+already all checked off; nothing left to implement there.
+
+Delegated a thirty-fourth independent adversarial review (same 10 mutual/
+provider files + wiring, explicit instructions to read this entire file
+first and not re-derive any already-fixed bug class) to a sub-agent. It
+picked up exactly the gap the note directly above this one flagged as left
+for a future run: the `/api/reschedule` AI-rewrite path.
+
+**`POST /api/reschedule`'s primary (Gemini/DeepSeek) path sent the user's
+entire schedule to the LLM and saved back whatever JSON it returned,
+wholesale, via `saveScheduleToMongo`, with no protection for
+`mutualSessionId`/`providerBookingId`-marked entries** — a fourth instance
+of the "generic schedule-mutation code has no idea a mutual/provider marker
+means the real appointment lives elsewhere" class (after the direct edit/
+delete routes, the four bulk reschedule helpers, and Undo). Worse than
+those three: this is free-form LLM output, not a deterministic algorithm,
+so nothing guarantees the model even echoes a linked entry back unchanged —
+it can rename, retime, or drop it outright, and the model's own
+"don't move פגישה/תור לרופא" instruction doesn't reliably catch these
+entries since their titles are synthesized (`"{subject} — {name}"`,
+`"{service} - {guestName}"`) rather than those keywords. A user asking the
+AI to "reschedule my day" after a confirmed mutual meeting or provider
+booking was already on the calendar could have it silently moved or removed
+from CalendAI's view while the real appointment stayed exactly where it was
+in Google Calendar / the other party's calendar / the `MutualBooking`/
+`ProviderBooking` doc.
+
+Fixed by reusing round 33's `preserveLinkedEntries` helper
+(`backend/services/linkedScheduleEntries.js`): after `deductAICredit` (so a
+genuine AI call is still correctly billed per AGENTS.md's "never invent AI
+usage" rule) and before saving, `result.newSchedule =
+preserveLinkedEntries(result.newSchedule, currentSchedule)` re-derives every
+linked entry from the pre-AI-call schedule, discarding whatever the model
+produced for it. A non-object AI response now 502s cleanly instead of
+corrupting the schedule document. The fallback (mathematical-shift) path
+already had its own guard from round 31 and needed no change. Added one
+regression test to `backend/test/linkedScheduleEntries.test.js` (a rewrite
+that retimes a linked entry has its real time restored) against the shared
+helper — no new test harness needed.
+
+`node --check` clean on `backend/server.js` and the touched test file.
+`node --test test/linkedScheduleEntries.test.js` 5/5 pass. Full suite
+re-verified independently by this run (not just taken on the sub-agent's
+report): 248/264 pass (1 new, green), same 16 known sandbox failures.
+`npm run build` (frontend) clean (no frontend files touched).
+
+The sub-agent's review also re-confirmed (no new findings) the atomic
+claim/confirm/cancel skeletons, `winsOverlapRace`, Shabbat/Friday/day-window
+guards, Google freebusy fail-closed handling, all input-validation guards,
+and every frontend disabled-guard/stale-request-ref/ARIA fix from prior
+rounds.
+
+Remaining noted-but-not-acted-on item from the prior run still stands: the
+small read-then-write race in `PUT /api/schedule`/`saveScheduleToMongo` (no
+revision guard on a wholesale schedule write), and `DELETE
+/api/schedule/clear`'s same unguarded-wipe shape (frontend never calls it).
+
+No AI-credit/Lemon Squeezy code touched, no schema changes, no secrets.
+No ambiguous UX decision or open question for the human this run. The one
+genuine finding this round is fixed, verified, and committed/pushed with
+this run.

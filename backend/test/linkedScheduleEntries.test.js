@@ -31,6 +31,21 @@ test('undo snapshot holding a since-cancelled booking does not resurrect it', ()
   assert.deepEqual(result.Wednesday, []);
 });
 
+test('a rewritten schedule that retimes a linked entry has the real time restored', () => {
+  // Mirrors POST /api/reschedule: the AI rewrites the whole schedule with no
+  // idea a mutualSessionId/providerBookingId entry mirrors a real
+  // appointment, and could move it to a "better" slot — the merged result
+  // must keep the entry's real (stored) time, not whatever the rewrite
+  // produced for it.
+  const movedMutual = { ...mutual('s1'), startTime: '03:00 PM', endTime: '03:30 PM' };
+  const rewritten = { Monday: [plain('Gym'), movedMutual] };
+  const stored = { Monday: [plain('Gym'), mutual('s1')] };
+  const result = preserveLinkedEntries(rewritten, stored);
+  const kept = result.Monday.find(e => e.mutualSessionId === 's1');
+  assert.equal(kept.startTime, '11:00 AM');
+  assert.equal(kept.endTime, '11:30 AM');
+});
+
 test('unlinked entries come from the snapshot as before', () => {
   const snapshot = { Monday: [plain('Old')], Friday: [plain('Fri')] };
   const stored = { Monday: [plain('New')], Friday: [] };

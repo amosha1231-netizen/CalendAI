@@ -3224,6 +3224,28 @@ app.post('/api/reschedule', aiLimiter, async (req, res) => {
     const result = await rescheduleWithGemini(currentSchedule, effectiveReason);
 
     const { remainingCredits } = await deductAICredit(userId, result.usage, result.modelName || 'deepseek/deepseek-chat', 'reschedule');
+
+    // The AI rewrites the ENTIRE schedule from scratch (see the prompt's
+    // "Maintain Structure" rule in aiService.js) with no idea that a
+    // mutualSessionId/providerBookingId entry mirrors a real appointment
+    // that lives in the MutualBooking/ProviderBooking doc and on Google
+    // Calendar (and, for a mutual meeting, the other party's own calendar
+    // too) — the same "generic schedule-mutation code has no idea a mutual/
+    // provider marker means the real appointment lives elsewhere" class
+    // already fixed for the direct edit/delete routes, the four bulk
+    // reschedule helpers below, and the frontend's Undo. Unlike those,
+    // free-form LLM JSON has no code-level guarantee it even echoes a given
+    // entry back unchanged (it could rename, retime, or simply drop it) —
+    // so this path needs the same guard. preserveLinkedEntries re-derives
+    // every linked entry from the pre-AI-call schedule, overriding whatever
+    // the model produced for it, exactly as it already does for the
+    // frontend's Undo restoring a stale client snapshot.
+    const safeNewSchedule = preserveLinkedEntries(result.newSchedule, currentSchedule);
+    if (!safeNewSchedule) {
+      throw Object.assign(new Error('Failed to get a valid reschedule plan from AI.'), { status: 502 });
+    }
+    result.newSchedule = safeNewSchedule;
+
     // Save to MongoDB for logged-in users
     if (mongoose.Types.ObjectId.isValid(userId)) {
       await saveScheduleToMongo(userId, result.newSchedule);
