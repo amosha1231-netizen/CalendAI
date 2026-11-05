@@ -150,7 +150,11 @@ function setJwtToken(token) {
 }
 
 // ── Language configuration ──
-const LANGUAGE_CYCLE = ['he', 'en', 'fr', 'es'];
+// Only Hebrew and English are fully translated. French/Spanish strings exist in
+// i18n.js but most components only branch on he/en, so offering them produced a
+// mixed, garbled UI. Keep the toggle to the two complete languages.
+const LANGUAGE_CYCLE = ['he', 'en'];
+const normalizeLang = (l) => (LANGUAGE_CYCLE.includes(l) ? l : (l === 'fr' || l === 'es' ? 'en' : 'he'));
 
 // ── Timezone options ──
 const TIMEZONE_OPTIONS = [
@@ -176,8 +180,7 @@ function AppRoutes() {
   const [lang, setLang] = useState(() => {
     try {
       const saved = safeStorage.getItem('calendai-lang');
-      if (saved && LANGUAGE_CYCLE.includes(saved)) return saved;
-      return 'he';
+      return saved ? normalizeLang(saved) : 'he';
     } catch { return 'he'; }
   });
   const t = translations[lang] || translations['he'];
@@ -324,7 +327,7 @@ function AppRoutes() {
   const [dayDetailModal, setDayDetailModal] = useState(null);
   const [showAlarmSettings, setShowAlarmSettings] = useState(false);
   
-  // ── Calendar View State (day / weekly / monthly / yearly / 100year) ──
+  // ── Calendar View State (day / weekly / monthly / yearly) ──
   const [calendarView, setCalendarView] = useState('day');
   const [dayOffset, setDayOffset] = useState(0); // 0 = today, 1 = tomorrow, -1 = yesterday
 
@@ -801,7 +804,7 @@ function AppRoutes() {
     const nextIndex = (currentIndex + 1) % LANGUAGE_CYCLE.length;
     const newLang = LANGUAGE_CYCLE[nextIndex];
     setLang(newLang);
-    safeStorage.setItem('calendai-lang', newLang);
+    try { safeStorage.setItem('calendai-lang', newLang); } catch (e) {}
   };
 
   const handleTimezoneChange = (newTimezone) => {
@@ -913,18 +916,28 @@ function AppRoutes() {
       recognitionRef.current = recognition;
       recognition.lang = lang === 'he' ? 'he-IL' : 'en-US';
       recognition.continuous = false;
-      recognition.interimResults = false;
+      // Interim results let the user see their words appear while they speak.
+      recognition.interimResults = true;
       recognition.maxAlternatives = 1;
-      recognition.onstart = () => { setIsListening(true); };
+      const baseText = inputTextRef.current ? `${inputTextRef.current.trim()} ` : '';
+      recognition.onstart = () => { setIsListening(true); setError(''); };
       recognition.onresult = (event) => {
-        const transcript = event.results[0][0].transcript;
-        const currentText = inputTextRef.current;
-        const newText = currentText ? `${currentText} ${transcript}` : transcript;
-        setInputText(newText);
+        let transcript = '';
+        for (let i = 0; i < event.results.length; i++) {
+          transcript += event.results[i][0].transcript;
+        }
+        setInputText(`${baseText}${transcript}`.trimStart());
       };
       recognition.onerror = (event) => {
         console.warn('Speech recognition error:', event.error);
         setIsListening(false);
+        if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+          setError(lang === 'he'
+            ? 'אין גישה למיקרופון. אפשרו גישה למיקרופון בהגדרות הדפדפן ונסו שוב.'
+            : 'Microphone access is blocked. Allow microphone access in your browser settings and try again.');
+        } else if (event.error === 'no-speech') {
+          setError(lang === 'he' ? 'לא שמענו כלום. נסו שוב ודברו קרוב למיקרופון.' : "We didn't hear anything. Try again and speak close to the mic.");
+        }
       };
       recognition.onend = () => { setIsListening(false); };
       recognition.start();
@@ -1910,7 +1923,7 @@ function AppRoutes() {
             {/* Textarea */}
             <div className="relative" style={{ minHeight: '100px' }}>
               <textarea value={inputText} onChange={e => setInputText(e.target.value)}
-                className={`w-full p-4 rounded-2xl bg-white text-slate-800 placeholder-transparent focus:ring-2 focus:ring-indigo-400 focus:bg-white focus:shadow-lg border border-slate-200 focus:border-indigo-300 transition-all duration-200 resize-none ${isRTL ? 'text-right' : 'text-left'}`}
+                className={`w-full p-4 rounded-2xl bg-white text-slate-800 placeholder-transparent focus:ring-2 focus:ring-indigo-400 focus:bg-white focus:shadow-lg border border-slate-200 focus:border-indigo-300 transition-all duration-200 resize-none ${isRTL ? 'text-right' : 'text-left'} ${speechSupported ? (isRTL ? 'pl-16' : 'pr-16') : ''}`}
                 rows="3" placeholder=" "
                 onKeyDown={e => { if (e.key === 'Enter' && e.ctrlKey) handleParse(); }}
               />
@@ -1928,17 +1941,27 @@ function AppRoutes() {
                 <button
                   onClick={handleToggleListening}
                   disabled={loading}
-                  className={`absolute bottom-2 ${isRTL ? 'left-2' : 'right-2'} p-2 rounded-full transition shadow-sm z-10 ${
+                  aria-pressed={isListening}
+                  aria-label={isListening ? (lang === 'he' ? 'מקשיב... לחצו להפסקה' : 'Listening... tap to stop') : (lang === 'he' ? 'הזנה קולית' : 'Voice input')}
+                  className={`absolute bottom-3 ${isRTL ? 'left-3' : 'right-3'} w-11 h-11 flex items-center justify-center rounded-full transition shadow-md z-10 ${
                     isListening
-                      ? 'bg-red-500 text-white animate-pulse shadow-md ring-2 ring-red-300'
-                      : 'bg-white text-slate-500 border border-slate-300 hover:bg-slate-100 hover:text-blue-600'
+                      ? 'bg-red-500 text-white animate-pulse ring-4 ring-red-200'
+                      : 'bg-gradient-to-br from-indigo-500 to-blue-600 text-white hover:from-indigo-600 hover:to-blue-700'
                   } disabled:opacity-50 disabled:cursor-not-allowed`}
-                  title={isListening ? (lang === 'he' ? 'מקשיב... לחץ להפסיק' : 'Listening... Click to stop') : (lang === 'he' ? 'הקלט קול' : 'Voice input')}
+                  title={isListening ? (lang === 'he' ? 'מקשיב... לחצו להפסקה' : 'Listening... tap to stop') : (lang === 'he' ? 'הזנה קולית' : 'Voice input')}
                 >
-                  {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                  {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
                 </button>
               )}
             </div>
+            {speechSupported && (
+              <p className="mt-1.5 text-xs text-slate-400 flex items-center gap-1" aria-live="polite">
+                <Mic className="w-3 h-3 shrink-0" />
+                {isListening
+                  ? (lang === 'he' ? 'מקשיב... דברו בחופשיות, למשל "פגישה עם דני מחר בעשר"' : 'Listening... just speak, e.g. "Meeting with Dan tomorrow at 10"')
+                  : (lang === 'he' ? 'אפשר גם לדבר: לחצו על המיקרופון ותגידו מה לקבוע' : 'You can also speak: tap the mic and say what to schedule')}
+              </p>
+            )}
 
             {/* Send Button */}
             <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -2229,7 +2252,7 @@ function AppRoutes() {
             )}
 
             {/* Monthly & Yearly */}
-            {(calendarView === 'monthly' || calendarView === 'yearly' || calendarView === '100year') && (
+            {(calendarView === 'monthly' || calendarView === 'yearly') && (
               <MonthlyCalendar schedule={schedule} lang={lang} />
             )}
           </div>
@@ -2720,8 +2743,9 @@ function AppRoutes() {
         schedule={schedule}
         lang={lang}
         onLangChange={(newLang) => {
-          setLang(newLang);
-          safeStorage.setItem('calendai-lang', newLang);
+          const next = normalizeLang(newLang);
+          setLang(next);
+          try { safeStorage.setItem('calendai-lang', next); } catch (e) {}
         }}
         t={t}
         user={user}

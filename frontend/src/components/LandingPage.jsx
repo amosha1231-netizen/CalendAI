@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Calendar, LogIn, Mail, ChevronDown, Bot, Link2, Bell, BarChart3, ArrowDown, Check } from "lucide-react";
+import { Calendar, LogIn, Mail, ChevronDown, Bot, Link2, Bell, BarChart3, ArrowDown, Check, ShieldCheck } from "lucide-react";
 import { isShabbatNow } from "../utils/shabbatHelper";
 import ShabbatBanner from "./ShabbatBanner";
 
@@ -34,6 +34,29 @@ const AUTH_ERROR_MESSAGES = {
     he: 'ההתחברות נכשלה. נסו שוב.',
     en: 'Sign-in failed. Please try again.'
   }
+};
+
+// Short privacy promise shown before sign-in. Every line must stay true to
+// components/Privacy.jsx — update both together.
+const PRIVACY_NOTE = {
+  he: {
+    title: 'הפרטיות שלך בידיים שלך',
+    points: [
+      'ניגשים ליומן רק כשאת/ה מבקש/ת פעולה',
+      'לא מוכרים ולא משתפים מידע לפרסום',
+      'אפשר לבקש מחיקה של החשבון וכל המידע בכל רגע',
+    ],
+    link: 'למדיניות הפרטיות המלאה',
+  },
+  en: {
+    title: 'Your privacy stays yours',
+    points: [
+      'We touch your calendar only when you ask us to',
+      'We never sell or share your data for advertising',
+      'Ask us to delete your account and data at any time',
+    ],
+    link: 'Read the full privacy policy',
+  },
 };
 
 function authErrorMessage(code, lang) {
@@ -181,6 +204,30 @@ export default function LandingPage({ t, lang, onLogin, onMicrosoftLogin, onTryG
                   {lang === 'he' ? 'או התחבר/הירשם עם אימייל וסיסמה' : 'Or sign in / register with email'}
                 </button>
               )}
+
+              {/* Privacy promise — builds trust before the user signs in */}
+              {(() => {
+                const note = PRIVACY_NOTE[lang === 'he' ? 'he' : 'en'];
+                return (
+                  <div className="mt-6 max-w-md mx-auto lg:mx-0 text-start bg-white/80 border border-line rounded-xl px-4 py-3">
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <ShieldCheck className="w-4 h-4 text-sage-500 shrink-0" aria-hidden="true" />
+                      <strong className="text-sm">{note.title}</strong>
+                    </div>
+                    <ul className="space-y-1 text-xs text-muted">
+                      {note.points.map((p) => (
+                        <li key={p} className="flex items-start gap-1.5">
+                          <Check className="w-3 h-3 mt-0.5 text-sage-500 shrink-0" aria-hidden="true" />
+                          <span>{p}</span>
+                        </li>
+                      ))}
+                    </ul>
+                    <a href="/privacy" className="inline-block mt-2 text-xs font-medium text-ink-900 underline underline-offset-2 hover:text-gold-600">
+                      {note.link}
+                    </a>
+                  </div>
+                );
+              })()}
 
               {/* Scroll indicator */}
               <button
