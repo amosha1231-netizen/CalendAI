@@ -1,8 +1,8 @@
 import React from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 
-const viewModes = ['day', 'weekly', 'monthly', 'yearly', '100year'];
-const VIEW_LABEL_KEYS = { day: 'viewDay', weekly: 'viewWeekly', monthly: 'viewMonthly', yearly: 'viewYearly', '100year': 'view100Year' };
+const viewModes = ['day', 'weekly', 'monthly', 'yearly'];
+const VIEW_LABEL_KEYS = { day: 'viewDay', weekly: 'viewWeekly', monthly: 'viewMonthly', yearly: 'viewYearly' };
 
 export default function ViewNavigation({ currentView, onViewChange, onPrev, onNext, onToday, t, isRTL = false }) {
   const btnBase = "px-3 py-2 min-h-[40px] text-xs font-medium rounded-full transition border";
