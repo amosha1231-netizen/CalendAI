@@ -2064,10 +2064,16 @@ app.post('/api/schedule/add-to-free-slot', async (req, res) => {
     }
     
     const userId = getUserId(req);
+    // Same cold-start risk runQuickAdd/warmScheduleCache guard against elsewhere:
+    // right after a restart the in-memory cache is empty, and this route always
+    // pushes + saves wholesale, so saving on top of that empty default would
+    // wipe the user's real stored schedule (including any mirrored mutual/
+    // provider booking entries).
+    await warmScheduleCache({ mongoose, User, userSchedules, userId, source: 'add-to-free-slot' });
     const schedule = getUserSchedule(userId);
     const todayName = getTodayDayName();
     const locationId = location || DEFAULT_LOCATION_ID;
-    
+
     const actualDay = day === 'Today' ? todayName : day;
     
     // ── HARD SHABBAT GUARD: Block adding events on Saturday ──
@@ -2314,6 +2320,9 @@ app.post('/api/parse-schedule/confirm', aiLimiter, async (req, res) => {
   const text = typeof req.body?.text === 'string' ? req.body.text.slice(0, 2000) : '';
 
   try {
+    // Reload from Mongo first on a cold cache — see warmScheduleCache's own
+    // docstring; this route always saves wholesale via commitParsedEvents.
+    await warmScheduleCache({ mongoose, User, userSchedules, userId, source: 'parse-schedule-confirm' });
     const schedule = JSON.parse(JSON.stringify(getUserSchedule(userId)));
     const result = await commitParsedEvents(req, userId, schedule, events, {
       text,
@@ -2343,7 +2352,10 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
     if (!creditCheck.allowed) {
       return res.status(creditCheck.status || 402).json({ error: creditCheck.error });
     }
-    
+
+    // Reload from Mongo first on a cold cache — see warmScheduleCache's own
+    // docstring; this route always saves wholesale via commitParsedEvents.
+    await warmScheduleCache({ mongoose, User, userSchedules, userId, source: 'parse-schedule' });
     const schedule = JSON.parse(JSON.stringify(getUserSchedule(userId)));
     const todayName = getTodayDayName();
 
@@ -2493,6 +2505,9 @@ app.post('/api/parse-image', aiLimiter, upload.single('image'), async (req, res)
       });
     }
 
+    // Reload from Mongo first on a cold cache — see warmScheduleCache's own
+    // docstring; this route always saves wholesale further down.
+    await warmScheduleCache({ mongoose, User, userSchedules, userId, source: 'parse-image' });
     // Add parsed events to a detached copy so failed billing cannot mutate memory state.
     const schedule = JSON.parse(JSON.stringify(getUserSchedule(userId)));
     const todayName = getTodayDayName();
