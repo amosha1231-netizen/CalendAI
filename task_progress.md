@@ -2675,3 +2675,83 @@ No AI-credit/Lemon Squeezy code touched, no DB schema changes, no secrets.
 No ambiguous UX decision or open question for the human this run. Both
 genuine findings this round are fixed, independently re-verified, and
 committed/pushed with this run.
+
+## 2026-11-06 run notes (fortieth overall)
+`node_modules` already present in both `frontend/` and `backend/` (no fresh
+clone needed). Baseline: `npm run build` (frontend) clean; `node --test
+"test/**/*.test.js"` (backend) 274/290 pass, the same 16 known
+`fastdl.mongodb.org`/mongodb-memory-server sandbox-network failures — not
+regressions, numerically identical to the 274/290 round 39 ended on.
+task_progress.md items 1-5 already all checked off; nothing left to
+implement there.
+
+Read this entire file first, then did a full independent adversarial review
+myself (not delegated) of all 10 in-scope mutual/provider files plus the
+three extracted services (`scheduleCache.js`, `linkedScheduleEntries.js`,
+`scheduleShiftGuard.js`) and their test files, with explicit attention to
+fresh angles not yet tried: traced every `getUserSchedule`/`saveScheduleToMongo`
+call site in `server.js` to confirm the round-35/39 cold-cache guard now
+covers every wholesale-save route (it does — re-verified `PUT /api/schedule`,
+all five `/api/reschedule*` routes, and the four routes round 39 added
+`warmScheduleCache` to; the single-event edit/delete/extend routes still
+safely 404 on a cold cache; `DELETE /api/schedule/clear` remains unreachable
+from the frontend, consistent with rounds 35/36/39's own judgment); re-traced
+`applyMinGapForwardWithLinkedGuard`'s new per-index `ceilingAfter` clamp
+(round 39) against several additional hand-built event sequences (multiple
+consecutive frozen events, a frozen event with zero following unlinked
+events, a zero-room clamp) — all correct, no new gap; read `googleCalendar.js`
+and `mutualAvailability.js` end to end again — no new findings; re-read both
+route files' atomic claim/confirm/cancel skeletons, `winsOverlapRace`, and
+every type/length guard — all still correct.
+
+Found one new, genuinely previously-unreported bug, in `frontend/src/App.jsx`'s
+`handleUndo` — an error-handling path that swallows a failure incorrectly,
+one of the fresh angles this round's brief suggested trying:
+
+**`handleUndo` applied its optimistic schedule update to the UI *before*
+the `PUT /api/schedule` save, and on any failure of that save (network
+error, or the server rejecting it, e.g. a transient 503 from the Mongo
+lookup `preserveLinkedEntries` needs), left that unprotected update on
+screen with no error shown and no way to retry.** Every other schedule
+mutator in this file (`handleRemoveEvent`, `handleMergeGaps`,
+`handleShiftEvents`, `handleReschedule`, ...) follows the same convention:
+await the server's response, throw on `!res.ok`, and only update
+`schedule`/show success on confirmed persistence, with failures surfaced via
+the existing `setError` banner. `handleUndo` broke that pattern: it called
+`setSchedule(previousSchedule)` immediately, then only *conditionally*
+improved on it with the server's `data.schedule` (which has
+`preserveLinkedEntries` applied — see round 33) when the request actually
+succeeded; on failure, the `catch` block only did `console.error`, leaving
+the raw, never-persisted, never-protected client snapshot displayed as if
+it were real. Concretely: the server rejects the save (e.g. the brief
+`User.findById` lookup `PUT /api/schedule` does for `preserveLinkedEntries`
+throws, returning 503) or the request simply times out — the calendar now
+shows a schedule that was never saved and never had a confirmed mutual
+meeting/provider booking added after the snapshot restored into it (or a
+since-cancelled one correctly dropped), with zero indication to the user
+that their Undo didn't actually take effect, and the popped history entry
+is gone for good (no way to retry via the Undo button again). This is the
+same "generic schedule-mutation code can desync CalendAI's own calendar from
+the authoritative booking state" risk class rounds 29/31/32/33/34/35/36/37/38/39
+have repeatedly found on the backend side of this exact Undo flow — this
+instance is purely in the frontend's own error handling around that same
+call, on the failure path none of those rounds exercised.
+
+Fixed by capturing the pre-undo schedule before the optimistic update,
+throwing on `!res.ok` (mirroring every sibling handler in this file), and in
+the `catch` block: reverting `schedule` back to what was on screen before
+the undo, pushing the popped history entry back onto `scheduleHistoryRef`
+(and restoring `actionHistoryCount`) so Undo can be retried, and surfacing
+the failure via the existing `setError` banner instead of only logging it.
+The success path is unchanged (still applies the server's merged
+`data.schedule` when the save lands). No backend changes; no regression
+test added — frontend has no component test suite, consistent with every
+prior frontend-only fix on this branch. `npm run build` (frontend) clean
+after the fix. Backend untouched; full suite re-run as a sanity check,
+independently re-verified by this run: unchanged 274/290, same 16 known
+sandbox failures.
+
+No AI-credit/Lemon Squeezy code touched, no DB schema changes, no secrets.
+No ambiguous UX decision or open question for the human this run. The one
+genuine finding this round is fixed and verified, left uncommitted in the
+working tree per this run's instructions.

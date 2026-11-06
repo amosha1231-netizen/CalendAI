@@ -936,6 +936,15 @@ function AppRoutes() {
 
   const handleUndo = async () => {
     if (scheduleHistoryRef.current.length === 0) return;
+    // Keep what's on screen right now so a failed save can put it back —
+    // the optimistic setSchedule below shows a raw, server-unvalidated
+    // snapshot that still needs preserveLinkedEntries applied server-side
+    // (see the PUT /api/schedule comment); if that save never lands, leaving
+    // this unprotected snapshot on screen with no feedback could silently
+    // drop a mutual meeting/provider booking confirmed after the snapshot
+    // was taken, or resurrect one cancelled since, without the user ever
+    // knowing the undo didn't actually take effect.
+    const scheduleBeforeUndo = schedule;
     const previousSchedule = scheduleHistoryRef.current.pop();
     setActionHistoryCount(prev => prev - 1);
     setSchedule(previousSchedule);
@@ -946,9 +955,10 @@ function AppRoutes() {
         body: JSON.stringify({ schedule: previousSchedule }),
         credentials: "include"
       });
-      // The server keeps booking-linked entries as they are now, so show what it saved.
       const data = await res.json().catch(() => ({}));
-      if (res.ok && data.schedule) setSchedule(data.schedule);
+      if (!res.ok) throw new Error(data.error || "Failed to undo.");
+      // The server keeps booking-linked entries as they are now, so show what it saved.
+      if (data.schedule) setSchedule(data.schedule);
       const toastId = Date.now();
       setToasts(prev => [...prev, {
         id: toastId,
@@ -960,6 +970,14 @@ function AppRoutes() {
       }, 4000);
     } catch (err) {
       console.error("Undo sync failed:", err);
+      // The save never landed (network error, or the server rejected it) —
+      // revert the optimistic update and give the popped history entry back
+      // so Undo can be retried, instead of silently leaving an unsaved,
+      // unprotected schedule on screen.
+      setSchedule(scheduleBeforeUndo);
+      scheduleHistoryRef.current.push(previousSchedule);
+      setActionHistoryCount(prev => prev + 1);
+      setError(err.message || "Undo failed. Please try again.");
     }
   };
 
