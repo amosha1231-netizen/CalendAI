@@ -158,3 +158,25 @@ test('applyMinGapForwardWithLinkedGuard: regression — a shift carried past one
   assert.deepEqual(result[4], { startMinutes: 620, endMinutes: 650 }); // L2: untouched
   assert.ok(result[3].endMinutes <= result[4].startMinutes, 'C must not overlap L2');
 });
+
+test('applyMinGapForwardWithLinkedGuard: regression — an unlinked event immediately before a linked one is not pushed into it', () => {
+  // P: 09:00-09:05 (540-545), Q: 09:06-09:08 (546-548) — gap from P is 1 min,
+  // "needs" +9 to reach the 10-min minimum — but LINKED starts right after at
+  // 09:16 (556), only 8 real minutes after Q's original end. Before the fix,
+  // Q was shifted by the full +9 to 09:15-09:17 (555-557), landing 1 minute
+  // inside LINKED (556-600). The fix clamps Q's shift to the 8 minutes of
+  // real room available, leaving Q touching (not overlapping) LINKED.
+  const events = [plain(540, 545), plain(546, 548), mutual(556, 600)];
+  const result = applyMinGapForwardWithLinkedGuard(events, 10);
+  assert.deepEqual(result[2], { startMinutes: 556, endMinutes: 600 }); // LINKED untouched
+  assert.deepEqual(result[1], { startMinutes: 554, endMinutes: 556 }); // Q: clamped to the 8 min of real room
+  assert.ok(result[1].endMinutes <= result[2].startMinutes, 'Q must not overlap LINKED');
+});
+
+test('applyMinGapForwardWithLinkedGuard: regression — zero room before a linked event leaves the preceding unlinked event untouched', () => {
+  // Q ends exactly where LINKED starts already — no room to shift it at all.
+  const events = [plain(540, 545), plain(546, 556), mutual(556, 600)];
+  const result = applyMinGapForwardWithLinkedGuard(events, 10);
+  assert.deepEqual(result[1], { startMinutes: 546, endMinutes: 556 }); // Q: unchanged, no room
+  assert.deepEqual(result[2], { startMinutes: 556, endMinutes: 600 }); // LINKED untouched
+});

@@ -98,6 +98,18 @@ function applyBackwardShiftWithLinkedGuard(events, shiftMinutes, startIndex = 0)
 // see the regression test below.
 function applyMinGapForwardWithLinkedGuard(events, minGapMinutes) {
   const result = events.map((e) => ({ startMinutes: e.startMinutes, endMinutes: e.endMinutes }));
+  // For each index, the start time of the nearest linked/frozen event that
+  // comes after it (or Infinity if none) — a hard ceiling an unlinked
+  // event's shifted *end* may never cross. Without this, the reset-at-a-
+  // frozen-event logic below only stops a shift from leaking PAST a frozen
+  // event to later ones; it does nothing to stop the unlinked event
+  // immediately BEFORE a frozen one from being pushed INTO it, since that
+  // event's own shifted position is already written before the loop ever
+  // reaches the frozen one. See the regression test below.
+  const ceilingAfter = new Array(events.length).fill(Infinity);
+  for (let i = events.length - 2; i >= 0; i--) {
+    ceilingAfter[i] = isLinkedEvent(events[i + 1]) ? events[i + 1].startMinutes : ceilingAfter[i + 1];
+  }
   let shift = 0;
   for (let i = 0; i < events.length; i++) {
     const event = events[i];
@@ -110,6 +122,13 @@ function applyMinGapForwardWithLinkedGuard(events, minGapMinutes) {
       const gap = event.startMinutes - prevEnd;
       if (gap < minGapMinutes) shift += (minGapMinutes - gap);
     }
+    // Clamp down to whatever room is actually left before the next frozen
+    // event's real, unmoved start — never overlap it, even if that means
+    // falling short of the full minimum-gap shift this event "needs". The
+    // clamped (not desired) value is what carries forward as `shift`, so
+    // later gap checks (via result[i - 1].endMinutes) see the real position.
+    const maxShift = Math.max(0, ceilingAfter[i] - event.endMinutes);
+    if (shift > maxShift) shift = maxShift;
     if (shift > 0) {
       result[i] = { startMinutes: event.startMinutes + shift, endMinutes: event.endMinutes + shift };
     }
