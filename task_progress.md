@@ -2571,3 +2571,107 @@ No AI-credit/Lemon Squeezy code touched, no schema changes, no secrets. No
 ambiguous UX decision or open question for the human this run. The one
 genuine finding this round is fixed, verified, and will be committed/pushed
 with this run.
+
+## 2026-11-06 run notes (thirty-ninth overall)
+Fresh clone, so `npm install` in both `frontend/` and `backend/` first.
+Baseline: `npm run build` (frontend) clean; `node --test "test/**/*.test.js"`
+(backend) 272/288 pass, the same 16 known `fastdl.mongodb.org`/
+mongodb-memory-server sandbox-network failures confirmed by exact test
+number and error text (`criticalPaths.test.js` #1-4, `mutualBooking.test.js`
+#81-89, `ownerCredits.test.js` #139-141) — not regressions, numerically
+identical to the 272/288 round 38 ended on. task_progress.md items 1-5
+spot-checked directly against current code (`setInputText("")` in
+`App.jsx:1082`; multer + `/api/parse-image` + `parseImageWithVision` all
+present and wired in `server.js`/`aiService.js`): still genuinely done.
+
+Delegated a thirty-ninth independent adversarial review (same focus files +
+wiring, plus the three services extracted in rounds 35/37/38 —
+`scheduleCache.js`, `linkedScheduleEntries.js`, `scheduleShiftGuard.js` —
+explicit instructions to read this entire file first and not re-derive any
+already-fixed bug class, with a specific nudge to grep `server.js` for
+*other* generic schedule-mutation helpers besides the ones already checked)
+to a sub-agent. It found and fixed two new, genuine bugs; both independently
+re-verified by this run (diffs read, `node --check` re-run, full suite and
+frontend build re-run from scratch) before committing:
+
+**1. The round-35 "cold-cache wholesale-overwrite" class was present in four
+more routes round 35 never checked — including the app's primary "type a
+plan" AI-parse flow.** Round 35 added a `warmScheduleCache()` call (Mongo
+reload before the first schedule read, skipped once the cache is already
+warm) to the five `/api/reschedule*` routes specifically because they read
+via `getUserSchedule()` with no reload-on-cold-cache and then unconditionally
+`saveScheduleToMongo` (a wholesale `$set`). The same shape, left unguarded,
+also exists in `POST /api/schedule/add-to-free-slot`, `POST
+/api/parse-schedule`, `POST /api/parse-schedule/confirm`, and `POST
+/api/parse-image` — so a cold in-memory cache (e.g. right after a server
+restart, with the user's tab already open from before it) hitting any of
+these would push one new event into the auto-vivified empty default and
+then overwrite the user's real stored schedule in Mongo with just that one
+event, destroying every other day's events including any mirrored confirmed
+mutual meeting or provider booking. Fixed by adding the same
+`warmScheduleCache({ mongoose, User, userSchedules, userId, source })` call
+(already extracted and tested in round 35) immediately before the first
+schedule read in all four routes — zero new logic, same call shape the five
+reschedule routes already use. Re-confirmed (by direct code reading, not
+just taking the sub-agent's word) that every other schedule-writing route in
+`server.js` is already safe on a cold cache: the booking-confirm paths write
+via `$push`/an atomic `scheduleRevision`-guarded update rather than reading
+the whole cache first, and the single-event edit/delete/extend routes 404
+before any write when a cold-cache lookup can't find the target index;
+`DELETE /api/schedule/clear` has the same unconditional-wipe shape but
+remains (re-confirmed again) unreachable from any frontend code, consistent
+with round 35's own judgment not to fix unreachable dead code. No regression
+test added for these four call sites, for the same reason rounds 29/31 gave:
+these are inline `server.js` routes that can't be `require()`'d in a test
+process without a live MongoDB connection (this sandbox's documented
+limitation) — the underlying `warmScheduleCache`/`isEffectivelyEmpty` logic
+itself is already covered by `scheduleCache.test.js`.
+
+**2. Round 38's own fix for `addBreaksBetweenEvents` had a surviving gap:
+it protected events *after* a frozen entry from inheriting a phantom shift,
+but not the unlinked event immediately *before* a frozen one.**
+(`backend/services/scheduleShiftGuard.js`,
+`applyMinGapForwardWithLinkedGuard`.) That event's shifted position is
+computed and written before the loop ever reaches the frozen event, so
+resetting the accumulator *at* the frozen event (round 38's fix) does
+nothing to stop the preceding unlinked event from being pushed into it.
+Concrete repro added as a test: P (09:00-09:05, unlinked), Q (09:06-09:08,
+unlinked, 1-minute gap from P — "needs" +9 to reach the 10-minute minimum),
+a frozen booking at 09:16-10:00 — pre-fix, Q unconditionally got the full
++9 and became 09:15-09:17, landing 1 minute inside the frozen booking, via
+nothing more than tapping "add breaks" on an unrelated part of the day. This
+is the same "generic schedule-mutation code can overlap a frozen mutual/
+provider entry" class the branch has now hit nine times (rounds
+29/31/32/33/34/35/36/37/38), this time a fresh instance surviving inside the
+very fix that most recently closed a sibling instance of it. Fixed by
+precomputing, per index, the start time of the nearest upcoming linked event
+(or Infinity), and clamping the running shift so an event's new end can
+never cross that ceiling, carrying the clamped (not desired) value forward —
+mirroring the clamp-from-the-known-neighbor pattern already used by
+`applyForwardShiftWithLinkedGuard`/`applyBackwardShiftWithLinkedGuard` in the
+same file. Added 2 regression tests to `backend/test/scheduleShiftGuard.test.js`
+(the repro above, plus a zero-room edge case); verified both fail against the
+pre-fix function and pass against the fix; all 15 pre-existing tests in that
+file re-verified unaffected.
+
+The sub-agent's review also checked and ruled out (no new findings):
+`linkedScheduleEntries.js`'s day-key handling under missing/non-array day
+buckets; `scheduleCache.js`'s `isEffectivelyEmpty` (can only ever
+over-trigger a wasted re-fetch, never misclassify in a way that loses data);
+cross-interaction between the three round-35/37/38 services; both route
+files' atomic claim/confirm/cancel skeletons, `winsOverlapRace`,
+day-window/Shabbat guards, and `googleCalendar.js` end to end — all
+unchanged and correct.
+
+`node --check` clean on `backend/server.js`,
+`backend/services/scheduleShiftGuard.js`, and the test file (re-run
+independently by this run, not just the sub-agent's report). Full suite
+after both fixes, re-run independently from a fresh install: **274/290
+pass** (2 new, both green), the same 16 known sandbox-network failures by
+exact test number — not regressions. `npm run build` (frontend) clean (no
+frontend files touched).
+
+No AI-credit/Lemon Squeezy code touched, no DB schema changes, no secrets.
+No ambiguous UX decision or open question for the human this run. Both
+genuine findings this round are fixed, independently re-verified, and
+committed/pushed with this run.
