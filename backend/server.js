@@ -39,7 +39,7 @@ const { getRequestLocation, getRequestTimeZone, isValidTimeZone } = require('./s
 const { getScheduleEventsForDate, isZeroDurationEvent } = require('./services/scheduleOccurrence');
 const { preserveLinkedEntries } = require('./services/linkedScheduleEntries');
 const { warmScheduleCache } = require('./services/scheduleCache');
-const { applyForwardShiftWithLinkedGuard, applyBackwardShiftWithLinkedGuard } = require('./services/scheduleShiftGuard');
+const { applyForwardShiftWithLinkedGuard, applyBackwardShiftWithLinkedGuard, applyMinGapForwardWithLinkedGuard } = require('./services/scheduleShiftGuard');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }); // 10MB max
 
 dotenv.config({ path: path.join(__dirname, '.env') });
@@ -3443,33 +3443,38 @@ function addBreaksBetweenEvents(schedule) {
     return { newSchedule, summary: 'כל האירועים כבר עם הפסקה של 10 דקות לפחות.' };
   }
   
-  // Apply the accumulated shift to all events from the first shifted one onward
-  let appliedShift = 0;
+  // Apply the accumulated shift to all events from the first shifted one
+  // onward. Never move a confirmed mutual meeting/provider booking's
+  // displayed time — same guard as shiftScheduleForward/mergeGaps above,
+  // since this local-only break-insertion has no way to also move the real
+  // Google Calendar event or the other party's own calendar. A naive
+  // running shift that is never reset at a frozen event can carry stale
+  // "debt" past it and land a later unlinked event inside a *second*,
+  // further-along frozen event — delegated to the same linked-aware guard
+  // shiftScheduleForward/mergeGaps use, which resets the running shift at
+  // every frozen event instead of carrying it forward unconditionally.
+  const breakRegion = [];
+  const breakRegionIndices = [];
   for (let i = 0; i < sorted.length; i++) {
     const event = sorted[i];
     const oldStart = timeToMinutes(event.startTime);
     const oldEnd = timeToMinutes(event.endTime);
     if (oldStart === null || oldEnd === null) continue;
-    
-    if (i > 0) {
-      const prevEnd = timeToMinutes(sorted[i - 1].endTime);
-      if (prevEnd !== null && oldStart < prevEnd + 10) {
-        // This event needs to be shifted
-        const gap = oldStart - prevEnd;
-        const neededShift = 10 - gap;
-        appliedShift += neededShift;
-      }
-    }
-    
-    // Never move a confirmed mutual meeting/provider booking's displayed
-    // time — same guard as shiftScheduleForward/mergeGaps above, since this
-    // local-only break-insertion has no way to also move the real Google
-    // Calendar event or the other party's own calendar.
-    if (appliedShift > 0 && !(event.mutualSessionId || event.providerBookingId)) {
-      event.startTime = minutesToTime(oldStart + appliedShift);
-      event.endTime = minutesToTime(oldEnd + appliedShift);
-    }
+    breakRegion.push({
+      startMinutes: oldStart,
+      endMinutes: oldEnd,
+      mutualSessionId: event.mutualSessionId,
+      providerBookingId: event.providerBookingId
+    });
+    breakRegionIndices.push(i);
   }
+  const breakTimes = applyMinGapForwardWithLinkedGuard(breakRegion, 10);
+  breakTimes.forEach((newTimes, idx) => {
+    const event = sorted[breakRegionIndices[idx]];
+    if (event.mutualSessionId || event.providerBookingId) return;
+    event.startTime = minutesToTime(newTimes.startMinutes);
+    event.endTime = minutesToTime(newTimes.endMinutes);
+  });
 
   newSchedule[todayName] = sorted.sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
   syncTodayWithCurrentDay(newSchedule);

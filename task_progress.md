@@ -2456,3 +2456,118 @@ No AI-credit/Lemon Squeezy code touched, no schema changes, no secrets. No
 ambiguous UX decision or open question for the human this run. The one
 genuine finding this round is fixed, verified, and committed/pushed with
 this run.
+
+## 2026-11-06 run notes (thirty-eighth overall)
+Fresh clone, so `npm install` in both `frontend/` and `backend/` first (both
+installs completed cleanly this time — no truncated-install issue like the
+twenty-third run hit). Baseline: `npm run build` (frontend) clean;
+`node --test` (backend) 268/284 pass, the same 16 known
+`fastdl.mongodb.org`/mongodb-memory-server sandbox-network failures
+confirmed by exact test name (`criticalPaths.test.js` 1-4,
+`mutualBooking.test.js`'s racing/cancel tests 81-89, `ownerCredits.test.js`
+139-141) and by error text (`hookFailed`, `Status: 403` against
+`fastdl.mongodb.org`) — not regressions, and numerically identical to the
+exact 268/284 round 37 ended on. task_progress.md items 1-5 spot-checked
+directly against current code (`setInputText("")` in `App.jsx:1082`; multer
++ `/api/parse-image` + `parseImageWithVision` all present and wired): still
+genuinely done.
+
+Read this entire file first, then did a full independent adversarial review
+myself (not delegated) of all 10 in-scope mutual/provider files plus the
+three newer extracted services (`linkedScheduleEntries.js`,
+`scheduleCache.js`, `scheduleShiftGuard.js`) and their test files, with
+explicit attention to round 37's own closing claim that `addBreaksBetweenEvents`
+was "already immune" to the overlap-with-a-frozen-event bug class it had
+just fixed in `shiftScheduleForward`/`mergeGaps` — exactly the kind of
+"re-check a prior round's own reasoning, don't just take it on trust"
+angle this branch's history has repeatedly rewarded (e.g. round 2's
+second-run correction of round 2's own stale note). That claim turned out
+to be wrong. Found and fixed one new, genuine bug:
+
+**`addBreaksBetweenEvents` ("add 10-minute breaks") could still introduce a
+brand-new overlap between an unlinked personal event and a frozen
+(`mutualSessionId`/`providerBookingId`-marked) confirmed mutual meeting or
+provider booking — the same bug class rounds 29/31/32/33/34/35/36/37 have
+repeatedly found and fixed in sibling "quick action" helpers, in a fifth
+instance round 37 itself explicitly (and incorrectly) reasoned was not
+present.** `addBreaksBetweenEvents` walks today's events left to right with
+a running `appliedShift` accumulator: whenever an event's gap from its
+(possibly already-shifted) predecessor is under 10 minutes, it adds the
+needed top-up to `appliedShift` and carries that value forward to every
+later event, which is the correct design *when every event in the chain can
+actually move* — it preserves relative spacing once a real shift happens.
+Round 31 added a guard so a *frozen* event itself is skipped (never moved),
+but that guard only skipped the *move* — the `appliedShift += neededShift`
+line directly above it still ran unconditionally, even for a frozen
+current event, and the resulting (never-realized) "debt" kept being carried
+forward to every event after it. Concretely: event P (unlinked), event Q
+(unlinked, 1-minute gap after P — needs +9 and gets it, a real shift),
+LINKED L1 (frozen, only a 3-minute real gap after Q's new position — would
+"need" +7 but can't move, yet that 7 still got folded into the running
+total), event C (unlinked, already a comfortable gap after L1's real,
+unmoved end) — C still inherited L1's phantom, never-applied shift on top
+of its own, landing at a position that, with a second frozen event L2
+further down the day, is now fully *inside* L2's frozen window. Verified
+this concretely with a standalone repro against the pre-fix code: C ended
+up at 10:26–10:36, squarely inside a frozen provider booking at
+10:20–10:50 — a real double-booked-looking entry in the ordinary calendar
+view, created by tapping "add breaks" on an otherwise completely unrelated
+part of the day, no attack required.
+
+Fixed by extracting the shift computation into a new, dependency-free,
+unit-tested function in `backend/services/scheduleShiftGuard.js`,
+`applyMinGapForwardWithLinkedGuard(events, minGapMinutes)`, mirroring the
+file's existing `applyForwardShiftWithLinkedGuard`/
+`applyBackwardShiftWithLinkedGuard` functions and naming convention: it
+resets the running shift to zero *at* every linked/frozen event (not just
+skipping the move), since a frozen event breaks the cascade — nothing after
+it should inherit a shift tied to a move that never actually happened.
+`addBreaksBetweenEvents` now builds the same `{startMinutes, endMinutes,
+mutualSessionId?, providerBookingId?}` region (excluding unparsable-time
+entries, same as `shiftScheduleForward`'s existing region-building pattern)
+and calls the new guard function instead of running its own ad hoc
+accumulator; the first (count-only, early-return-deciding) loop was left
+untouched since it only ever over-counts (never under-counts) relative to
+the corrected logic, so it can't cause a real break to be missed, only an
+occasional harmless no-op save in the narrow case where every violation
+turns out to be against a frozen neighbor — not worth the extra scope to
+also fix.
+
+Added 4 regression tests to `backend/test/scheduleShiftGuard.test.js`
+(mirroring its existing style): no-linked-events baseline, a linked event
+never moves, a frozen event's own would-be shift does not leak into a
+later unlinked event whose real gap is already fine, and the exact
+regression scenario above (reproduced with the same P/Q/L1/C/L2 shape,
+asserting `C` ends at or before `L2`'s start). Verified the two new
+"leak"/regression tests fail against a reverted (pre-fix, no-reset) version
+of `applyMinGapForwardWithLinkedGuard` (temporarily patched in, confirmed
+`not ok` on both, then restored byte-for-byte via diff) and pass against
+the fix. `node --check` clean on `server.js`, `scheduleShiftGuard.js`, and
+the test file.
+
+Full suite after the fix: 272/288 pass (4 new, all green), the same 16
+known sandbox-network failures by exact test name — not regressions.
+`npm run build` (frontend) clean (no frontend files touched).
+
+Also re-confirmed (no new findings, via direct re-reading rather than
+delegation) `applyForwardShiftWithLinkedGuard`/`applyBackwardShiftWithLinkedGuard`
+themselves remain correct (their clamp-based design, unlike
+`addBreaksBetweenEvents`'s accumulator, was never susceptible to this
+exact leak — confirmed by tracing why: they re-derive each event's cap
+fresh from the real position of whichever neighbor is next, never a
+carried numeric "debt"); `postponeUncompletedToTomorrow`'s own linked-aware
+filtering and its "schedule after the single latest-ending event of the
+day" placement logic (can't create a new overlap with a linked tomorrow
+event, since it always starts strictly after every existing tomorrow
+event's real end, linked or not); `mutualRoutes.js`'s and
+`providerRoutes.js`'s full atomic claim/confirm/cancel skeletons,
+`activeSlot` sync, `winsOverlapRace`'s 3-way chain, the raw-Google-error-leak
+sanitization, day-window/Shabbat/Friday-cutoff guards, and
+`preserveLinkedEntries`/`warmScheduleCache`/`isEffectivelyEmpty`; skimmed
+`googleCalendar.js` end to end (token-refresh, timezone-offset formatting,
+Meet-link fallback) with no new findings.
+
+No AI-credit/Lemon Squeezy code touched, no schema changes, no secrets. No
+ambiguous UX decision or open question for the human this run. The one
+genuine finding this round is fixed, verified, and will be committed/pushed
+with this run.

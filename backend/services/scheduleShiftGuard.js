@@ -83,8 +83,43 @@ function applyBackwardShiftWithLinkedGuard(events, shiftMinutes, startIndex = 0)
   return result;
 }
 
+// Walks events left-to-right, pushing any unlinked event whose start is
+// less than minGapMinutes after the (possibly already-shifted) previous
+// event's end just far enough forward to restore that minimum gap. A linked
+// event never moves AND resets the running shift to zero: any amount
+// carried from before it (including whatever gap violation it itself would
+// have needed, had it been movable) is discarded there, since nothing after
+// it should inherit a shift tied to an event that never actually moved —
+// everything after it is measured fresh against its own true, unmoved end
+// (`result[i - 1].endMinutes`, which always reflects the real current
+// boundary, frozen or shifted). Without this reset, a flat carried-forward
+// shift computed for/around one frozen event could still land an unlinked
+// event already past it squarely inside a *second*, later frozen event —
+// see the regression test below.
+function applyMinGapForwardWithLinkedGuard(events, minGapMinutes) {
+  const result = events.map((e) => ({ startMinutes: e.startMinutes, endMinutes: e.endMinutes }));
+  let shift = 0;
+  for (let i = 0; i < events.length; i++) {
+    const event = events[i];
+    if (isLinkedEvent(event)) {
+      shift = 0;
+      continue;
+    }
+    if (i > 0) {
+      const prevEnd = result[i - 1].endMinutes;
+      const gap = event.startMinutes - prevEnd;
+      if (gap < minGapMinutes) shift += (minGapMinutes - gap);
+    }
+    if (shift > 0) {
+      result[i] = { startMinutes: event.startMinutes + shift, endMinutes: event.endMinutes + shift };
+    }
+  }
+  return result;
+}
+
 module.exports = {
   isLinkedEvent,
   applyForwardShiftWithLinkedGuard,
   applyBackwardShiftWithLinkedGuard,
+  applyMinGapForwardWithLinkedGuard,
 };
