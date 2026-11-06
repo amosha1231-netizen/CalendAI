@@ -39,6 +39,7 @@ const { getRequestLocation, getRequestTimeZone, isValidTimeZone } = require('./s
 const { getScheduleEventsForDate, isZeroDurationEvent } = require('./services/scheduleOccurrence');
 const { preserveLinkedEntries } = require('./services/linkedScheduleEntries');
 const { warmScheduleCache } = require('./services/scheduleCache');
+const { applyForwardShiftWithLinkedGuard, applyBackwardShiftWithLinkedGuard } = require('./services/scheduleShiftGuard');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }); // 10MB max
 
 dotenv.config({ path: path.join(__dirname, '.env') });
@@ -1068,26 +1069,38 @@ function shiftScheduleForward(schedule, delayMinutes) {
     return { newSchedule, summary: 'כל האירועים להיום כבר עברו.' };
   }
   
-  let accumulatedDelay = delayMinutes;
+  // Never shift a confirmed mutual meeting or provider booking: its real
+  // time lives on Google Calendar (and, for a provider booking, the other
+  // party's own calendar) and in the MutualBooking/ProviderBooking doc —
+  // this local-schedule-only "running late" shift has no way to move
+  // either, so silently moving just the displayed time here would desync
+  // CalendAI's calendar from the actual appointment. A flat shift applied to
+  // every *other* event could still push one of them into a frozen event's
+  // now-unchanged slot, so applyForwardShiftWithLinkedGuard also clamps each
+  // unlinked event's shift so it can never newly overlap one (falling back
+  // to no shift at all for that one event if there's no room).
+  const shiftRegion = [];
+  const shiftRegionIndices = [];
   for (let i = shiftStartIndex; i < sorted.length; i++) {
     const event = sorted[i];
     const oldStart = timeToMinutes(event.startTime);
     const oldEnd = timeToMinutes(event.endTime);
     if (oldStart === null || oldEnd === null) continue;
-    // Never shift a confirmed mutual meeting or provider booking: its real
-    // time lives on Google Calendar (and, for a provider booking, the other
-    // party's own calendar) and in the MutualBooking/ProviderBooking doc —
-    // this local-schedule-only "running late" shift has no way to move
-    // either, so silently moving just the displayed time here would desync
-    // CalendAI's calendar from the actual appointment.
-    if (event.mutualSessionId || event.providerBookingId) continue;
-
-    const newStart = oldStart + accumulatedDelay;
-    const newEnd = oldEnd + accumulatedDelay;
-
-    event.startTime = minutesToTime(newStart);
-    event.endTime = minutesToTime(newEnd);
+    shiftRegion.push({
+      startMinutes: oldStart,
+      endMinutes: oldEnd,
+      mutualSessionId: event.mutualSessionId,
+      providerBookingId: event.providerBookingId
+    });
+    shiftRegionIndices.push(i);
   }
+  const shiftedTimes = applyForwardShiftWithLinkedGuard(shiftRegion, delayMinutes);
+  shiftedTimes.forEach((newTimes, idx) => {
+    const event = sorted[shiftRegionIndices[idx]];
+    if (event.mutualSessionId || event.providerBookingId) return;
+    event.startTime = minutesToTime(newTimes.startMinutes);
+    event.endTime = minutesToTime(newTimes.endMinutes);
+  });
   
   newSchedule[todayName] = sorted.sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
   
@@ -1131,18 +1144,36 @@ function mergeGaps(schedule) {
     for (let i = 0; i < sorted.length; i++) {
       const eventStart = timeToMinutes(sorted[i].startTime);
       if (eventStart !== null && eventStart >= gapStart + gap.gapMinutes) {
+        // Same guard as shiftScheduleForward above — never move a confirmed
+        // mutual meeting/provider booking's displayed time, since this
+        // local-only merge has no way to also move the real Google Calendar
+        // event or the other party's own calendar. A flat shift applied to
+        // every *other* event here could still pull one of them back into a
+        // frozen event's now-unchanged slot, so
+        // applyBackwardShiftWithLinkedGuard also clamps each unlinked
+        // event's shift so it can never newly overlap one (falling back to
+        // no shift at all for that one event if there's no room).
+        const mergeRegion = [];
+        const mergeRegionIndices = [];
         for (let j = i; j < sorted.length; j++) {
           const oldStart = timeToMinutes(sorted[j].startTime);
           const oldEnd = timeToMinutes(sorted[j].endTime);
           if (oldStart === null || oldEnd === null) continue;
-          // Same guard as shiftScheduleForward above — never move a
-          // confirmed mutual meeting/provider booking's displayed time,
-          // since this local-only merge has no way to also move the real
-          // Google Calendar event or the other party's own calendar.
-          if (sorted[j].mutualSessionId || sorted[j].providerBookingId) continue;
-          sorted[j].startTime = minutesToTime(oldStart - gap.gapMinutes);
-          sorted[j].endTime = minutesToTime(oldEnd - gap.gapMinutes);
+          mergeRegion.push({
+            startMinutes: oldStart,
+            endMinutes: oldEnd,
+            mutualSessionId: sorted[j].mutualSessionId,
+            providerBookingId: sorted[j].providerBookingId
+          });
+          mergeRegionIndices.push(j);
         }
+        const mergedTimes = applyBackwardShiftWithLinkedGuard(mergeRegion, gap.gapMinutes);
+        mergedTimes.forEach((newTimes, idx) => {
+          const event = sorted[mergeRegionIndices[idx]];
+          if (event.mutualSessionId || event.providerBookingId) return;
+          event.startTime = minutesToTime(newTimes.startMinutes);
+          event.endTime = minutesToTime(newTimes.endMinutes);
+        });
         totalMerged += gap.gapMinutes;
         break;
       }

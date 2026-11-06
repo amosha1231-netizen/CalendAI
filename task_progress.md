@@ -2371,3 +2371,88 @@ No AI-credit/Lemon Squeezy code touched, no schema changes, no secrets. No
 ambiguous UX decision or open question for the human this run. The one
 genuine finding this round is fixed, verified, and will be committed/pushed
 with this run.
+
+## 2026-11-06 run notes (thirty-seventh overall)
+Fresh clone, so `npm install` in both `frontend/` and `backend/` first.
+Baseline: `npm run build` (frontend) clean; `node --test` (backend) 257/273
+pass, the same 16 known `fastdl.mongodb.org`/mongodb-memory-server
+sandbox-network failures confirmed by exact test name — not regressions.
+task_progress.md items 1-5 already all checked off; nothing left to
+implement there.
+
+Delegated a thirty-seventh independent adversarial review (same focus
+files + wiring, explicit instructions to read this entire file first and
+not re-derive any already-fixed bug class) to a sub-agent. It found one
+genuinely new bug, independently re-verified by this run before fixing:
+
+**`shiftScheduleForward` and `mergeGaps` (`backend/server.js`) could
+introduce a brand-new overlap between an unlinked personal event and a
+frozen (`mutualSessionId`/`providerBookingId`-marked) event.** Rounds
+29/31 correctly made these "quick action" helpers skip *moving* a linked
+entry, but each applies one flat delta to every *other* event in the run
+with no check for whether that delta now collides with the frozen entry it
+skipped over:
+- `shiftScheduleForward` ("I'm running late"): an unlinked event
+  immediately *before* a linked one can be shifted *forward* into it.
+  Concrete trigger: today has `A` (unlinked, 10:00-10:30) then a confirmed
+  provider booking (10:30-11:00); tapping "running late 15 min" moves `A`
+  to 10:15-10:45, a new 15-minute overlap with the booking that didn't
+  exist before, saved straight to Mongo.
+- `mergeGaps`: an unlinked event *after* a linked one can be shifted
+  *backward* into it, since `findGapsInSchedule` (which decides what gets
+  merged) has no linked-marker awareness at all. Concrete trigger: `A`
+  (09:00-09:30), a confirmed booking (10:00-10:30), `B` (unlinked,
+  10:40-11:10); merging the 30-min gap before the booking pulls `B` back
+  to 10:10-10:40, a new 20-minute overlap with the booking.
+
+Both are reachable through ordinary use (no attack required), persisted
+via `saveScheduleToMongo`, and are the same cross-feature "generic
+schedule-mutation code doesn't know a marker means the real appointment
+lives elsewhere" class this branch has repeatedly found (rounds
+29/31/32/33/34/35/36) — just a new instance of it. `addBreaksBetweenEvents`
+(the sibling function fixed in round 31) was already immune: it recomputes
+each event's needed shift from its immediately-preceding event's *actual
+current* boundary on every iteration (self-correcting), so a frozen event
+naturally halts the cascade; `shiftScheduleForward`/`mergeGaps` instead
+pre-computed one flat delta for the whole tail, which is exactly what let
+the frozen entry get bypassed.
+
+Fixed by extracting a new, dependency-free, independently-testable guard,
+`backend/services/scheduleShiftGuard.js`
+(`applyForwardShiftWithLinkedGuard`/`applyBackwardShiftWithLinkedGuard`):
+each walks the event list in the direction opposite to the shift (backward
+for the forward-shift case, forward for the backward-shift case) so that
+by the time it computes an unlinked event's clamp, it already knows the
+real, possibly-frozen, final position of the neighbor on the "blocked"
+side — capping that event's shift (down to zero, i.e. leaving it exactly
+where it was) rather than ever letting it cross into a frozen neighbor's
+boundary. Both `shiftScheduleForward` and `mergeGaps` now build a plain
+`{startMinutes, endMinutes, mutualSessionId?, providerBookingId?}` region,
+call the matching guard function, and write the (still-frozen-respecting)
+results back — no behavior change for the common case with no nearby
+linked entry (full shift still applied), and no new overlap for the case
+that was broken.
+
+New `backend/test/scheduleShiftGuard.test.js` (11 tests): both guard
+functions with no linked events (full shift applied), a linked event never
+moving, the exact two regression scenarios above (no new overlap, event
+left in place when there's no room), a partial-room case (less than the
+full shift applied when some room exists), and `applyBackwardShiftWithLinkedGuard`'s
+`startIndex` seeding. All 11 pass. `node --check` clean on `server.js`, the
+new service, and the new test file. Full suite re-verified independently
+by this run (not just taken on the sub-agent's report): 268/284 pass (11
+new, all green), the same 16 known sandbox-network failures by exact test
+name — not regressions. `npm run build` (frontend) clean (no frontend
+files touched).
+
+The sub-agent's review also re-confirmed (no new findings) the atomic
+claim/confirm/cancel skeletons, `winsOverlapRace`, Shabbat/Friday/
+day-window guards, Google freebusy fail-closed handling, `category`/`q`/
+other input-validation guards, `preserveLinkedEntries`, `warmScheduleCache`/
+`isEffectivelyEmpty`, and every frontend disabled-guard/stale-request-ref
+fix from prior rounds.
+
+No AI-credit/Lemon Squeezy code touched, no schema changes, no secrets. No
+ambiguous UX decision or open question for the human this run. The one
+genuine finding this round is fixed, verified, and committed/pushed with
+this run.
