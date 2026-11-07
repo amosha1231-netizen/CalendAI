@@ -429,7 +429,17 @@ test('POST /sessions/:id/confirm: a fully successful confirmation also syncs bot
   t.mock.method(googleCalendarService, 'createOAuth2ClientWithRefresh', async () => ({}));
   t.mock.method(google, 'calendar', () => ({ events: { insert: async () => ({ data: { id: 'evt-cache' } }) } }));
 
-  const cacheByUser = { [String(hostId)]: { Tuesday: [] }, [String(inviteeId)]: { Tuesday: [] } };
+  // Seeded with an unrelated pre-existing event (not left all-empty) so this
+  // represents an already-warm cache, the realistic case — syncPushedEventIntoCache
+  // (services/scheduleCache.js) treats an all-empty cache as cold and reloads
+  // it from Mongo instead of pushing onto it directly, which this test's
+  // User.findById mock (a plain resolved value, not a chainable
+  // .select().lean() query) doesn't support; a warm cache skips that reload
+  // and takes the cheap incremental-push path exercised below instead.
+  const cacheByUser = {
+    [String(hostId)]: { Sunday: [{ title: 'Unrelated pre-existing event' }], Tuesday: [] },
+    [String(inviteeId)]: { Sunday: [{ title: 'Unrelated pre-existing event' }], Tuesday: [] }
+  };
   const getUserSchedule = (id) => cacheByUser[String(id)];
   let saveCalls = 0;
   const saveSchedulesNow = () => { saveCalls++; };
@@ -447,6 +457,8 @@ test('POST /sessions/:id/confirm: a fully successful confirmation also syncs bot
     assert.equal(data.ok, true);
     assert.equal(cacheByUser[String(hostId)].Tuesday.length, 1, 'the host\'s cached Tuesday bucket must get the new event');
     assert.equal(cacheByUser[String(inviteeId)].Tuesday.length, 1, 'the invitee\'s cached Tuesday bucket must get the new event');
+    assert.equal(cacheByUser[String(hostId)].Sunday.length, 1, 'the unrelated pre-existing cached event must survive the sync');
+    assert.equal(cacheByUser[String(inviteeId)].Sunday.length, 1, 'the unrelated pre-existing cached event must survive the sync');
     assert.ok(cacheByUser[String(hostId)].Tuesday[0].title.includes('Invitee'), 'the host sees the invitee\'s name in the event title');
     assert.ok(cacheByUser[String(inviteeId)].Tuesday[0].title.includes('Host'), 'the invitee sees the host\'s name in the event title');
     assert.ok(saveCalls >= 1, 'saveSchedulesNow must be called after syncing the cache');

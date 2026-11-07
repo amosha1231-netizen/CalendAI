@@ -2755,3 +2755,105 @@ No AI-credit/Lemon Squeezy code touched, no DB schema changes, no secrets.
 No ambiguous UX decision or open question for the human this run. The one
 genuine finding this round is fixed and verified, left uncommitted in the
 working tree per this run's instructions.
+
+## 2026-11-07 run notes (forty-first overall)
+Fresh clone, `npm install` in both `frontend/` and `backend/`. Baseline:
+`npm run build` (frontend) clean; `node --test` (backend) 274/290 pass, the
+same 16 known `fastdl.mongodb.org`/mongodb-memory-server sandbox-network
+failures by exact test — confirmed by error text (403 download), not
+regressions. task_progress.md items 1-5 already all checked off (not
+re-verified line-by-line this run, given the last several runs' direct
+re-checks against current code each time).
+
+Delegated a forty-first independent adversarial review (same in-scope
+mutual/provider files + the three extracted services + their wiring, with
+explicit instructions not to re-derive any bug class already fixed across
+the prior 40 rounds and to try genuinely fresh angles) to a sub-agent. It
+found one new, previously-missed bug, re-verified by this run directly
+(read the fix, traced `getUserSchedule`'s by-reference Map semantics in
+`server.js` to confirm `Object.assign` onto the returned object actually
+updates the cached entry, re-ran the touched test files and the full suite,
+re-read both test diffs):
+
+**The mutual/provider confirm routes' own best-effort in-memory
+schedule-cache sync could create a *false-warm*, data-incomplete cache
+entry on a cold cache — later silently erasing the rest of a user's
+schedule in Mongo.** (`backend/routes/mutualRoutes.js` `POST
+/sessions/:id/confirm`; `backend/routes/providerRoutes.js` `POST
+/:id/book`.) Both routes correctly `$push` the new event straight to Mongo,
+then best-effort mirror it into server.js' in-memory `userSchedules` cache
+by calling the auto-vivifying `getUserSchedule(userId)` and pushing the
+event onto whatever it returns. `getUserSchedule()` auto-vivifies an
+*empty* default schedule on a cache miss (e.g. right after a server
+restart/deploy, before any other request for that user in this process) —
+so on a cold cache, that push left the cache holding ONLY the one
+just-confirmed event, none of the user's other real schedule data (still
+only in Mongo). That single-event entry then reads as "warm" (not
+effectively empty) to `isEffectivelyEmpty()`, which every
+`/api/reschedule*`-style route's `warmScheduleCache()` guard (rounds 35/39)
+uses to decide whether to reload from Mongo before its own unconditional
+wholesale `saveScheduleToMongo` — so the very next such route to run for
+that user would read the woefully incomplete 1-event cache and overwrite
+the user's entire real stored Mongo schedule with it, permanently
+destroying every other day's events, including any *other* mutual meeting
+or provider booking mirrored there. Deterministic once a cold cache is hit
+(no race/timing needed) — this is the same cold-cache-wholesale-overwrite
+class rounds 35/36/39 already fixed for downstream consumers, reached this
+time through the confirm/book routes' own cache-sync code *creating* the
+false-warm state in the first place, an entry point none of those rounds
+audited.
+
+Fixed by adding `syncPushedEventIntoCache()` to
+`backend/services/scheduleCache.js`: on an already-warm cache, it does the
+original cheap incremental push (no Mongo round-trip, unchanged behavior);
+on a cold/effectively-empty cache, it re-fetches the authoritative schedule
+from Mongo via the existing `fetchStoredSchedule` (which already includes
+the just-pushed event, since the caller's own write landed first) and
+`Object.assign`s it onto the cache object in place, instead of pushing onto
+an incomplete auto-vivified default. Both route files now call it instead
+of the old blind `getUserSchedule()`-then-push. Added 3 regression tests to
+`backend/test/scheduleCache.test.js` (cold cache gets fully reloaded, not
+left with just the one event; warm cache still takes the cheap push path
+with zero Mongo reads; no-ops when the cache accessor returns nothing).
+Updated one pre-existing test in `mutualRoutesValidation.test.js` whose
+seeded cache (`{ Tuesday: [] }`) was — under the now-shared
+`isEffectivelyEmpty` semantics — indistinguishable from cold, and whose
+`User.findById` mock doesn't support the chainable `.select().lean()`
+`fetchStoredSchedule` needs; reseeded it with an unrelated pre-existing
+event to represent a realistic warm cache (a real existing user's cache is
+essentially never all-empty) and added assertions that the pre-existing
+entry survives the sync — strengthening rather than weakening that test.
+Residual, deliberately-accepted risk (consistent with round 36's own
+precedent): two different users' confirm/book requests hitting a
+genuinely-cold cache for the same third party at nearly the same instant
+could race their Mongo re-fetches, with the later one's `Object.assign`
+missing the other's very-recent write — a narrow in-memory-cache staleness
+window only (Mongo itself stays correct via the atomic `$push`),
+self-correcting on that user's next `GET /api/schedule`.
+
+`node --check` clean on all 5 touched files (re-run independently by this
+run). `node --test test/scheduleCache.test.js test/mutualRoutesValidation.test.js
+test/providerRoutesValidation.test.js` 104/104 pass (re-run independently).
+Full suite re-run independently: **277/293 pass** (3 new tests, all green),
+the same 16 known sandbox-network failures by exact test number — not
+regressions. `npm run build` (frontend) clean (no frontend files touched).
+
+The sub-agent's review also tried, and ruled out as clean, several fresh
+angles: email/content injection into Google Calendar event bodies or
+notifications (traced every field reaching `buildGcalEventBody`/event
+titles/descriptions in both route files — none interpreted as
+markup/executable content); integer overflow/negative-number abuse in
+`rangeDays`/`duration`/pagination params (all already clamped/validated);
+authorization gaps in the three extracted services (none — by design, no
+identity checks live at that layer, auth happens in the route files before
+they're called); error-message information disclosure (prior rounds' fixes
+intact); unbounded loops/O(n²) amplification in the shift-guard or
+availability code (all linear or capped by the 14-day window); the cancel/
+rollback paths in both route files (filter-only cache mutations, confirmed
+they can't create the false-warm state the fix above addresses, left
+untouched).
+
+No AI-credit/Lemon Squeezy code touched, no DB schema changes, no secrets.
+No ambiguous UX decision or open question for the human this run. The one
+genuine finding this round is fixed, independently re-verified, and
+committed/pushed with this run.

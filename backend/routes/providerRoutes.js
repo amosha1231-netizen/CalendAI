@@ -19,6 +19,7 @@ const { createOAuth2ClientWithRefresh } = require('../services/googleCalendar');
 // object — a destructured reference would keep pointing at the original
 // function after the module is mocked.
 const mutualAvailability = require('../services/mutualAvailability');
+const { syncPushedEventIntoCache } = require('../services/scheduleCache');
 const {
   mergeIntervals, sliceIntoSlots, overlapsAny, isValidIsoDate, getLocationTimeZone, todayIsoInTimeZone, FRIDAY_SHABBAT_CUTOFF_MIN,
   minutesToTime12, currentMinuteOfDay, getTodayDayNameInTimeZone
@@ -819,18 +820,19 @@ router.post('/:id/book', bookLimiter, async (req, res) => {
     createdBooking = confirmedBooking;
 
     // Best-effort in-memory schedule cache sync (mirrors legacy booking confirm).
+    // syncPushedEventIntoCache (not a blind getUserSchedule()-then-push) so a
+    // cold cache for the provider gets reloaded from Mongo — which already
+    // has this event, via the $push above — instead of being left holding
+    // ONLY this one event, misread as "warm" by every later
+    // warmScheduleCache-guarded route. See that function's doc comment in
+    // scheduleCache.js and its regression test.
     const getUserSchedule = req.app.get('getUserSchedule');
     const saveSchedulesNow = req.app.get('saveSchedulesNow');
     if (getUserSchedule) {
-      const cached = getUserSchedule(provider._id.toString());
-      if (cached) {
-        if (!cached[dayName]) cached[dayName] = [];
-        cached[dayName].push(eventToPersist);
-        if (isBookingToday) {
-          if (!cached.Today) cached.Today = [];
-          cached.Today.push(eventToPersist);
-        }
-      }
+      await syncPushedEventIntoCache({
+        mongoose, User, getUserSchedule, userId: provider._id.toString(),
+        day: dayName, event: eventToPersist, alsoToday: isBookingToday, source: 'provider-book-cache-sync'
+      });
     }
     if (saveSchedulesNow) saveSchedulesNow();
 

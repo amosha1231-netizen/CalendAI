@@ -24,7 +24,7 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const mongoose = require('mongoose');
 
-const { fetchStoredSchedule, warmScheduleCache, isEffectivelyEmpty } = require('../services/scheduleCache');
+const { fetchStoredSchedule, warmScheduleCache, isEffectivelyEmpty, syncPushedEventIntoCache } = require('../services/scheduleCache');
 
 function fakeUserWithSchedule(schedule) {
   return {
@@ -141,4 +141,77 @@ test('warmScheduleCache: never overwrites an already-warm cache entry, even with
 
   assert.equal(findByIdCalls, 0, 'an already-warm cache must never trigger a Mongo read at all, closing the race window');
   assert.deepEqual(userSchedules.get(validId), warmAndUpToDate, 'the concurrently-written, up-to-date entry must survive untouched');
+});
+
+// ── syncPushedEventIntoCache ──
+//
+// Regression this guards: mutualRoutes.js's POST /sessions/:id/confirm and
+// providerRoutes.js's POST /:id/book each persist their new event to Mongo
+// (pushToSchedule / $push) and THEN best-effort sync server.js' in-memory
+// userSchedules cache by calling the auto-vivifying getUserSchedule(userId)
+// and pushing the new event directly onto whatever it returns. On a cold
+// cache (e.g. right after a server restart, before any other request for
+// this user), getUserSchedule() auto-vivifies an *empty* default schedule —
+// so that blind push left the cache holding ONLY the one just-confirmed
+// event, none of the user's other real schedule data, which still only
+// existed in MongoDB. isEffectivelyEmpty() — which every
+// /api/reschedule*-style route's warmScheduleCache() guard uses to decide
+// whether to reload from Mongo — would then wrongly read that single-event
+// cache entry as "warm" (not effectively empty) and skip reloading it, so
+// the next such route to run for this user would read this woefully
+// incomplete cache and unconditionally overwrite the user's real stored
+// Mongo schedule with it, permanently erasing every other day's events —
+// including any OTHER mutual meeting or provider booking mirrored there.
+test('syncPushedEventIntoCache: a cold cache is reloaded from Mongo (not left holding only the pushed event)', async () => {
+  // The caller's own write already landed in Mongo by the time this runs,
+  // so the "fresh" copy already includes the just-pushed event alongside
+  // the user's other real, pre-existing schedule data.
+  const fullScheduleAfterPush = {
+    Sunday: [{ title: 'Unrelated pre-existing event' }],
+    Monday: [{ title: 'Mutual meeting', mutualSessionId: 'sess1' }],
+    Today: [{ title: 'Mutual meeting', mutualSessionId: 'sess1' }]
+  };
+  const User = fakeUserWithSchedule(fullScheduleAfterPush);
+  const userSchedules = new Map(); // cold: nothing cached yet, as after a restart
+  const getUserSchedule = (id) => {
+    if (!userSchedules.has(id)) userSchedules.set(id, { Sunday: [], Monday: [], Today: [] }); // mirrors server.js' auto-vivify
+    return userSchedules.get(id);
+  };
+
+  await syncPushedEventIntoCache({
+    mongoose, User, getUserSchedule, userId: validId,
+    day: 'Monday', event: { title: 'Mutual meeting', mutualSessionId: 'sess1' }, alsoToday: true, source: 'test'
+  });
+
+  const cached = userSchedules.get(validId);
+  assert.deepEqual(cached, fullScheduleAfterPush, 'must hold the full real schedule, not just the one pushed event');
+  assert.equal(isEffectivelyEmpty(cached), false, 'the reloaded cache must no longer look effectively empty');
+  assert.deepEqual(cached.Sunday, fullScheduleAfterPush.Sunday, 'the unrelated pre-existing event must not have been lost');
+});
+
+test('syncPushedEventIntoCache: a warm cache gets the cheap incremental push, with no Mongo read at all', async () => {
+  let findByIdCalls = 0;
+  const countingUser = { findById: () => { findByIdCalls += 1; throw new Error('must not be reached for an already-warm cache'); } };
+  const existing = { Sunday: [{ title: 'Unrelated pre-existing event' }], Monday: [], Today: [] };
+  const userSchedules = new Map([[validId, existing]]);
+  const getUserSchedule = (id) => userSchedules.get(id);
+  const event = { title: 'Provider booking', providerBookingId: 'pb1' };
+
+  await syncPushedEventIntoCache({
+    mongoose, User: countingUser, getUserSchedule, userId: validId,
+    day: 'Monday', event, alsoToday: true, source: 'test'
+  });
+
+  assert.equal(findByIdCalls, 0, 'an already-warm cache must never trigger a Mongo read');
+  assert.deepEqual(userSchedules.get(validId).Sunday, existing.Sunday, 'pre-existing unrelated data must be untouched');
+  assert.deepEqual(userSchedules.get(validId).Monday, [event], 'the new event must be pushed onto the real day bucket');
+  assert.deepEqual(userSchedules.get(validId).Today, [event], 'the new event must also be pushed onto Today');
+});
+
+test('syncPushedEventIntoCache: no-ops when getUserSchedule returns nothing for this user', async () => {
+  const User = { findById: () => { throw new Error('must not be reached'); } };
+  await assert.doesNotReject(syncPushedEventIntoCache({
+    mongoose, User, getUserSchedule: () => null, userId: validId,
+    day: 'Monday', event: { title: 'x' }, alsoToday: false, source: 'test'
+  }));
 });

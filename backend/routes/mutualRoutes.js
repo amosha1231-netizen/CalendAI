@@ -19,6 +19,7 @@ const User = require('../models/User');
 const MutualBooking = require('../models/MutualBooking');
 const { createOAuth2ClientWithRefresh, buildGcalEventBody } = require('../services/googleCalendar');
 const { getMutualFreeSlots, isSlotMutuallyFree, getLocationTimeZone, todayIsoInTimeZone, getTodayDayNameInTimeZone, isValidIsoDate } = require('../services/mutualAvailability');
+const { syncPushedEventIntoCache } = require('../services/scheduleCache');
 
 const DEFAULT_LOCATION_ID = 'jerusalem';
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -450,16 +451,17 @@ router.post('/sessions/:id/confirm', mutualAbuseLimiter, requireAuth, async (req
     const saveSchedulesNow = req.app.get('saveSchedulesNow');
     if (getUserSchedule) {
       const isTodayBucket = date === todayIsoInTimeZone(timeZone);
+      // syncPushedEventIntoCache (not a blind getUserSchedule()-then-push)
+      // so a cold cache for either party gets reloaded from Mongo — which
+      // already has this event, via pushToSchedule above — instead of
+      // being left holding ONLY this one event, misread as "warm" by every
+      // later warmScheduleCache-guarded route. See that function's doc
+      // comment and scheduleCache.test.js's regression test.
       for (const [user, event] of [[host, hostEvent], [invitee, inviteeEvent]]) {
-        const cached = getUserSchedule(user._id.toString());
-        if (cached) {
-          if (!cached[dayOfWeek]) cached[dayOfWeek] = [];
-          cached[dayOfWeek].push(event);
-          if (isTodayBucket) {
-            if (!cached.Today) cached.Today = [];
-            cached.Today.push(event);
-          }
-        }
+        await syncPushedEventIntoCache({
+          mongoose, User, getUserSchedule, userId: user._id.toString(),
+          day: dayOfWeek, event, alsoToday: isTodayBucket, source: 'mutual-confirm-cache-sync'
+        });
       }
     }
     if (saveSchedulesNow) saveSchedulesNow();

@@ -81,4 +81,65 @@ async function warmScheduleCache({ mongoose, User, userSchedules, userId, source
   if (schedule) userSchedules.set(userId, schedule);
 }
 
-module.exports = { fetchStoredSchedule, warmScheduleCache, isEffectivelyEmpty };
+/**
+ * After a caller has already persisted a $push of `event` into userId's
+ * schedule.<day> (and schedule.Today, when `alsoToday`) in MongoDB — e.g.
+ * mutualRoutes.js's POST /sessions/:id/confirm or providerRoutes.js's
+ * POST /:id/book, via their own pushToSchedule/$push write — apply the
+ * matching update to the in-memory userSchedules cache so other routes
+ * that read it don't keep serving a stale schedule.
+ *
+ * This exists because the original shape of that cache sync — call the
+ * auto-vivifying getUserSchedule(userId), then unconditionally push `event`
+ * onto whatever it returns — is unsound on a cold cache: getUserSchedule()
+ * auto-vivifies an *empty* default schedule on a cache miss (e.g. right
+ * after a server restart, with no prior request for this user in this
+ * process), and appending just the one new event onto that empty default
+ * leaves a cache entry holding ONLY this event, none of the user's other
+ * real schedule data (which still only exists in MongoDB at this point).
+ * isEffectivelyEmpty() — which every /api/reschedule*-style route's
+ * warmScheduleCache() guard uses to decide whether to reload from Mongo —
+ * would then wrongly classify that single-event cache entry as "warm" and
+ * skip reloading it before its own unconditional wholesale
+ * saveScheduleToMongo, permanently erasing the rest of the user's schedule
+ * the next time any such route runs for this user. The exact same bug
+ * class rounds 35/39 already fixed for those routes' own cold-cache reads,
+ * reached here instead through the confirm/book handlers' cache-sync code
+ * creating a *false* warm state in the first place. See this file's
+ * regression test for the concrete before/after.
+ *
+ * When the cache is already warm (holds real data for this user, loaded
+ * earlier in this process), the cheap incremental push is applied directly
+ * with no Mongo round-trip — unchanged from the original behavior. When
+ * it's cold/effectively empty, the authoritative copy is re-fetched from
+ * Mongo instead: since the caller's own write already landed before this
+ * runs, that fresh copy already includes `event`, so no separate push is
+ * applied in that branch (avoiding a duplicate).
+ *
+ * @param {object} deps
+ * @param {import('mongoose')} deps.mongoose
+ * @param {import('mongoose').Model} deps.User
+ * @param {(userId: string) => object} deps.getUserSchedule - server.js' auto-vivifying cache accessor
+ * @param {string} deps.userId
+ * @param {string} deps.day - the day-of-week bucket `event` was pushed into
+ * @param {object} deps.event - the schedule entry already persisted to MongoDB
+ * @param {boolean} [deps.alsoToday] - whether `event` was also pushed into the Today bucket
+ * @param {string} [deps.source] - log label for fetchStoredSchedule
+ */
+async function syncPushedEventIntoCache({ mongoose, User, getUserSchedule, userId, day, event, alsoToday, source }) {
+  const cached = getUserSchedule(userId);
+  if (!cached) return;
+  if (isEffectivelyEmpty(cached)) {
+    const fresh = await fetchStoredSchedule({ mongoose, User, userId, source });
+    if (fresh) Object.assign(cached, fresh);
+    return;
+  }
+  if (!cached[day]) cached[day] = [];
+  cached[day].push(event);
+  if (alsoToday) {
+    if (!cached.Today) cached.Today = [];
+    cached.Today.push(event);
+  }
+}
+
+module.exports = { fetchStoredSchedule, warmScheduleCache, isEffectivelyEmpty, syncPushedEventIntoCache };
