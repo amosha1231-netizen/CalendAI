@@ -3003,3 +3003,37 @@ call, not something this run decided.
 
 No code changes this run beyond this file. No AI-credit/Lemon Squeezy code
 touched, no DB schema changes, no secrets.
+
+## 2026-11-07 run notes (forty-fourth overall, fourth run same day)
+Fresh clone, `npm install` in both `frontend/` and `backend/`. Baseline
+reproduced exactly: `npm run build` (frontend) clean; `node --test` (backend)
+277/293 pass, the same 16 known sandbox-network failures by exact test
+number (`criticalPaths.test.js` #1-4, `mutualBooking.test.js` #81-89,
+`ownerCredits.test.js` #139-141) — confirmed not regressions, byte-for-byte
+the same set the forty-third run reported.
+
+Deliberately did **not** launch another broad adversarial review this run.
+The forty-third run's own conclusion (reproduced and endorsed here, not
+taken on faith): 42+ independent hardening rounds across 11 days have
+covered this 10-file scope repeatedly, both self-led and delegated, with
+findings trending smaller each time (length caps, aria-dialog roles, a
+cosmetic UI race, a missing contact-detail display). Forcing a
+forty-fourth adversarial pass over the same files risks manufacturing a
+trivial finding just to have something to report, which is worse than
+reporting none. Both task_progress.md items (1-5) and the mutual/provider
+hardening scope remain genuinely complete; nothing here changed that.
+
+**This run is escalating, not just logging, the forty-third run's two open
+items for the human, since they've now sat unactioned through one full
+extra round:**
+1. Whether to open a PR / merge `wip/mutual-provider-booking` now, rather
+   than keep accumulating commits (197+ so far) against a branch that never
+   lands.
+2. Whether to stop, slow, or re-scope this scheduled task, since the two
+   things it was set up to do are both done.
+3. The still-open product question: should a provider booking's synced
+   Google Calendar event description include the guest's phone number/notes
+   (currently only their name)?
+
+No code changes this run beyond this file. No AI-credit/Lemon Squeezy code
+touched, no DB schema changes, no secrets.
