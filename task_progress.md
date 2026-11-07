@@ -2949,3 +2949,57 @@ unilaterally. Flagging for a product call, not treating it as a bug.
 No AI-credit/Lemon Squeezy code touched, no DB schema changes, no secrets.
 The one genuine finding this round is fixed, independently re-verified, and
 committed/pushed with this run.
+
+## 2026-11-07 run notes (forty-third overall, third run same day)
+Fresh clone, `npm install` in both `frontend/` and `backend/`. Baseline
+reproduced exactly: `npm run build` (frontend) clean; `node --test
+"test/**/*.test.js"` (backend) 277/293 pass, the same 16 known
+`fastdl.mongodb.org` sandbox-network failures by exact test name
+(`criticalPaths.test.js` #1-4, `mutualBooking.test.js` #81-89,
+`ownerCredits.test.js` #139-141) — confirmed not regressions. Re-verified
+task_progress.md items 1-5 still hold against current code (unchanged from
+the last several runs' direct checks).
+
+Did my own independent read this run (not delegated), deliberately aimed at
+the most recently-changed, highest-risk area rather than another broad
+sweep of files that have had 15+ adversarial passes already:
+`backend/services/scheduleCache.js` (added two runs ago) and its call sites
+in `mutualRoutes.js`/`providerRoutes.js` (confirm-side
+`syncPushedEventIntoCache`, cancel-side cache-pull). Traced
+`syncPushedEventIntoCache`'s cold-vs-warm branching under concurrent
+confirms for the same user (both branches converge on the same correct
+post-state since each caller's own Mongo write already landed before this
+runs), and confirmed the cancel-side cache-pull (`mutualRoutes.js:156-172`,
+`providerRoutes.js:449-470`) only ever *filters* the cached day buckets —
+never adds data — so it can't recreate the false-warm-cache bug this same
+area was fixed for two runs ago (filtering an already-cold/empty cache
+bucket just leaves it empty, not falsely "warm"). Read the full
+`scheduleCache.test.js` suite covering this file; coverage already matches
+every branch I traced. No new bug found here.
+
+**Conclusion: this run found nothing left to fix.** Given 42 prior rounds
+(197 commits) have already covered this 10-file scope with repeated
+independent adversarial passes — both self-led and delegated — and the
+trend across the last ~15 rounds has been toward progressively more
+marginal findings (length caps, aria-dialog roles, a cosmetic UI
+race, a missing contact-detail display), I believe the mutual/provider
+booking feature and the task_progress.md items are both genuinely in a
+mature, stable state, not merely "nothing found this particular run."
+
+**Flagging for the human, not deciding unilaterally:** this WIP branch has
+now had enough independent hardening rounds that continuing to run this
+same scheduled task indefinitely is likely low-value from here — each
+further run either reproduces the same clean baseline or finds something
+smaller than the last. Worth a human decision on: (a) whether to merge this
+branch (or open a PR) now rather than keep accumulating commits against a
+branch that never lands, and (b) whether to stop, slow down, or re-scope
+this scheduled task now that the two things it was set up to do
+(task_progress.md's remaining items, and hardening the mutual/provider
+feature) both appear complete. Separately, the still-open product question
+from the run before this one remains unresolved and unactioned: should a
+provider booking's synced Google Calendar event description include the
+guest's phone number/notes (currently only their name)? That's a product
+call, not something this run decided.
+
+No code changes this run beyond this file. No AI-credit/Lemon Squeezy code
+touched, no DB schema changes, no secrets.
