@@ -2857,3 +2857,95 @@ No AI-credit/Lemon Squeezy code touched, no DB schema changes, no secrets.
 No ambiguous UX decision or open question for the human this run. The one
 genuine finding this round is fixed, independently re-verified, and
 committed/pushed with this run.
+
+## 2026-11-07 run notes (forty-second overall, second run same day)
+Fresh clone, `npm install` in both `frontend/` and `backend/`. Baseline:
+`npm run build` (frontend) clean; `node --test "test/**/*.test.js"`
+(backend) 277/293 pass, the same 16 known `fastdl.mongodb.org` sandbox-
+network failures by exact test name (`criticalPaths.test.js` #1-4,
+`mutualBooking.test.js` #81-89, `ownerCredits.test.js` #139-141) — confirmed
+not regressions. Re-verified items 1-5 directly against current code:
+`handleParse` still clears `inputText` immediately (`App.jsx:1100`) with a
+`restoreInput()` closure on failure and resets `loading` in a `finally`;
+image upload (multer in `server.js:43`, `POST /api/parse-image` at
+`server.js:2467-2577`, `parseImageWithVision` in `aiService.js:1032`, and
+the frontend's `handleParseImage` wiring) all confirmed present and wired.
+
+Delegated a forty-second independent adversarial review (same in-scope
+mutual/provider files + wiring, explicit instructions not to re-derive any
+of the 17 bug classes already fixed across the prior 41 rounds, encouraged
+to try fresh angles: error-message consistency, rate limiting, input size
+caps, N+1 queries, resource leaks, React effect-dependency bugs,
+authorization edges, test-coverage gaps, slot/date arithmetic, pagination
+edges, XSS via unescaped user-controlled strings) to a sub-agent. It found
+one new, previously-unreported bug, re-verified by this run directly (read
+the diff, confirmed it against `GET /my-bookings`'s actual response shape
+in `providerRoutes.js`, confirmed no `dangerouslySetInnerHTML`/`innerHTML`
+anywhere in `frontend/src` via grep, rebuilt the frontend myself):
+
+**A guest's optional contact details (email/phone/notes), collected and
+stored on every provider booking, were never shown to the provider
+anywhere in the app — including the provider's own "my bookings" list.**
+`POST /:id/book` (`backend/routes/providerRoutes.js`) validates and
+persists `guestEmail`/`guestPhone`/`guestNotes` on the `ProviderBooking`
+doc, and `GET /api/providers/my-bookings` already returns the full lean
+document (no `.select()` restriction) — the data was collected, stored,
+and sent over the wire every time. But
+`frontend/src/components/ProviderProfileEditor.jsx`'s "Upcoming bookings"
+panel — the only place in the app a provider can see their bookings —
+rendered only `serviceName`, `guestName`, `date`, and
+`startTime`-`endTime`, silently dropping the three contact/notes fields on
+the floor. Concrete failure: a guest leaves a phone number and a note
+("please call before arriving, running 10 min late"); the provider opens
+their bookings panel to prepare and has no phone number to call and no way
+to see the note — the entire point of asking for that optional information
+was lost, with zero UI surface for it anywhere. Checked all 41 prior
+rounds' notes for any mention of `guestPhone`/`guestNotes`/`guestEmail`
+display — none — so this is a genuinely fresh find.
+
+Fixed purely additively in `ProviderProfileEditor.jsx`'s booking card:
+conditionally renders `guestEmail` (Mail icon), `guestPhone` (Phone icon),
+and `guestNotes` (MessageSquare icon, wrapped text) when present, mirroring
+the icon/style conventions already used for the same fields in
+`ProviderBookingView.jsx`'s guest-details form. No backend change needed
+(data was already in the response). Values render as plain React text
+nodes, consistent with the rest of the app having zero
+`dangerouslySetInnerHTML`/`innerHTML` usage anywhere — no XSS surface. No
+regression test added (frontend has no component test suite, consistent
+with every prior frontend-only fix on this branch); verified instead with
+a clean `npm run build` both before and after, re-confirmed independently
+by this run. Backend untouched; full suite re-run by this run as a sanity
+check: unchanged 277/293, same 16 known failures by exact test name.
+
+The review also tried several fresh angles that came up clean, re-traced
+independently where noted: the processing-confirm-vs-concurrent-cancel race
+for mutual sessions (hand-traced, and confirmed already covered by an
+existing `mutualRoutesValidation.test.js` test); CRLF/header injection via
+guest-supplied fields into the Google Calendar `attendees` list (blocked by
+the existing whitespace-rejecting regex on `guestEmail`; `guestPhone`/
+`guestNotes` never reach the Google event body at all — see open question
+below); no optimistic-concurrency guard on `PUT /api/providers/me` (same
+inherent last-write-wins property as any unversioned profile form across
+two tabs — not treated as a new bug class); array-coercion into `Number()`
+for `duration` (not exploitable — coerces identically to the plain value);
+`User.schedule` `Mixed`-vs-`Map` access (confirmed `Mixed`, bracket access
+already correct); `activeSlot` on the provider-booking
+`'processing'`→`'confirmed'` transition (both statuses are "active", no
+explicit set needed, unlike the cancel path which already has one);
+day-window/Shabbat/DST edges in `mutualAvailability.js` (re-traced, already
+covered by 54 existing tests); N+1/unbounded-loop/resource-leak sweep
+across both route files and all four frontend components (no findings);
+repo-wide `dangerouslySetInnerHTML`/`innerHTML` grep (zero matches).
+
+**Open product question for the human, not acted on:** should a provider
+booking's synced Google Calendar event description include the guest's
+phone number and notes (currently only the guest's name, via the event
+title) so they're visible outside CalendAI, e.g. on a phone's calendar app?
+This touches `buildGcalEventBody`'s shared description field (also used by
+mutual bookings for a different purpose: host/invitee names) and has a
+guest-privacy-on-a-possibly-shared-calendar angle, so it wasn't decided
+unilaterally. Flagging for a product call, not treating it as a bug.
+
+No AI-credit/Lemon Squeezy code touched, no DB schema changes, no secrets.
+The one genuine finding this round is fixed, independently re-verified, and
+committed/pushed with this run.

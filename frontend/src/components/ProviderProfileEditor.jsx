@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { X, Loader2, Check, Plus, Trash2, Briefcase, CalendarClock, Ban } from "lucide-react";
+import { X, Loader2, Check, Plus, Trash2, Briefcase, CalendarClock, Ban, Mail, Phone, MessageSquare } from "lucide-react";
 import safeStorage from "../utils/safeStorage";
 
 var API_BASE = import.meta.env.VITE_API_URL || "";
@@ -418,10 +418,40 @@ export default function ProviderProfileEditor({ lang, user, onClose, onBookingCa
               ) : (
                 <div className="space-y-2">
                   {bookings.map(b => (
-                    <div key={b._id} className="flex gap-2 items-center justify-between bg-gray-50 dark:bg-gray-700/50 p-2.5 rounded-lg">
+                    <div key={b._id} className="flex gap-2 items-start justify-between bg-gray-50 dark:bg-gray-700/50 p-2.5 rounded-lg">
                       <div className="min-w-0 text-xs text-gray-700 dark:text-gray-300">
                         <div className="font-medium truncate">{b.serviceName} · {b.guestName}</div>
                         <div className="text-gray-400">{b.date} · {b.startTime}–{b.endTime}</div>
+                        {/* The guest's own optional contact details (collected and
+                            validated server-side in providerRoutes.js' POST /:id/book,
+                            stored on the ProviderBooking doc, and already returned
+                            as-is by GET /my-bookings) — rendered here so the provider
+                            can actually reach the guest or read their notes. Without
+                            this, the whole point of asking the guest for them (e.g. to
+                            call ahead, or read a request in guestNotes) was lost: no
+                            surface in the app ever showed these fields to the provider,
+                            even though the data was collected, stored, and already sent
+                            to this exact component. */}
+                        {(b.guestEmail || b.guestPhone) && (
+                          <div className="flex items-center gap-3 mt-1 flex-wrap">
+                            {b.guestEmail && (
+                              <span className="flex items-center gap-1 text-gray-500 dark:text-gray-400" dir="ltr">
+                                <Mail className="w-3 h-3 shrink-0" /> {b.guestEmail}
+                              </span>
+                            )}
+                            {b.guestPhone && (
+                              <span className="flex items-center gap-1 text-gray-500 dark:text-gray-400" dir="ltr">
+                                <Phone className="w-3 h-3 shrink-0" /> {b.guestPhone}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                        {b.guestNotes && (
+                          <div className="flex items-start gap-1 mt-1 text-gray-500 dark:text-gray-400">
+                            <MessageSquare className="w-3 h-3 mt-0.5 shrink-0" />
+                            <span className="break-words">{b.guestNotes}</span>
+                          </div>
+                        )}
                       </div>
                       <button
                         onClick={() => handleCancelBooking(b._id)}
