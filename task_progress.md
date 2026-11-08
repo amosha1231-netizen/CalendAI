@@ -3096,3 +3096,69 @@ unactioned through three full extra rounds, with one new fact added):**
 No code changes this run beyond this file. No AI-credit/Lemon Squeezy code
 touched, no DB schema changes, no secrets, no branches other than
 `wip/mutual-provider-booking` modified.
+
+## 2026-11-08 run notes (forty-sixth overall, sixth run)
+Fresh clone, `npm install` in both `frontend/` and `backend/`. Baseline
+reproduced exactly: `npm run build` (frontend) clean; `node --test
+"test/**/*.test.js"` (backend) 277/293 pass, the same 16 known
+sandbox-network failures by exact test number (`criticalPaths.test.js` #1-4,
+`mutualBooking.test.js` #81-89, `ownerCredits.test.js` #139-141), confirmed
+by error text (403 from `fastdl.mongodb.org`), not regressions.
+`origin/master` unchanged since the forty-fifth run (`c2b98b9`), so no new
+upstream drift to assess.
+
+Did not force another broad adversarial sweep this run, for the same reason
+the forty-third/forty-fourth/forty-fifth runs gave: three-in-a-row "nothing
+new" results plus a trend of diminishing findings. Instead spent this run's
+effort **correcting a factual error in the forty-fifth run's merge-conflict
+claim**, since that claim is the main blocker cited for the still-open
+"should we PR/merge" question:
+
+**The forty-fifth run's finding — "one real content conflict
+(`frontend/src/App.jsx`)" against `origin/master`'s aurora-redesign commit —
+does not reproduce and appears to have been a false positive.** Re-ran the
+exact same read-only check (`git merge-base` + `git merge-tree`, both the
+current two-arg and the legacy three-arg form, against the same
+`origin/master` commit `c2b98b9` and the same merge-base `8339a07` the prior
+run cited) and got a clean tree with zero `<<<<<<</=======/>>>>>>>` markers
+in either form, exit code 0. Not satisfied with a read-only tool possibly
+being misleading, also did a real trial merge in an throwaway clone under
+`/tmp` (not this working tree): `git merge --no-commit --no-ff origin/master`
+on top of this branch's tip — **"Automatic merge went well"**, including
+`frontend/src/App.jsx` itself ("Auto-merging frontend/src/App.jsx", no
+conflict markers, nothing left staged as unmerged). Eight frontend files
+differ between the branches (`App.jsx`, `index.html`, `BottomNav.jsx`,
+`HomeHeader.jsx` (new from master), `LandingPage.jsx`, `SidebarDrawer.jsx`,
+`ViewNavigation.jsx`, `index.css`, `tailwind.config.js`) but all eight
+auto-merge cleanly — git's 3-way merge resolves the aurora-redesign's
+changes and this branch's own `App.jsx` changes (language-cycle list, new
+component imports, mutual/provider wiring) as non-overlapping hunks, not a
+textual conflict. Discarded the throwaway clone without committing or
+pushing anything from it; this branch and `master` are both untouched by
+this check.
+
+This changes the status of open item #1: **`wip/mutual-provider-booking` is
+currently cleanly mergeable into `master` with no manual conflict
+resolution needed**, not blocked on an `App.jsx` conflict as the last run
+reported. This does not decide *whether* to merge/PR — that's still a human
+call, now with corrected information — and does not change open items #2
+(whether to stop/slow/re-scope this scheduled task, both its original goals
+having been done for four rounds now) or #3 (the guest phone/notes-in-
+Google-Calendar-description product question), both still unactioned.
+
+**Re-escalating for the human, with corrected information on #1:**
+1. `wip/mutual-provider-booking` merges into current `master` cleanly, no
+   conflicts (corrected from the forty-fifth run's claim) — worth deciding
+   whether to open a PR / merge now rather than keep accumulating commits
+   (200+ so far) against a branch that never lands.
+2. Whether to stop, slow, or re-scope this scheduled task — both things it
+   was set up to do (task_progress.md's remaining items; mutual/provider
+   hardening) have been done for four consecutive rounds.
+3. The still-open product question: should a provider booking's synced
+   Google Calendar event description include the guest's phone
+   number/notes (currently only their name)?
+
+No code changes this run beyond this file. No AI-credit/Lemon Squeezy code
+touched, no DB schema changes, no secrets, no branches other than
+`wip/mutual-provider-booking` modified (the merge trial ran entirely in a
+throwaway `/tmp` clone, discarded without pushing).
