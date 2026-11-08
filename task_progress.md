@@ -3162,3 +3162,50 @@ No code changes this run beyond this file. No AI-credit/Lemon Squeezy code
 touched, no DB schema changes, no secrets, no branches other than
 `wip/mutual-provider-booking` modified (the merge trial ran entirely in a
 throwaway `/tmp` clone, discarded without pushing).
+
+## 2026-11-08 run notes (forty-seventh overall, seventh run)
+Fresh clone, `npm install` in both `frontend/` and `backend/`. Baseline
+reproduced exactly: `npm run build` (frontend) clean; `node --test
+"test/**/*.test.js"` (backend) 277/293 pass, the same 16 known
+sandbox-network failures by exact test number (`criticalPaths.test.js` #1-4,
+`mutualBooking.test.js` #81-89, `ownerCredits.test.js` #139-141), confirmed
+by error text (403 from `fastdl.mongodb.org` for `mongodb-memory-server`
+downloads) — not regressions. `origin/master` unchanged since the
+forty-fifth/forty-sixth runs (still `c2b98b9`), so no new upstream drift to
+assess and no reason to re-check the merge-cleanliness finding from the
+forty-sixth run.
+
+Re-verified task_progress.md items 1-5 directly against current code rather
+than trusting the checkmarks (same spot-check the third run did): item 1's
+`setInputText("")` still fires before the request in `handleParse`
+(`frontend/src/App.jsx`); items 3-4's `multer` + `parseImageWithVision` +
+`POST /api/parse-image` backend route and the frontend upload button wired
+to it are both still present and build clean. All 5 items genuinely remain
+done.
+
+Did not force an eighth-in-a-row broad adversarial sweep over the same 10
+mutual/provider files. Rationale unchanged from the last four runs: 46
+prior rounds across 12 days (both self-led and delegated) have repeatedly
+covered this exact scope with findings trending to zero over the last four
+rounds in a row. This run's instructions explicitly say that when all
+in-scope work appears done, the right move is to stop and report, not
+manufacture a finding to justify another pass.
+
+**Re-escalating the same three open items for the human, now unactioned
+through five consecutive rounds (forty-third through forty-seventh):**
+1. `wip/mutual-provider-booking` merges into current `master` cleanly, no
+   conflicts (per the forty-sixth run's corrected finding, re-confirmed
+   here simply by master not having moved) — worth deciding whether to
+   open a PR / merge now rather than keep accumulating commits (200+ so
+   far) against a branch that never lands.
+2. Whether to stop, slow, or re-scope this scheduled task — both things it
+   was set up to do (task_progress.md's remaining items; mutual/provider
+   hardening) have now been done for five consecutive rounds, with
+   findings at zero for four of them.
+3. The still-open product question: should a provider booking's synced
+   Google Calendar event description include the guest's phone
+   number/notes (currently only their name)?
+
+No code changes this run beyond this file. No AI-credit/Lemon Squeezy code
+touched, no DB schema changes, no secrets, no branches other than
+`wip/mutual-provider-booking` touched.
