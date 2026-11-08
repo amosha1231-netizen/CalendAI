@@ -616,7 +616,8 @@ async function checkAICredits(userId) {
       allowed: false,
       status: 402,
       credits: 0,
-      error: 'נגמרו לך הקרדיטים! אנא רכוש חבילת פעולות נוספת כדי להמשיך להשתמש ב-AI.'
+      // Neutral on purpose: the iOS/Android apps show this text and must not point to a purchase.
+      error: 'נגמרו לך הקרדיטים לפעולות AI.'
     };
   } catch (err) {
     console.error('Failed to check AI credits:', err.message);
@@ -2879,7 +2880,7 @@ app.post(SIRI_ENDPOINT_PATH, aiLimiter, async (req, res) => {
       return speak(false, body.blockedMessage, { isBlocked: true });
     }
     if (result.status === 402) {
-      return speak(false, 'נגמרו קרדיטי ה-AI בחשבון. אפשר לשדרג באפליקציה.');
+      return speak(false, 'נגמרו קרדיטי ה-AI בחשבון.');
     }
     if (result.status === 400) {
       return speak(false, 'לא הצלחתי להבין איזה אירוע לקבוע. נסו לומר למשל: פגישה עם דני מחר בשלוש.');
@@ -4447,6 +4448,10 @@ app.use('/api/invites', inviteRoutes);
 // ── Expected Expenses Routes (personal expense tracking) ──
 const expenseRoutes = require('./routes/expenseRoutes');
 app.use('/api/expenses', expenseRoutes);
+
+// Delete account from inside the app (App Store 5.1.1(v), Google Play account deletion policy)
+const accountRoutes = require('./routes/accountRoutes');
+app.use('/api/account', accountRoutes);
 
 // ──────────────────────────────────────────────
 // User Search Endpoint — for GlobalSearch component
