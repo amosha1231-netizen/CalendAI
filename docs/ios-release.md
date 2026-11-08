@@ -39,12 +39,16 @@ Distribute App → App Store Connect.
 
 ## Store review checklist (App Store + Google Play)
 
-Payments stay on the website only. The apps never sell, never show a price,
-and never point to a purchase (no "buy", "upgrade" or "pay on our site").
-Credits bought on the website work in the apps, because they belong to the
-signed-in account (App Store 3.1.3(b), multiplatform services).
+Two ways to buy AI credits, both landing on the signed-in account:
+- **Website**: Lemon Squeezy (`/api/payments/webhook`).
+- **iOS / Android apps**: Apple / Google in-app purchase through RevenueCat
+  (`/api/payments/revenuecat-webhook`). Setup: `docs/in-app-purchases.md`.
 
-- Any new price, purchase or upgrade UI must be wrapped in `!isNativeApp()`.
+The apps never open the web checkout, never link to it, and never say the
+website is cheaper or that you can pay elsewhere (App Store 3.1.1 / 3.1.3).
+
+- Any new web price, purchase or upgrade UI must be wrapped in `!isNativeApp()`;
+  in the apps, buying goes only through `InAppCreditsSheet` (store prices).
 - Error text that the server sends to every client (e.g. the 402 "out of
   credits" message) must stay neutral. The website adds its own "buy more"
   wording in `showOutOfCredits()` in `App.jsx`.
