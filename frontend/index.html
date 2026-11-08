@@ -9,10 +9,114 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="CalendAI" />
-    <meta name="description" content="CalendAI - פירוש לוח זמנים חכם באמצעות AI" />
-    <title>CalendAI - Smart Schedule Parser</title>
+    <title>CalendAI – יומן חכם עם AI בעברית | תיאום פגישות ולו"ז אוטומטי</title>
+    <meta name="description" content="CalendAI (calendai.org) – עוזר יומן חכם בעברית ובאנגלית: כתבו או אמרו את השבוע שלכם בשפה חופשית וה-AI בונה לו&quot;ז, מסנכרן עם Google Calendar, יוצר קישור לתיאום פגישות לוואטסאפ ומכין שעון מעורר לפי האירוע הראשון." />
+    <meta name="application-name" content="CalendAI" />
+    <meta name="author" content="CalendAI" />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
+    <!-- SEO: canonical, hreflang and per-page title/robots are set by the script below,
+         before any crawler reads the page. Home is the canonical https://www.calendai.org/. -->
+    <link rel="canonical" href="https://www.calendai.org/" />
+    <link rel="alternate" hreflang="he" href="https://www.calendai.org/" />
+    <link rel="alternate" hreflang="en" href="https://www.calendai.org/?lang=en" />
+    <link rel="alternate" hreflang="x-default" href="https://www.calendai.org/" />
+    <!-- Open Graph / social previews (WhatsApp, Facebook, LinkedIn, X) -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="CalendAI" />
+    <meta property="og:url" content="https://www.calendai.org/" />
+    <meta property="og:title" content="CalendAI – יומן חכם עם AI בעברית" />
+    <meta property="og:description" content="כתבו את השבוע שלכם בשפה חופשית, וה-AI בונה לו&quot;ז, מתאם פגישות בקישור אחד ומסנכרן עם Google Calendar." />
+    <meta property="og:image" content="https://www.calendai.org/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="CalendAI" />
+    <meta property="og:locale" content="he_IL" />
+    <meta property="og:locale:alternate" content="en_US" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="CalendAI – יומן חכם עם AI בעברית" />
+    <meta name="twitter:description" content="כתבו את השבוע שלכם בשפה חופשית, וה-AI בונה לו&quot;ז, מתאם פגישות ומסנכרן עם Google Calendar." />
+    <meta name="twitter:image" content="https://www.calendai.org/og-image.png" />
+    <script>
+      // Per-page SEO. The site is one SPA, so every path gets this same HTML;
+      // fix the canonical/title/robots for the path being served. Legal and
+      // utility pages stay reachable (Google OAuth and the stores link to them)
+      // but are kept out of search results so they never outrank the home page.
+      (function () {
+        try {
+          if (typeof window === 'undefined' || typeof document === 'undefined') return;
+          var ORIGIN = 'https://www.calendai.org';
+          var path = (window.location.pathname || '/').replace(/\/+$/, '') || '/';
+          var pages = {
+            '/privacy': { title: 'מדיניות פרטיות | CalendAI', noindex: true },
+            '/terms': { title: 'תנאי שימוש | CalendAI', noindex: true },
+            '/delete-account': { title: 'מחיקת חשבון | CalendAI', noindex: true },
+            '/auth/success': { title: 'CalendAI', noindex: true }
+          };
+          var page = pages[path];
+          if (!page && path !== '/') page = { title: null, noindex: true }; // booking links, etc.
+          var en = /(?:^|[?&])lang=en(?:&|$)/.test(window.location.search || '');
+          if (path === '/' && en) {
+            document.documentElement.setAttribute('lang', 'en');
+            document.documentElement.setAttribute('dir', 'ltr');
+            document.title = 'CalendAI – AI Calendar Assistant & Meeting Scheduler';
+          }
+          var canonical = document.querySelector('link[rel="canonical"]');
+          if (canonical) canonical.setAttribute('href', ORIGIN + (path === '/' ? (en ? '/?lang=en' : '/') : path));
+          if (page) {
+            if (page.title) document.title = page.title;
+            var robots = document.querySelector('meta[name="robots"]');
+            if (robots) robots.setAttribute('content', 'noindex, follow');
+            var alts = document.querySelectorAll('link[rel="alternate"][hreflang]');
+            for (var i = 0; i < alts.length; i++) alts[i].parentNode.removeChild(alts[i]);
+          }
+        } catch (e) { /* SEO tweaks are best-effort */ }
+      })();
+    </script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "Organization",
+            "@id": "https://www.calendai.org/#organization",
+            "name": "CalendAI",
+            "url": "https://www.calendai.org/",
+            "logo": "https://www.calendai.org/icon-512.png"
+          },
+          {
+            "@type": "WebSite",
+            "@id": "https://www.calendai.org/#website",
+            "name": "CalendAI",
+            "alternateName": ["CalendAI Israel", "קלנדאי"],
+            "url": "https://www.calendai.org/",
+            "inLanguage": ["he", "en"],
+            "publisher": { "@id": "https://www.calendai.org/#organization" }
+          },
+          {
+            "@type": "SoftwareApplication",
+            "@id": "https://www.calendai.org/#app",
+            "name": "CalendAI",
+            "url": "https://www.calendai.org/",
+            "applicationCategory": "ProductivityApplication",
+            "operatingSystem": "Web, Android, iOS",
+            "inLanguage": ["he", "en"],
+            "image": "https://www.calendai.org/og-image.png",
+            "description": "AI calendar assistant in Hebrew and English: describe your week in plain language and CalendAI builds the schedule, syncs with Google Calendar, shares a booking link over WhatsApp and sets a smart alarm for the first event of the day.",
+            "featureList": [
+              "Natural-language and voice scheduling in Hebrew and English",
+              "Google Calendar sync",
+              "Personal booking link with WhatsApp and email sharing",
+              "Smart alarm based on tomorrow's first event",
+              "Hebrew calendar, Shabbat and holiday times"
+            ],
+            "offers": { "@type": "Offer", "price": "0", "priceCurrency": "ILS" },
+            "publisher": { "@id": "https://www.calendai.org/#organization" }
+          }
+        ]
+      }
+    </script>
     <link rel="manifest" href="/manifest.json" />
-    <link rel="apple-touch-icon" href="/icon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <!-- Ledger & Index brand type: Rubik (display/he), Work Sans (en body), Noto Sans Hebrew (he body), JetBrains Mono (dates/times/prices) -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -187,7 +291,22 @@
         <span class="luxury-loader-status">OPTIMIZING YOUR SCHEDULE...</span>
       </div>
     </div>
-    <div id="root"></div>
+    <!-- Crawlable summary for search engines and no-JS visitors. React replaces it on mount. -->
+    <div id="root">
+      <main style="max-width:720px;margin:0 auto;padding:24px 16px;font-family:system-ui,sans-serif;line-height:1.6">
+        <h1>CalendAI – יומן חכם עם AI בעברית</h1>
+        <p>CalendAI הוא עוזר יומן ותיאום פגישות מבוסס בינה מלאכותית, בעברית ובאנגלית. כתבו או אמרו את השבוע שלכם בשפה חופשית, וה-AI הופך את זה ללו"ז מסודר.</p>
+        <ul>
+          <li>יצירת אירועים ומשימות בשפה טבעית ובקול</li>
+          <li>סנכרון דו-כיווני עם Google Calendar</li>
+          <li>קישור אישי לתיאום פגישות לשיתוף בוואטסאפ ובמייל</li>
+          <li>שעון מעורר חכם לפי האירוע הראשון של מחר</li>
+          <li>לוח שנה עברי, זמני שבת וחגים</li>
+        </ul>
+        <p lang="en" dir="ltr">CalendAI is an AI calendar assistant for Hebrew and English speakers: natural-language scheduling, Google Calendar sync, shareable booking links and smart alarms.</p>
+        <p><a href="/">התחילו עכשיו</a> · <a href="/?lang=en">English</a> · <a href="/privacy">מדיניות פרטיות</a> · <a href="/terms">תנאי שימוש</a></p>
+      </main>
+    </div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

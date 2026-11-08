@@ -178,6 +178,15 @@ function AppRoutes() {
   // Language state - load from localStorage or default to 'he'
   const [lang, setLang] = useState(() => {
     try {
+      // ?lang=en / ?lang=he (used by the English search result and hreflang links)
+      // wins over the saved choice, so a shared English link opens in English.
+      const fromUrl = typeof window !== 'undefined'
+        ? new URLSearchParams(window.location.search).get('lang')
+        : null;
+      if (fromUrl && LANGUAGE_CYCLE.includes(fromUrl)) {
+        try { safeStorage.setItem('calendai-lang', fromUrl); } catch { /* storage unavailable */ }
+        return fromUrl;
+      }
       const saved = safeStorage.getItem('calendai-lang');
       if (saved && LANGUAGE_CYCLE.includes(saved)) return saved;
       return 'he';
@@ -514,7 +523,7 @@ function AppRoutes() {
   }, []);
 
   const handleShareApp = useCallback(async () => {
-    const shareUrl = 'https://calendai.org/';
+    const shareUrl = 'https://www.calendai.org/';
     if (navigator.share) {
       try {
         await navigator.share({
