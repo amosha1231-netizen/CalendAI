@@ -3037,3 +3037,62 @@ extra round:**
 
 No code changes this run beyond this file. No AI-credit/Lemon Squeezy code
 touched, no DB schema changes, no secrets.
+
+## 2026-11-08 run notes (forty-fifth overall, fifth run)
+Fresh clone, `npm install` in both `frontend/` and `backend/`. Baseline
+reproduced exactly, independently re-run end to end: `npm run build`
+(frontend) clean; `node --test` (backend) 277/293 pass, the same 16 known
+sandbox-network failures by exact test number (`criticalPaths.test.js`
+#1-4, `mutualBooking.test.js` #81-89, `ownerCredits.test.js` #139-141) —
+confirmed by error text (403 from `fastdl.mongodb.org`), not regressions,
+byte-for-byte the same set the forty-third/forty-fourth runs reported.
+
+Endorsing the forty-third/forty-fourth runs' conclusion again rather than
+forcing a sixth-in-a-row broad adversarial sweep over the same 10 files:
+45 rounds across 12 days have covered this scope repeatedly (both
+self-led and delegated) with findings trending to near-zero over the last
+three rounds (two straight "nothing found"). Both task_progress.md items
+(1-5) and the mutual/provider hardening scope remain genuinely complete.
+Forcing another pass risks manufacturing a trivial finding just to have
+something to report.
+
+Instead spent this run's effort on one concrete, previously-unchecked
+question directly relevant to the open "should we PR/merge this branch"
+item the last two runs escalated: **is `wip/mutual-provider-booking`
+still mergeable into `master` without conflicts?** Ran `git merge-base`
++ `git merge-tree` (read-only, no branches touched, no merge attempted or
+committed) comparing this branch against current `origin/master`
+(`c2b98b9`). Finding: **no longer a clean merge** — `master` picked up an
+unrelated UI redesign since this branch's last sync point (`0e00f5a`,
+"Redesign: aurora look, voice-first bottom bar, new landing and home
+header", merged to master after this WIP branch's last `Merge master
+into wip/mutual-provider-booking` at `8339a07`), and that redesign touched
+`frontend/src/App.jsx` in ways that now textually conflict with this
+branch's own `App.jsx` changes (language-cycle list, new component
+imports, calendar-view-state comments, at minimum). `git merge-tree`
+reports exactly one real content conflict (`frontend/src/App.jsx`); every
+other changed file (including `frontend/index.html`, which differs but
+auto-merges cleanly) resolves with no conflict markers. I did not attempt
+to resolve this conflict or touch `master`/open a PR — merging and
+resolving a cross-cutting conflict in the one file this repo's own rules
+say never to grow casually is exactly the kind of judgment call this
+task's instructions say to surface, not decide unilaterally, especially
+since the redesign commit is unrelated to this branch's own scope and I
+have no visibility into its intent beyond the diff.
+
+**Re-escalating all three open items for the human (now sitting
+unactioned through three full extra rounds, with one new fact added):**
+1. Whether to open a PR / merge `wip/mutual-provider-booking` now — and if
+   so, note it will need a manual conflict resolution in
+   `frontend/src/App.jsx` against master's aurora-redesign commit first
+   (everything else merges clean per `git merge-tree`).
+2. Whether to stop, slow, or re-scope this scheduled task, since the two
+   things it was set up to do are both done and have been for three
+   rounds.
+3. The still-open product question: should a provider booking's synced
+   Google Calendar event description include the guest's phone
+   number/notes (currently only their name)?
+
+No code changes this run beyond this file. No AI-credit/Lemon Squeezy code
+touched, no DB schema changes, no secrets, no branches other than
+`wip/mutual-provider-booking` modified.
