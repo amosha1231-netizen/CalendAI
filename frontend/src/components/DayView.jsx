@@ -28,18 +28,15 @@ export default function DayView({
   }, []);
 
   const getEventsForDay = useCallback(() => {
+    // schedule['Today'] is a copy of today's weekday list (the server rebuilds
+    // it from schedule[<weekday>] on every save and load), so show one list
+    // or the other, never both: adding both put every event of today on the
+    // screen twice, and put today's events on every other day too.
+    const sourceKey = dayKey || 'Today';
     const allEvents = [];
-    const todayEvents = schedule['Today'] || [];
-    for (const ev of todayEvents) {
-      if (!ev._dayKey) ev._dayKey = 'Today';
+    for (const ev of schedule[sourceKey] || []) {
+      if (!ev._dayKey) ev._dayKey = sourceKey;
       allEvents.push(ev);
-    }
-    if (dayKey && dayKey !== 'Today') {
-      const dayEvents = schedule[dayKey] || [];
-      for (const ev of dayEvents) {
-        if (!ev._dayKey) ev._dayKey = dayKey;
-        allEvents.push(ev);
-      }
     }
     // Filter by location
     if (locationFilter && locationFilter !== 'all') {
