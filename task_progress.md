@@ -3209,3 +3209,58 @@ through five consecutive rounds (forty-third through forty-seventh):**
 No code changes this run beyond this file. No AI-credit/Lemon Squeezy code
 touched, no DB schema changes, no secrets, no branches other than
 `wip/mutual-provider-booking` touched.
+
+## 2026-11-08 run notes (forty-eighth overall, eighth run)
+Fresh clone, `npm install` in both `frontend/` and `backend/`. Baseline
+reproduced exactly: `npm run build` (frontend) clean; `node --test`
+(backend, default recursive discovery, no glob arg — the quoted-glob form
+intermittently returns 0 tests depending on shell globbing, so default
+discovery is the reliable invocation) 277/293 pass, the same 16 known
+sandbox-network failures (`criticalPaths.test.js`, `mutualBooking.test.js`,
+`ownerCredits.test.js`), confirmed by error text (403 from
+`fastdl.mongodb.org`), not regressions.
+
+`origin/master` moved for the first time since the forty-third run
+(`c2b98b9` → `e1b5971`, "SEO: stronger title/description, Open Graph,
+JSON-LD, sitemap, robots, canonical and hreflang", PR #36). Checked whether
+this changes open item #1 (merge cleanliness), since it touches
+`frontend/App.jsx` and `frontend/src/components/GuestBookingView.jsx` —
+both files this branch also touches. Re-ran the read-only
+`git merge-base` + `git merge-tree` check against the new `origin/master`
+tip: still zero conflict markers, same "merged" result for every changed
+file. Read the actual diff (`git show b4a7699`) to confirm by inspection,
+not just tooling: it's three cosmetic hunks (a `?lang=` URL-param read
+added to the `lang` `useState` initializer, two `calendai.org` →
+`www.calendai.org` string literals) with no overlap with this branch's own
+`App.jsx` hunks (language-cycle list, new component imports, mutual/
+provider wiring) or any mutual/provider file. **Item #1 unchanged: still
+cleanly mergeable, no conflict.**
+
+Did not force a ninth-in-a-row broad adversarial sweep over the same 10
+mutual/provider files, for the same reason the last five runs gave:
+findings have been at zero for five consecutive rounds after 42 prior
+rounds of repeated coverage, and this run's own instructions say that when
+all in-scope work appears done, the right move is to stop and report, not
+manufacture a finding. Re-verified task_progress.md items 1-5 hold by the
+same spot-check prior runs have used (not repeated in full here since nothing
+in the frontend/backend entry points for those items changed since the
+last direct check).
+
+**Re-escalating the same three open items for the human, now unactioned
+through six consecutive rounds (forty-third through forty-eighth):**
+1. `wip/mutual-provider-booking` merges into current `master` cleanly, no
+   conflicts — confirmed again this run even after master's first new
+   commit in five rounds. Worth deciding whether to open a PR / merge now
+   rather than keep accumulating commits (200+ so far) against a branch
+   that never lands.
+2. Whether to stop, slow, or re-scope this scheduled task — both things it
+   was set up to do (task_progress.md's remaining items; mutual/provider
+   hardening) have now been done for six consecutive rounds, with findings
+   at zero for five of them.
+3. The still-open product question: should a provider booking's synced
+   Google Calendar event description include the guest's phone
+   number/notes (currently only their name)?
+
+No code changes this run beyond this file. No AI-credit/Lemon Squeezy code
+touched, no DB schema changes, no secrets, no branches other than
+`wip/mutual-provider-booking` touched.
