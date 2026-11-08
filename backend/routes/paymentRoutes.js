@@ -2,11 +2,38 @@ const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
 
+const crypto = require('crypto');
+const mongoose = require('mongoose');
+
 const JWT_SECRET = require('../config/jwtSecret');
+const User = require('../models/User');
+const ProcessedPaymentEvent = require('../models/ProcessedPaymentEvent');
+const {
+  isProActive,
+  lemonProVariantId,
+  revenueCatUserId,
+  revenueCatEventEffect,
+  applyEntitlement
+} = require('../services/subscriptions');
+
+/** CalendAI user id from the Bearer JWT, or null. */
+function userIdFromBearer(req) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
+  try {
+    const decoded = jwt.verify(authHeader.split(' ')[1], JWT_SECRET);
+    return decoded.id || decoded._id || null;
+  } catch (err) {
+    return null;
+  }
+}
 
 /**
  * POST /api/payments/create-checkout
- * Creates a Lemon Squeezy checkout session for purchasing AI credits.
+ * Creates a Lemon Squeezy checkout session.
+ * Body: { lang, product: 'pro' | 'credits' }. 'pro' is the monthly
+ * subscription (LEMON_SQUEEZY_PRO_VARIANT_ID); 'credits' is the one-time
+ * 100-credit pack (LEMON_SQUEEZY_VARIANT_ID).
  * Protected — requires valid JWT token in Authorization header.
  */
 router.post('/create-checkout', async (req, res) => {
@@ -56,7 +83,14 @@ router.post('/create-checkout', async (req, res) => {
       return res.status(500).json({ error: msg('שירות התשלום לא מוגדר בשרת (חסר LEMON_SQUEEZY_STORE_ID).', 'Payment service not configured on the server (LEMON_SQUEEZY_STORE_ID is missing).') });
     }
 
-    const variantId = process.env.LEMON_SQUEEZY_VARIANT_ID?.trim() || '2035157';
+    const creditsVariantId = process.env.LEMON_SQUEEZY_VARIANT_ID?.trim() || '2035157';
+    let variantId = creditsVariantId;
+    if (req.body?.product === 'pro') {
+      // Until the subscription product exists in Lemon Squeezy, keep selling
+      // the credit pack so the button never breaks.
+      variantId = lemonProVariantId() || creditsVariantId;
+      if (!lemonProVariantId()) console.warn('LEMON_SQUEEZY_PRO_VARIANT_ID is not set; Pro checkout falls back to the credit pack.');
+    }
 
     // Include language preference in checkout custom data
     // so the Lemon Squeezy checkout page and webhook can respect it
@@ -137,6 +171,92 @@ router.post('/create-checkout', async (req, res) => {
   } catch (err) {
     console.error('Failed to create Lemon Squeezy checkout:', err.message);
     res.status(500).json({ error: msg('שגיאה ביצירת דף התשלום. נסה שוב מאוחר יותר.', 'Failed to create checkout session. Please try again later.') });
+  }
+});
+
+/**
+ * POST /api/payments/revenuecat-webhook
+ * App Store and Google Play purchases, reported by RevenueCat.
+ * RevenueCat sends the Authorization header configured in its dashboard;
+ * it must equal REVENUECAT_WEBHOOK_AUTH.
+ */
+router.post('/revenuecat-webhook', async (req, res) => {
+  const expected = process.env.REVENUECAT_WEBHOOK_AUTH?.trim();
+  if (!expected) {
+    console.error('RevenueCat webhook: REVENUECAT_WEBHOOK_AUTH is not configured.');
+    return res.status(500).json({ error: 'Webhook secret not configured' });
+  }
+  const received = String(req.headers.authorization || '');
+  const a = Buffer.from(received);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    return res.status(401).json({ error: 'Invalid authorization' });
+  }
+
+  try {
+    const event = req.body?.event;
+    const effect = revenueCatEventEffect(event);
+    if (effect.kind === 'ignore') return res.status(200).json({ received: true });
+
+    const userId = revenueCatUserId(event);
+    const user = userId ? await User.findById(userId) : null;
+    if (!user) {
+      // 200 so RevenueCat does not retry forever for purchases made before login.
+      console.warn(`RevenueCat webhook: no CalendAI user for ${event?.type} (${event?.app_user_id}).`);
+      return res.status(200).json({ received: true, unmatched: true });
+    }
+
+    const result = await applyEntitlement({ User, ProcessedPaymentEvent, user, effect });
+    if (!result.duplicate) console.log(`✅ RevenueCat: ${event.type} (${event.environment}) applied to user ${user._id}.`);
+    return res.status(200).json({ received: true, duplicate: !!result.duplicate });
+  } catch (err) {
+    console.error('RevenueCat webhook processing failed:', err.message);
+    return res.status(500).json({ error: 'Webhook processing failed' });
+  }
+});
+
+/**
+ * POST /api/payments/revenuecat-sync
+ * Called by the app right after a purchase or "Restore purchases", so Pro
+ * turns on without waiting for the webhook. Reads the subscriber from the
+ * RevenueCat REST API (REVENUECAT_SECRET_KEY) and stores the Pro expiry.
+ * Credits are only granted by the webhook, which is idempotent per event.
+ */
+router.post('/revenuecat-sync', async (req, res) => {
+  const userId = userIdFromBearer(req);
+  if (!userId || !mongoose.Types.ObjectId.isValid(userId)) return res.status(401).json({ error: 'Not authenticated.' });
+  const secret = process.env.REVENUECAT_SECRET_KEY?.trim();
+  if (!secret) return res.status(500).json({ error: 'REVENUECAT_SECRET_KEY is not configured.' });
+
+  try {
+    const user = await User.findById(userId);
+    if (!user) return res.status(401).json({ error: 'User account not found.' });
+
+    const rcRes = await fetch(`https://api.revenuecat.com/v1/subscribers/${encodeURIComponent(String(user._id))}`, {
+      headers: { Authorization: `Bearer ${secret}`, Accept: 'application/json' }
+    });
+    if (!rcRes.ok) {
+      console.error('RevenueCat sync failed:', rcRes.status);
+      return res.status(502).json({ error: 'Could not reach the purchase service.' });
+    }
+    const data = await rcRes.json();
+    const entitlementId = process.env.REVENUECAT_ENTITLEMENT_ID?.trim() || 'pro';
+    const ent = data?.subscriber?.entitlements?.[entitlementId];
+    const expires = ent?.expires_date ? new Date(ent.expires_date) : null;
+    if (expires && !Number.isNaN(expires.getTime())) {
+      const sub = data?.subscriber?.subscriptions?.[ent.product_identifier];
+      const store = sub?.store === 'play_store' ? 'play_store' : sub?.store === 'app_store' ? 'app_store' : 'revenuecat';
+      // Never shorten a later expiry that came from another source.
+      if (!user.proExpiresAt || new Date(user.proExpiresAt).getTime() < expires.getTime()) {
+        await User.updateOne({ _id: user._id }, { $set: { proExpiresAt: expires, isPro: expires.getTime() > Date.now(), proSource: store } });
+        user.proExpiresAt = expires;
+      }
+    }
+    const fresh = await User.findById(user._id).lean();
+    return res.json({ isPro: isProActive(fresh), proExpiresAt: fresh?.proExpiresAt || null, aiCredits: fresh?.aiCredits });
+  } catch (err) {
+    console.error('RevenueCat sync error:', err.message);
+    return res.status(500).json({ error: 'Sync failed.' });
   }
 });
 

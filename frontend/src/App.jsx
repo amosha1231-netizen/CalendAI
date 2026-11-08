@@ -43,6 +43,8 @@ import TermsPage from "./pages/Terms";
 import translations from "./i18n";
 import safeStorage from "./utils/safeStorage";
 import { isNativeApp, startOAuth } from './utils/nativeApp';
+import { canPurchaseInApp } from './utils/nativePurchases';
+import NativePaywall from './components/NativePaywall';
 import { openCheckout, readCheckoutResponse, consumePaymentSuccessParam, CREDITS_PURCHASED_EVENT, notifyCreditsPurchased } from './utils/lemonCheckout';
 import { isIosWhatsApp, isIosSafari, isIosNonSafari, isStandalone } from "./utils/browserDetection";
 import { normalizeCredits, normalizeUserCredits, formatCredits } from "./utils/credits";
@@ -359,6 +361,7 @@ function AppRoutes() {
   });
   const [showGuestLimitModal, setShowGuestLimitModal] = useState(false);
   const [showCreditsModal, setShowCreditsModal] = useState(false);
+  const [showNativePaywall, setShowNativePaywall] = useState(false);
   const [creditsError, setCreditsError] = useState("");
   const [checkoutLoading, setCheckoutLoading] = useState(false);
 
@@ -370,11 +373,14 @@ function AppRoutes() {
   const [drawerTab, setDrawerTab] = useState('settings');
 
   const handleBuyCredits = useCallback(async () => {
-    // App Store rules: digital purchases inside the iOS app must use Apple's
-    // in-app purchase, so the native app does not open the web checkout.
-    if (isNativeApp()) return;
     if (!user) {
       setShowLoginPrompt(true);
+      return;
+    }
+    // Store rules: digital purchases inside the iOS/Android app must use the
+    // store's in-app purchase, so the native app never opens the web checkout.
+    if (isNativeApp()) {
+      if (canPurchaseInApp()) setShowNativePaywall(true);
       return;
     }
     setCheckoutLoading(true);
@@ -387,7 +393,7 @@ function AppRoutes() {
           "Content-Type": "application/json",
           ...(token ? { 'Authorization': `Bearer ${token}` } : {})
         },
-        body: JSON.stringify({ lang }),
+        body: JSON.stringify({ lang, product: 'credits' }),
         credentials: "include"
       });
       const data = await readCheckoutResponse(res, lang);
@@ -676,13 +682,14 @@ function AppRoutes() {
         if (data.user) {
           const normalizedUser = normalizeUserCredits(data.user);
           setUser(normalizedUser);
+          if (setIsPro) setIsPro(data.user?.isPro === true || data.user?.isPro === 'true');
           try { safeStorage.setItem('calendai-user', JSON.stringify(normalizedUser)); } catch (e) {}
         }
       }
     } catch (e) {
       console.warn("Failed to refresh user credits:", e);
     }
-  }, [user, setUser]);
+  }, [user, setUser, setIsPro]);
 
   // ── After a purchase (overlay success event or return from the checkout redirect),
   // refresh credits a few times: the Lemon Squeezy webhook can land a few seconds later.
@@ -1117,7 +1124,7 @@ function AppRoutes() {
           return;
         }
         if (res.status === 402) {
-          setCreditsError(isNativeApp()
+          setCreditsError(isNativeApp() && !canPurchaseInApp()
             ? (lang === 'he' ? 'נגמרו לך הקרדיטים לפעולות AI.' : 'You have used all your AI credits.')
             : (errorData.error || 'נגמרו לך הקרדיטים! אנא רכוש חבילת פעולות נוספת כדי להמשיך להשתמש ב-AI.'));
           setShowCreditsModal(true);
@@ -1859,7 +1866,7 @@ function AppRoutes() {
               return (
                 <button
                   onClick={handleBuyCredits}
-                  disabled={checkoutLoading || isNativeApp()}
+                  disabled={checkoutLoading || (isNativeApp() && !canPurchaseInApp())}
                   title={lang === 'he' ? 'קרדיטים ל-AI' : 'AI credits'}
                   className={`hidden xs:flex items-center gap-1 h-[42px] px-3 rounded-[14px] text-xs font-bold transition ${
                     credits > 0
@@ -2692,10 +2699,25 @@ function AppRoutes() {
             </div>
             <h3 className="text-lg font-bold text-slate-800 mb-2">{lang === 'he' ? 'נגמרו לך הקרדיטים!' : 'You are out of credits!'}</h3>
             <p className="text-sm text-slate-500 mb-6">{creditsError || (lang === 'he' ? 'נגמרו לך הקרדיטים! אנא רכוש חבילת פעולות נוספת כדי להמשיך להשתמש ב-AI.' : 'You ran out of credits! Please purchase an additional action pack to continue using the AI.')}</p>
-            <button onClick={() => setShowCreditsModal(false)} className="w-full px-4 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition shadow-lg">{lang === 'he' ? 'הבנתי' : 'Got it'}</button>
+            {(!isNativeApp() || canPurchaseInApp()) ? (
+              <button
+                onClick={() => { setShowCreditsModal(false); handleBuyCredits(); }}
+                disabled={checkoutLoading}
+                className="w-full px-4 py-3 bg-gradient-to-r from-amber-400 to-orange-500 text-white rounded-xl font-bold transition shadow-lg flex items-center justify-center gap-2 disabled:opacity-60"
+              >
+                <Zap className="w-4 h-4" /> {lang === 'he' ? 'לרכישת קרדיטים' : 'Get more credits'}
+              </button>
+            ) : (
+              <button onClick={() => setShowCreditsModal(false)} className="w-full px-4 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition shadow-lg">{lang === 'he' ? 'הבנתי' : 'Got it'}</button>
+            )}
             <button onClick={() => setShowCreditsModal(false)} className="w-full mt-3 text-sm text-slate-400 hover:text-slate-600 py-2 transition">{t.cancel}</button>
           </div>
         </div>
+      )}
+
+      {/* In-app purchase sheet (iOS / Android) */}
+      {showNativePaywall && user && (
+        <NativePaywall lang={lang} user={user} onClose={() => setShowNativePaywall(false)} />
       )}
 
       {/* Guest Usage Limit Modal */}
@@ -2774,6 +2796,7 @@ function AppRoutes() {
         t={t}
         user={user}
         isPro={isPro}
+        onOpenNativePaywall={() => setShowNativePaywall(true)}
         onLogout={handleLogout}
         initialTab={drawerTab}
         title={drawerTab === 'analytics' ? getNavLabels(lang).analytics : getNavLabels(lang).me}
