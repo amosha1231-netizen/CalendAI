@@ -407,6 +407,15 @@ function AppRoutes() {
     }
   }, [user, lang, setShowLoginPrompt, setError]);
 
+  // Out of AI credits. The store apps (iOS/Android) must not point to a purchase,
+  // so only the website mentions buying more.
+  const showOutOfCredits = useCallback(() => {
+    setCreditsError(isNativeApp()
+      ? (lang === 'he' ? 'נגמרו לך הקרדיטים לפעולות AI.' : 'You have used all your AI credits.')
+      : (lang === 'he' ? 'נגמרו לך הקרדיטים! אנא רכוש חבילת פעולות נוספת כדי להמשיך להשתמש ב-AI.' : 'You ran out of credits! Please purchase an additional action pack to continue using the AI.'));
+    setShowCreditsModal(true);
+  }, [lang]);
+
   const [showWizard, setShowWizard] = useState(false);
   const [showSendInvite, setShowSendInvite] = useState(false);
   const [showManualEvent, setShowManualEvent] = useState(false);
@@ -1028,6 +1037,10 @@ function AppRoutes() {
         credentials: "include"
       });
       const data = await res.json();
+      if (res.status === 402) {
+        showOutOfCredits();
+        return;
+      }
       if (!res.ok) {
         if (data.error) throw new Error(data.error);
         else throw new Error(t.failedRequest + " " + res.status);
@@ -1117,10 +1130,7 @@ function AppRoutes() {
           return;
         }
         if (res.status === 402) {
-          setCreditsError(isNativeApp()
-            ? (lang === 'he' ? 'נגמרו לך הקרדיטים לפעולות AI.' : 'You have used all your AI credits.')
-            : (errorData.error || 'נגמרו לך הקרדיטים! אנא רכוש חבילת פעולות נוספת כדי להמשיך להשתמש ב-AI.'));
-          setShowCreditsModal(true);
+          showOutOfCredits();
           return;
         }
         throw new Error(t.failedRequest + " " + res.status);
@@ -1274,6 +1284,7 @@ function AppRoutes() {
         method: "POST", headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ reason }), credentials: "include"
       });
+      if (res.status === 402) { setIsRescheduleOpen(false); showOutOfCredits(); return; }
       if (!res.ok) { const e = await res.json(); throw new Error(e.error || "AI failed"); }
       const data = await res.json();
       setReschedulePreview(data);
