@@ -12,6 +12,7 @@
 import { Capacitor } from '@capacitor/core';
 import { App as CapApp } from '@capacitor/app';
 import { Browser } from '@capacitor/browser';
+import { preparePwaLogin } from './pwaLogin';
 
 export function isNativeApp() {
   try {
@@ -22,7 +23,7 @@ export function isNativeApp() {
 }
 
 /** Navigate to an OAuth start URL (Google / Microsoft) in the right place. */
-export function startOAuth(url) {
+export async function startOAuth(url) {
   if (!isNativeApp()) {
     // Ask the server to bring us back to this exact address. A home-screen icon
     // keeps its login only for the address it opens, so returning to a different
@@ -33,6 +34,11 @@ export function startOAuth(url) {
       if (origin && origin.startsWith('http')) {
         target = `${url}${url.includes('?') ? '&' : '?'}return_to=${encodeURIComponent(origin)}`;
       }
+    } catch (e) {}
+    // Home-screen web app: let it collect the login afterwards (see pwaLogin.js).
+    try {
+      const pollHash = await preparePwaLogin();
+      if (pollHash) target += `${target.includes('?') ? '&' : '?'}pwa_poll=${pollHash}`;
     } catch (e) {}
     window.location.href = target;
     return;

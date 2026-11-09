@@ -147,6 +147,20 @@ async function createOAuthHandoff(userId) {
   return code;
 }
 
+// Leaves the login waiting for a home-screen web app that started this sign-in
+// (see services/oauthReturn.js). Best effort: the normal redirect still happens.
+async function createPwaPollHandoff(state, userId) {
+  const pollHash = oauthReturn.pollHashFor(state);
+  if (!pollHash) return;
+  try {
+    const codeHash = `poll:${pollHash}`;
+    await OAuthHandoff.deleteOne({ codeHash });
+    await OAuthHandoff.create({ codeHash, userId, expiresAt: new Date(Date.now() + 10 * 60_000) });
+  } catch (e) {
+    console.warn('Could not leave home-screen login handoff:', e.message);
+  }
+}
+
 // ──────────────────────────────────────────────
 // MongoDB Connection
 // ──────────────────────────────────────────────
@@ -1190,7 +1204,7 @@ app.get('/api/auth/google',
       scope: OAUTH_SCOPES,
       accessType: 'offline',
       prompt: 'consent',
-      ...(oauthReturn.stateFor(req.query) ? { state: oauthReturn.stateFor(req.query) } : {}),
+      ...(oauthReturn.stateFor(req.query, req.get('referer')) ? { state: oauthReturn.stateFor(req.query, req.get('referer')) } : {}),
       // @ts-ignore - Passport supports custom params via this property
       customParams: { hl }
     })(req, res, next);
@@ -1223,6 +1237,7 @@ app.get('/api/auth/google/callback',
 
       try {
         const code = await createOAuthHandoff(user._id || user.id);
+        await createPwaPollHandoff(req.query.state, user._id || user.id);
         res.redirect(`${rawUrl}/?oauth_code=${encodeURIComponent(code)}&login=success`);
       } catch (jwtErr) {
         console.error('=== GOOGLE CALLBACK: JWT CREATION FAILED ===');
@@ -1272,7 +1287,7 @@ app.get('/api/auth/microsoft', (req, res) => {
     `&redirect_uri=${encodeURIComponent(redirectUri)}` +
     `&scope=${encodeURIComponent(scopes)}` +
     `&response_mode=query` +
-    (oauthReturn.stateFor(req.query) ? `&state=${encodeURIComponent(oauthReturn.stateFor(req.query))}` : '');
+    (oauthReturn.stateFor(req.query, req.get('referer')) ? `&state=${encodeURIComponent(oauthReturn.stateFor(req.query, req.get('referer')))}` : '');
 
   res.redirect(authorizeUrl);
 });
@@ -1365,10 +1380,28 @@ app.get('/api/auth/microsoft/callback', async (req, res) => {
     await user.save();
 
     const codeValue = await createOAuthHandoff(user._id || user.id);
+    await createPwaPollHandoff(req.query.state, user._id || user.id);
     res.redirect(`${returnBase}/?oauth_code=${encodeURIComponent(codeValue)}&login=success`);
   } catch (err) {
     console.error('Microsoft OAuth callback error:', err);
     res.redirect(`${returnBase}/?error=microsoft_auth_failed`);
+  }
+});
+
+// The home-screen web app collects a login that finished in iOS's in-app browser.
+// 204 = not there (yet); the app keeps asking for a few minutes.
+app.post('/api/auth/oauth-poll', async (req, res) => {
+  const secret = String(req.body?.secret || '');
+  try {
+    if (!/^[a-f0-9]{64}$/.test(secret)) return res.status(400).json({ error: 'Invalid secret.' });
+    const pollHash = crypto.createHash('sha256').update(secret).digest('hex');
+    const handoff = await OAuthHandoff.findOneAndDelete({ codeHash: `poll:${pollHash}`, expiresAt: { $gt: new Date() } });
+    if (!handoff) return res.status(204).end();
+    const token = jwt.sign({ id: handoff.userId.toString() }, JWT_SECRET, { expiresIn: '30d' });
+    return res.json({ token });
+  } catch (error) {
+    console.error('Home-screen login pickup failed:', error.message);
+    return res.status(503).json({ error: 'Could not complete sign-in.' });
   }
 });
 
