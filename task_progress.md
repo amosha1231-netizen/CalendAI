@@ -3314,3 +3314,82 @@ eighth time is no longer the useful signal:**
 No code changes this run beyond this file. No AI-credit/Lemon Squeezy code
 touched, no DB schema changes, no secrets, no branches other than
 `wip/mutual-provider-booking` touched.
+
+## 2026-11-09 run notes (fiftieth overall, tenth run, same day)
+Fresh clone, `npm install` in both `frontend/` and `backend/`. `origin/master`
+unchanged since the forty-eighth/forty-ninth runs (still `e1b5971`), so no
+new upstream drift. `npm run build` (frontend) clean.
+
+`node --test "test/**/*.test.js"` (backend) initially came back **277/293
+pass, 17 failures** — one more than the known 16 `fastdl.mongodb.org`
+sandbox-network failures. The extra one, `mutualAvailability.test.js`
+("isSlotMutuallyFree: both calendars fully free resolves free:true"), was a
+real bug, just in the test rather than the app: it (and two siblings —
+"a busy block on just one side" and "a conflict confined to the host's own
+local schedule") hardcoded `date: '2026-11-09'` with a real-clock
+`startTime` of `10:00 AM`, relying on the suite running before 10:30 AM
+Asia/Jerusalem on the literal day this text was first written. Every other
+date-sensitive guard test in this same file (e.g. the Shabbat-cutoff tests
+a few dozen lines above) correctly pins `mock.timers.enable({ apis:
+['Date'], now: ... })` instead of trusting wall-clock time — these three
+didn't follow that pattern, so once this run's wall clock ticked past
+10:30 AM Israel time (it's a scheduled task; run time varies through the
+day), `isSlotMutuallyFree`'s own "already-started" cutoff legitimately
+started rejecting the slot these tests use, before the code path they were
+actually meant to exercise ever ran. Two of the three happened to still
+pass today purely by coincidence (they also assert `free: false`, which
+the already-started guard produces for the wrong reason), silently no
+longer testing what their names claim. Also fixed the two
+day-start/day-end `HARD DAY-WINDOW GUARD` tests just above (same file) for
+the identical latent issue, even though only one of them was at risk of
+flipping today — same fix, pin `now` so the day-window guard is what's
+actually isolated and proven, not an accidental assist from the
+already-started cutoff. Fix: added `mock.timers.enable(...)` /
+`mock.timers.reset()` around all five tests, pinning `now` to a time
+clearly before each test's slot, matching the file's own established
+pattern. Re-ran `test/mutualAvailability.test.js` alone (53/53 pass) and
+the full suite (277/293 pass, back to exactly the 16 known sandbox-network
+failures, confirmed by error text). Searched the rest of `test/` for the
+same `2026-11-09`-hardcoded-date pattern (`grep -rl`); the one other hit
+(`scheduleOccurrence.test.js`) passes `TODAY` as an explicit function
+argument rather than reading the real clock, so it isn't exposed to this
+bug class. Committed as its own small change
+(`backend/test/mutualAvailability.test.js` only).
+
+Re-verified task_progress.md items 1-5 directly against current code:
+`setInputText("")` still fires in `handleParse` before the request
+(`frontend/src/App.jsx:1100`); `multer` + `POST /api/parse-image`
+(`backend/server.js:2467`) + `parseImageWithVision`
+(`backend/services/aiService.js:1032`) are all present and wired; the
+frontend upload button still posts to `${API_BASE}/api/parse-image`
+(`frontend/src/App.jsx:1033`). All 5 items genuinely remain done.
+
+Did not run a fresh broad adversarial sweep of the 10 mutual/provider files
+beyond what today's test-suite fix already touched — same rationale as the
+last seven rounds (findings at zero for six of seven, now a narrowly-scoped
+test-only fix found by just running the suite rather than by a new reading
+pass), and the three open items below are unchanged and still awaiting the
+human, so another full re-read wouldn't surface anything they don't already
+have. Did not send another phone notification this run: the three items
+below were already pushed to the human in the forty-ninth run and nothing
+about them has changed; re-notifying for the same still-open asks would be
+noise, not signal. The test fix itself is exactly the kind of small,
+reversible, already-fully-verified change this task's autonomy rules say to
+just make, not escalate.
+
+**Still open for the human (unchanged, now eight consecutive rounds,
+forty-third through fiftieth — already pushed once via notification in the
+forty-ninth run, repeated here only in writing):**
+1. `wip/mutual-provider-booking` merges into current `master` cleanly, no
+   conflicts. Worth deciding whether to open a PR / merge now rather than
+   keep accumulating commits (200+ so far) against a branch that never
+   lands.
+2. Whether to stop, slow, or re-scope this scheduled task — the originally
+   assigned work is done; today's run found one real (test-only) bug via a
+   routine suite run, not via another broad sweep.
+3. The still-open product question: should a provider booking's synced
+   Google Calendar event description include the guest's phone
+   number/notes (currently only their name)?
+
+No AI-credit/Lemon Squeezy code touched, no DB schema changes, no secrets,
+no branches other than `wip/mutual-provider-booking` touched.
