@@ -211,13 +211,21 @@ async function computeAvailableSlots(req, provider, service, dateStr) {
     .map(b => ({ start: timeToMinutes(b.startTime), end: timeToMinutes(b.endTime) }))
     .filter(r => r.start !== null && r.end !== null);
 
-  const scheduleEvents = (provider.schedule?.[dayName] || []).filter(ev => {
-    if (ev.targetDate && String(ev.targetDate).slice(0, 10) !== dateStr) return false;
-    return true;
-  });
-  const scheduleRanges = scheduleEvents
-    .map(ev => ({ start: timeToMinutes(ev.startTime), end: timeToMinutes(ev.endTime) }))
-    .filter(r => r.start !== null && r.end !== null);
+  // Recurrence-aware, not a raw read of provider.schedule[dayName]: a
+  // "daily" event is stored under only the single weekday key it was
+  // created on (see expandEventsForYear/expandDailyEventForMonth in
+  // server.js, which walk every day key for exactly this reason) but is
+  // meant to block every day of the week. Reading only schedule[dayName]
+  // would silently miss a provider's own daily-recurring personal event on
+  // every OTHER weekday, letting the public booking page offer — and
+  // POST /:id/book confirm — a slot that actually collides with it.
+  // getLocalScheduleBusy (already used this same way for mutual
+  // availability in mutualAvailability.js) walks every day bucket and
+  // resolves once/monthly/yearly/daily recurrence against dateStr properly
+  // instead of treating every stored event as a plain weekly repeat.
+  const scheduleRanges = mutualAvailability.getLocalScheduleBusy(
+    provider, dateStr, dayName, todayIsoInTimeZone(timeZone)
+  );
 
   // The provider's local `schedule` only has what CalendAI itself wrote
   // there (ProviderBookings, mutual meetings, manually-added events) — a

@@ -108,6 +108,30 @@ test('computeAvailableSlots: a provider\'s own Google Calendar event blocks the 
   assert.equal(slots.length, 5, 'exactly one of the 6 slots is removed by the Google Calendar conflict');
 });
 
+test("computeAvailableSlots: a provider's own 'daily' recurring schedule event blocks every weekday, not just the single weekday key it's stored under", async (t) => {
+  stubNoExistingBookings(t);
+  // A "daily" event is stored under only the ONE weekday key it was created
+  // on (see expandEventsForYear/expandDailyEventForMonth in server.js,
+  // which walk every day key for exactly this reason) but is meant to
+  // recur every day of the week. Stash it under Monday and ask for Tuesday.
+  const provider = providerWith({
+    schedule: {
+      Monday: [{ title: 'Daily standup', day: 'Monday', startTime: '09:00 AM', endTime: '09:30 AM', recurrence: 'daily' }]
+    },
+    providerProfile: {
+      locationId: 'jerusalem',
+      availability: [{ day: 'Tuesday', startTime: '09:00 AM', endTime: '12:00 PM' }]
+    }
+  });
+  // 2026-11-03 is the Tuesday right after this suite's MONDAY fixture.
+  const TUESDAY = '2026-11-03';
+  const { slots } = await computeAvailableSlots(fakeReq(), provider, SERVICE_30MIN, TUESDAY);
+
+  assert.ok(!slots.some(s => s.startTime === '09:00 AM'),
+    "the daily 09:00-09:30 commitment must block Tuesday too, even though it's stored under the Monday key");
+  assert.equal(slots.length, 5, 'exactly one of the 6 slots is removed by the daily recurring event');
+});
+
 test('computeAvailableSlots: a Google Calendar fetch failure fails closed instead of silently showing every slot as open', async (t) => {
   stubNoExistingBookings(t);
   t.mock.method(mutualAvailability, 'getFreeBusyForDay', async () => { throw new Error('token expired'); });
