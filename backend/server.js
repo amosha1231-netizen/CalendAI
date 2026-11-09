@@ -4453,6 +4453,10 @@ app.use('/api/expenses', expenseRoutes);
 const accountRoutes = require('./routes/accountRoutes');
 app.use('/api/account', accountRoutes);
 
+// In-app purchases (Apple / Google via RevenueCat) -> AI credits
+const revenuecatRoutes = require('./routes/revenuecatRoutes');
+app.use('/api/payments/revenuecat-webhook', revenuecatRoutes);
+
 // ──────────────────────────────────────────────
 // User Search Endpoint — for GlobalSearch component
 // ──────────────────────────────────────────────
