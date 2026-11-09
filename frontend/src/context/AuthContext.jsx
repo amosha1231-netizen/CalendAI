@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import api from '../api/axios';
 import { startOAuth } from '../utils/nativeApp';
+import { hasPendingPwaLogin, claimPwaLogin, clearPwaLogin } from '../utils/pwaLogin';
 import safeStorage from '../utils/safeStorage';
 import { normalizeUserCredits } from '../utils/credits';
 
@@ -356,6 +357,7 @@ export function AuthProvider({ children }) {
           const exchange = await api.post('/api/auth/oauth-exchange', { code: oauthCode }, { validateStatus: false });
           if (exchange.status !== 200 || !exchange.data?.token) throw new Error('OAuth code exchange failed.');
           setJwtToken(exchange.data.token);
+          clearPwaLogin(); // sign-in came back to this window itself
           safeStorage.setItem('calendai-isLoggedIn', 'true');
           api.defaults.headers.common['Authorization'] = `Bearer ${exchange.data.token}`;
         } catch (error) {
@@ -438,6 +440,47 @@ export function AuthProvider({ children }) {
 
     doInitialAuth();
   }, []); // מערך תלויות ריק לחלוטין!
+
+  // ── HOME-SCREEN APP SIGN-IN PICKUP ──
+  // On iPhone the home-screen app's Google sign-in finishes in an in-app browser
+  // with separate storage (see utils/pwaLogin.js). While such a sign-in is
+  // pending, collect it from the server whenever the app is in front, then
+  // reload so the normal start-up path picks up the stored token.
+  useEffect(() => {
+    if (!hasPendingPwaLogin()) return undefined;
+    let stopped = false;
+    let busy = false;
+    const tryClaim = async () => {
+      if (stopped || busy) return;
+      try { if (typeof document !== 'undefined' && document.hidden) return; } catch (e) {}
+      if (!hasPendingPwaLogin()) { stop(); return; }
+      busy = true;
+      const token = await claimPwaLogin();
+      busy = false;
+      if (!token || stopped) return;
+      stop();
+      setJwtToken(token);
+      try { safeStorage.setItem('calendai-isLoggedIn', 'true'); } catch (e) {}
+      try { window.location.reload(); } catch (e) {}
+    };
+    const timer = setInterval(tryClaim, 2500);
+    function stop() {
+      stopped = true;
+      clearInterval(timer);
+      try {
+        document.removeEventListener('visibilitychange', tryClaim);
+        window.removeEventListener('focus', tryClaim);
+        window.removeEventListener('pageshow', tryClaim);
+      } catch (e) {}
+    }
+    try {
+      document.addEventListener('visibilitychange', tryClaim);
+      window.addEventListener('focus', tryClaim);
+      window.addEventListener('pageshow', tryClaim);
+    } catch (e) {}
+    tryClaim();
+    return stop;
+  }, []);
 
   // ── VISIBILITY CHANGE HANDLER ──
   // CRITICAL: When the user switches away from the app (e.g., to another tab or app on iOS)
