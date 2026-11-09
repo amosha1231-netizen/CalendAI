@@ -320,27 +320,42 @@ test('isSlotMutuallyFree: a Friday slot that ends exactly at the Shabbat-start c
 test('isSlotMutuallyFree: rejects a slot starting before the location\'s day-start, without even checking the calendars', async () => {
   const host = { _id: 'host-1', googleAccessToken: 'fake' };
   const invitee = { _id: 'invitee-1', googleAccessToken: 'fake' };
-  // Jerusalem's defaultDayStart is 06:00; 2026-11-09 is a Monday (no other guard applies).
-  const result = await isSlotMutuallyFree(host, invitee, {
-    locationId: 'jerusalem',
-    date: '2026-11-09',
-    startTime: '05:30 AM',
-    endTime: '06:00 AM'
-  });
-  assert.deepEqual(result, { free: false, timeZone: 'Asia/Jerusalem' });
+  // Jerusalem's defaultDayStart is 06:00; 2026-11-09 is a Monday (no other
+  // guard applies). Pin "now" to well before the slot so the unrelated
+  // already-started cutoff can't short-circuit this ahead of the day-window
+  // guard this test actually means to prove, whatever the real run time is.
+  mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-09T00:00:00Z').getTime() }); // 02:00 Asia/Jerusalem
+  try {
+    const result = await isSlotMutuallyFree(host, invitee, {
+      locationId: 'jerusalem',
+      date: '2026-11-09',
+      startTime: '05:30 AM',
+      endTime: '06:00 AM'
+    });
+    assert.deepEqual(result, { free: false, timeZone: 'Asia/Jerusalem' });
+  } finally {
+    mock.timers.reset();
+  }
 });
 
 test('isSlotMutuallyFree: rejects a slot ending after the location\'s day-end, without even checking the calendars', async () => {
   const host = { _id: 'host-1', googleAccessToken: 'fake' };
   const invitee = { _id: 'invitee-1', googleAccessToken: 'fake' };
-  // Jerusalem's defaultDayEnd is 23:00; 2026-11-09 is a Monday (no other guard applies).
-  const result = await isSlotMutuallyFree(host, invitee, {
-    locationId: 'jerusalem',
-    date: '2026-11-09',
-    startTime: '11:00 PM',
-    endTime: '11:30 PM'
-  });
-  assert.deepEqual(result, { free: false, timeZone: 'Asia/Jerusalem' });
+  // Jerusalem's defaultDayEnd is 23:00; 2026-11-09 is a Monday (no other
+  // guard applies). Pin "now" to well before the slot for the same reason
+  // as the day-start test above.
+  mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-09T06:00:00Z').getTime() }); // 08:00 Asia/Jerusalem
+  try {
+    const result = await isSlotMutuallyFree(host, invitee, {
+      locationId: 'jerusalem',
+      date: '2026-11-09',
+      startTime: '11:00 PM',
+      endTime: '11:30 PM'
+    });
+    assert.deepEqual(result, { free: false, timeZone: 'Asia/Jerusalem' });
+  } finally {
+    mock.timers.reset();
+  }
 });
 
 // ── isSlotMutuallyFree(): the actual freebusy-based decision. Every test
@@ -355,6 +370,10 @@ test('isSlotMutuallyFree: both calendars fully free resolves free:true', async (
   const calendarMock = t.mock.method(google, 'calendar', () => ({
     freebusy: { query: async () => ({ data: { calendars: { primary: { busy: [] } } } }) }
   }));
+  // Mock "now" well before the slot below so the same-day-already-started
+  // cutoff (which only looks at wall-clock time, not this mock) can't flip
+  // this result depending on what time of day the suite happens to run.
+  mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-09T06:00:00Z').getTime() }); // 08:00 Asia/Jerusalem
   try {
     const host = { _id: 'host-1', googleAccessToken: 'fake' };
     const invitee = { _id: 'invitee-1', googleAccessToken: 'fake' };
@@ -367,6 +386,7 @@ test('isSlotMutuallyFree: both calendars fully free resolves free:true', async (
     assert.deepEqual(result, { free: true, timeZone: 'Asia/Jerusalem' });
   } finally {
     calendarMock.mock.restore();
+    mock.timers.reset();
   }
 });
 
@@ -384,6 +404,10 @@ test('isSlotMutuallyFree: a busy block on just one side (the invitee\'s) still r
       }
     }
   }));
+  // Same reasoning as the test above: pin "now" so the already-started
+  // cutoff can't interfere with what this test is actually proving (a
+  // one-sided Google conflict), regardless of real run time.
+  mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-09T06:00:00Z').getTime() }); // 08:00 Asia/Jerusalem
   try {
     const host = { _id: 'host-1', googleAccessToken: 'fake' };
     const invitee = { _id: 'invitee-1', googleAccessToken: 'fake' };
@@ -398,6 +422,7 @@ test('isSlotMutuallyFree: a busy block on just one side (the invitee\'s) still r
     assert.deepEqual(result, { free: false, timeZone: 'Asia/Jerusalem' });
   } finally {
     calendarMock.mock.restore();
+    mock.timers.reset();
   }
 });
 
@@ -405,6 +430,9 @@ test('isSlotMutuallyFree: a conflict confined to the host\'s own local `schedule
   const calendarMock = t.mock.method(google, 'calendar', () => ({
     freebusy: { query: async () => ({ data: { calendars: { primary: { busy: [] } } } }) }
   }));
+  // Same reasoning again: pin "now" so this test proves the local-schedule
+  // conflict check specifically, not the unrelated already-started cutoff.
+  mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-09T06:00:00Z').getTime() }); // 08:00 Asia/Jerusalem
   try {
     // Nothing on either Google calendar, but the host already has this exact
     // window booked locally (e.g. via /api/schedule/add-to-free-slot, which
@@ -423,6 +451,7 @@ test('isSlotMutuallyFree: a conflict confined to the host\'s own local `schedule
     assert.deepEqual(result, { free: false, timeZone: 'Asia/Jerusalem' });
   } finally {
     calendarMock.mock.restore();
+    mock.timers.reset();
   }
 });
 
