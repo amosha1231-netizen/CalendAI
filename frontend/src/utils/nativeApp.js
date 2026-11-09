@@ -24,7 +24,17 @@ export function isNativeApp() {
 /** Navigate to an OAuth start URL (Google / Microsoft) in the right place. */
 export function startOAuth(url) {
   if (!isNativeApp()) {
-    window.location.href = url;
+    // Ask the server to bring us back to this exact address. A home-screen icon
+    // keeps its login only for the address it opens, so returning to a different
+    // one (e.g. www vs. the onrender address) meant signing in again every launch.
+    let target = url;
+    try {
+      const origin = typeof window !== 'undefined' && window.location ? window.location.origin : '';
+      if (origin && origin.startsWith('http')) {
+        target = `${url}${url.includes('?') ? '&' : '?'}return_to=${encodeURIComponent(origin)}`;
+      }
+    } catch (e) {}
+    window.location.href = target;
     return;
   }
   const nativeUrl = `${url}${url.includes('?') ? '&' : '?'}platform=native`;

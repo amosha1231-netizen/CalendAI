@@ -133,10 +133,11 @@ const PORT = process.env.PORT || 5000;
 // The native app opens sign-in in the system browser (Google blocks web views),
 // tagged with ?platform=native. The OAuth `state` carries that tag through the
 // provider, and the callback then returns to the app via its URL scheme.
-const NATIVE_OAUTH_STATE = 'native';
-const NATIVE_APP_AUTH_URL = 'com.amos.calendai://auth';
+// A web sign-in carries the page's own origin the same way (see services/oauthReturn.js).
+const { createOAuthReturn } = require('./services/oauthReturn');
+let oauthReturn = null; // built once the frontend URLs below are known
 function oauthReturnBase(req) {
-  return req.query.state === NATIVE_OAUTH_STATE ? NATIVE_APP_AUTH_URL : FRONTEND_URL;
+  return oauthReturn.baseFor(req.query.state);
 }
 
 async function createOAuthHandoff(userId) {
@@ -214,12 +215,21 @@ const corsOrigin = process.env.FRONTEND_URL?.trim() || process.env.CORS_ORIGIN?.
 // Origins of the Capacitor native apps (iOS: capacitor://localhost, Android: https://localhost).
 const NATIVE_APP_ORIGINS = ['capacitor://localhost', 'https://localhost'];
 // CRITICAL: CORS origin must be explicit URLs, NOT wildcard '*', when using credentials: true
+// Other web addresses that serve the same frontend. A home-screen icon added from
+// one of them keeps opening that address, so it must be able to call the API and
+// to finish Google sign-in there (not on www) or the login never sticks.
+const PRODUCTION_ALT_APP_ORIGINS = ['https://calendai.org', 'https://calendai-q59p.onrender.com'];
 const allowedOrigins = [
   ...(corsOrigin && corsOrigin !== '*'
     ? corsOrigin.split(',').map(origin => origin.trim().replace(/\/+$/, '')).filter(Boolean)
     : ['http://localhost:5173', PRODUCTION_APP_URL]),
+  ...(isProduction ? [PRODUCTION_APP_URL, ...PRODUCTION_ALT_APP_ORIGINS] : []),
   ...NATIVE_APP_ORIGINS
 ];
+oauthReturn = createOAuthReturn({
+  frontendUrl: FRONTEND_URL,
+  extraOrigins: allowedOrigins.filter(origin => !NATIVE_APP_ORIGINS.includes(origin))
+});
 // .env's FRONTEND_URL is a production value (e.g. https://calendai.onrender.com),
 // which — when set, even while developing locally — replaced the list above
 // entirely and silently dropped localhost:5173. That made every cross-origin
@@ -1179,7 +1189,7 @@ app.get('/api/auth/google',
       scope: OAUTH_SCOPES,
       accessType: 'offline',
       prompt: 'consent',
-      ...(req.query.platform === 'native' ? { state: NATIVE_OAUTH_STATE } : {}),
+      ...(oauthReturn.stateFor(req.query) ? { state: oauthReturn.stateFor(req.query) } : {}),
       // @ts-ignore - Passport supports custom params via this property
       customParams: { hl }
     })(req, res, next);
@@ -1261,7 +1271,7 @@ app.get('/api/auth/microsoft', (req, res) => {
     `&redirect_uri=${encodeURIComponent(redirectUri)}` +
     `&scope=${encodeURIComponent(scopes)}` +
     `&response_mode=query` +
-    (req.query.platform === 'native' ? `&state=${NATIVE_OAUTH_STATE}` : '');
+    (oauthReturn.stateFor(req.query) ? `&state=${encodeURIComponent(oauthReturn.stateFor(req.query))}` : '');
 
   res.redirect(authorizeUrl);
 });
