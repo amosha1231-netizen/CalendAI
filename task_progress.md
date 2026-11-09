@@ -3445,3 +3445,134 @@ the forty-ninth run):**
 
 No AI-credit/Lemon Squeezy code touched, no DB schema changes, no secrets,
 no branches other than `wip/mutual-provider-booking` touched.
+
+## 2026-11-09 run notes (fifty-second overall, twelfth run, same day)
+Fresh clone, `npm install` in both `frontend/` and `backend/`. `npm run
+build` (frontend) clean. `node --test` (backend) baseline before this run's
+fix: 277/293 pass, exactly the same 16 known `fastdl.mongodb.org`
+sandbox-network failures by test number (`criticalPaths.test.js` #1-4,
+`mutualBooking.test.js`/`mutualRoutesValidation.test.js` #81-89,
+`ownerCredits.test.js` #139-141) — not regressions, matches the fiftieth/
+fifty-first runs' baseline (the mock.timers fix from the fiftieth run
+holds).
+
+`origin/master` moved this run (`e1b5971` → `75d3e13`: a new in-app-purchase
+feature for AI credits via RevenueCat, store-review fixes, and an SEO pass —
+PRs #36/#37/#39 all landed since the last check). Re-ran the merge-cleanliness
+check (`git merge-tree`): still merges into current `master` with no
+conflicts. Re-verified task_progress.md items 1-5 directly against current
+code: `setInputText("")` still fires in `handleParse` before the request
+(`frontend/src/App.jsx:1100`); `multer` + `POST /api/parse-image`
+(`backend/server.js:2467`) + `parseImageWithVision`
+(`backend/services/aiService.js:1032`) are all present and wired; the
+frontend upload button still posts to `${API_BASE}/api/parse-image`
+(`frontend/src/App.jsx:1033`). All 5 items genuinely remain done.
+
+Delegated a fresh-angles-only adversarial review to a sub-agent (explicit
+list of ~12 already-fixed bug classes to skip, explicit fresh angles to try:
+XSS via dangerouslySetInnerHTML/javascript: URIs, email/header injection via
+guest fields into Google Calendar, NaN/Infinity on Number() casts,
+prototype pollution via body fields, DST-transition edge cases distinct from
+the existing Shabbat-cutoff tests, error-response information leakage,
+unbounded pagination params, and — new this run — a forward-looking check of
+master's freshly-landed `accountRoutes.js` account-deletion feature against
+this branch's `MutualBooking`/`ProviderBooking` data, since that file isn't
+merged into this branch yet). It found one new, previously-missed real bug
+and one forward-looking risk to flag:
+
+**`GET /:id/availability`'s `computeAvailableSlots` (`backend/routes/
+providerRoutes.js`) only checked a provider's own local-schedule conflicts
+against `provider.schedule[dayName]` — the single weekday bucket matching
+the requested date's weekday — instead of resolving recurrence properly.**
+A `recurrence: 'daily'` event is stored under only the one weekday key it
+was originally created on (mirroring `expandEventsForYear`/
+`expandDailyEventForMonth` in `server.js`, which deliberately walk every day
+key for exactly this reason) but is meant to block every day of the week.
+Since `computeAvailableSlots` read that bucket directly instead of going
+through the already-exported, recurrence-aware `getLocalScheduleBusy`
+helper in `mutualAvailability.js` (which `isSlotMutuallyFree`/
+`getMutualFreeSlots` already use this same way for mutual-meeting
+conflicts), a provider's own daily-recurring personal commitment — e.g. a
+9:00-9:30am standup created under Monday — silently failed to block
+bookable slots on every other weekday. The public booking page would offer
+that time and `POST /:id/book` would confirm it: a real double-booking risk
+for any local-only (never synced to Google) recurring event. Verified
+reachable with a standalone repro before the fix (09:00 AM offered on
+Tuesday for a Monday-keyed daily event) and excluded after.
+
+Fixed by replacing the manual `provider.schedule[dayName]` filter with a
+call to `mutualAvailability.getLocalScheduleBusy(provider, dateStr,
+dayName, todayIsoInTimeZone(timeZone))` - the same canonical helper already
+used for mutual availability. This also incidentally makes `once`/
+`monthly`/`yearly` recurrence windowing consistent with the rest of the app
+(previously over-conservative for those, a minor UX quirk, not a safety
+bug, now corrected alongside the real fix). Added a regression test to
+`backend/test/providerGoogleAvailability.test.js` (daily event stored under
+Monday, requested on Tuesday, asserts the 09:00 slot is excluded). `node
+--check` clean on both changed files. Full suite after the fix: 278/294
+pass (same 16 known sandbox failures, net +1 test this run). `npm run
+build` (frontend) clean (no frontend code touched).
+
+**New forward-looking risk flagged (not fixed - needs a decision, additive
+to the three items already open below):** master's new `accountRoutes.js`
+(account deletion) does clean up `MutualBooking`/`ProviderBooking` rows for
+the deleting user (`deleteMany`/`updateMany` by `hostId`/`inviteeId`/
+`providerId`/`bookedByUserId`), which is good - but for a `completed`
+mutual session it's a bulk `deleteMany`, not this branch's own
+`cancelMutualSession(sessionId, app)`. That atomic helper is specifically
+what deletes the *surviving* party's Google Calendar event and pulls their
+`schedule.<day>` cache entry; a plain `deleteMany` does neither. So: if a
+host or invitee deletes their account after a mutual meeting was confirmed,
+the other party is left with a stale CalendAI schedule entry pointing at a
+now-deleted session and an orphaned real Google Calendar event CalendAI can
+no longer clean up. Not reachable today (the branches haven't merged yet),
+but worth deciding at merge time - either have `accountRoutes.js` call this
+branch's `cancelMutualSession` per affected session before the bulk delete,
+or explicitly accept the staleness as acceptable (the account itself is
+gone either way; only the *other* party's state is affected).
+
+The sub-agent's other fresh-angle checks came back clean, no action needed:
+no XSS vector (no `dangerouslySetInnerHTML`/`javascript:` URIs; all
+provider-supplied strings render as auto-escaped JSX text); no email/header
+injection (`guestEmail` regex-validated with no whitespace/CRLF possible
+before use as a Calendar attendee address); no prototype-pollution path (no
+`req.body` spread directly into a `$set`; explicit field allowlists
+throughout); all `Number()` casts on `duration`/`price`/`rangeDays` are
+`Number.isInteger`/`Number.isFinite`-checked; DST transitions are
+unreachable as a bug here (every location's day-start/day-end window sits
+outside the 1am-4am hour where US/Israel transitions occur); no
+information-leaking error responses in the mutual/provider routes; no
+unbounded pagination (`rangeDays` clamped to [1,14], `GET /api/providers`
+hardcoded `.limit(50)`).
+
+Independently re-verified this run (not just trusting the sub-agent's
+report): read the actual diff, confirmed the `mutualAvailability` import
+and `todayIsoInTimeZone` were already in scope in `providerRoutes.js` (no
+new import needed), re-ran `node --check` on both changed files myself,
+re-ran the specific test file (6/6 pass) and the full suite (278/294, same
+16 known failures) myself, and rebuilt the frontend myself (clean, no
+frontend files touched this run).
+
+**Still open for the human (unchanged three items from rounds 43-51, plus
+the one new account-deletion risk above - now ten consecutive rounds since
+round 43 that this branch has sat un-merged; already pushed once via
+notification in the forty-ninth run):**
+1. `wip/mutual-provider-booking` merges into current `master` cleanly, no
+   conflicts, even after master's latest moves. Worth deciding whether to
+   open a PR / merge now rather than keep accumulating commits (200+ so
+   far) against a branch that never lands.
+2. Whether to stop, slow, or re-scope this scheduled task - the originally
+   assigned work has been done for many rounds; today's run found one real
+   bug anyway (local-recurrence conflict check), showing a fresh-angle pass
+   can still occasionally surface something even after a long clean streak.
+3. The still-open product question: should a provider booking's synced
+   Google Calendar event description include the guest's phone
+   number/notes (currently only their name)?
+4. New: when `accountRoutes.js` (account deletion, currently only on
+   `master`, not yet merged here) lands on this branch, should it route
+   through `cancelMutualSession` for a deleting user's `completed` mutual
+   sessions instead of a bulk `deleteMany`, to avoid leaving the other
+   party with a stale schedule entry and an orphaned Google Calendar event?
+
+No AI-credit/Lemon Squeezy code touched, no DB schema changes, no secrets,
+no branches other than `wip/mutual-provider-booking` touched.
