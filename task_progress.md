@@ -3576,3 +3576,112 @@ notification in the forty-ninth run):**
 
 No AI-credit/Lemon Squeezy code touched, no DB schema changes, no secrets,
 no branches other than `wip/mutual-provider-booking` touched.
+
+## 2026-11-10 run notes (fifty-third overall)
+Fresh clone, `npm install` in both `frontend/` and `backend/`. Baseline:
+`npm run build` (frontend) clean; `node --test` (backend) 278/294 pass, same
+16 known `fastdl.mongodb.org` sandbox-network failures by exact test number
+(`criticalPaths.test.js` #1-4, `mutualBooking.test.js`/
+`mutualRoutesValidation.test.js` #81-89, `ownerCredits.test.js` #139-141) —
+not regressions, matches the fifty-second run's baseline.
+
+`origin/master` moved again (`c2b98b9` → `5b690c6`: a new home-screen-app
+iOS login flow, merged via PR #40). Re-ran the merge-cleanliness check
+(`git merge-tree`): still merges into current `master` with zero conflict
+markers. Re-verified task_progress.md items 1-5 directly against current
+code: `setInputText("")` still fires before the request in `handleParse`
+(`frontend/src/App.jsx:1100`); `multer` + `POST /api/parse-image`
+(`backend/server.js:2467`) + `parseImageWithVision`
+(`backend/services/aiService.js:1032`) all present and wired; frontend
+upload button still posts to `${API_BASE}/api/parse-image`
+(`frontend/src/App.jsx:1033`). Re-read `origin/master`'s `accountRoutes.js`
+directly: confirmed the open item #4 below is still accurate as described —
+its `MutualBooking.deleteMany({ $or: [{hostId: id}, {inviteeId: id}] })` is
+still a bulk delete, not a per-session `cancelMutualSession` call.
+
+Delegated a fifty-third independent adversarial review (same 10 mutual/
+provider files + 3 of their underlying services, explicit list of the 7
+already-fixed bug classes from rounds 1-52 to skip, explicit fresh angles to
+try: rate-limiter coverage consistency across every route, `req.user`-vs-JWT
+divergence, unguarded `Number()`/`parseInt()` NaN paths, unicode/RTL guest
+names in Google Calendar event titles, Shabbat/Hebrew-calendar edge cases,
+concurrency test coverage for `winsOverlapRace`) to a sub-agent. **It found
+no new fixable bug and made no code changes** — the first round since the
+fiftieth to come back genuinely clean rather than finding even a cosmetic or
+test-only issue. It did surface one worthwhile precision on an already-known,
+already-documented limitation rather than a new bug:
+
+**`winsOverlapRace`'s post-insert recheck in `POST /:id/book`
+(`backend/routes/providerRoutes.js`) has a residual check-then-act race
+broader than its own in-code comment ("narrow") suggests, but the only
+partial fix available is worse than the bug.** The recheck only sees
+documents its own `find()` observes at that instant and only ever deletes
+*itself* if it's a loser, never a sibling — so under adversarial insert-order
+timing, two genuinely overlapping bookings for different-duration services
+can both survive the recheck. The sub-agent traced why this can't be
+cheaply tightened: having a winner also delete a detected-loser sibling
+would delete that sibling's booking *after* the sibling's own request
+already returned 200 and pushed a Google Calendar event for it — an
+orphaned, un-rolled-back calendar event on the guest's own calendar, which
+is a worse user-facing bug than the narrow race it would close. Correctly
+left unpatched; a real fix needs a per-provider lock (e.g. a short-lived
+claim document or `findOneAndUpdate`-based serialization per
+`providerId+date`), which is a larger architectural change than this
+scheduled task's "fix the bug in front of you" mandate covers. Noting this
+precision here so a future run (or the human, at merge time) doesn't
+mistake the existing code comment's "much narrower" framing for the full
+picture.
+
+Also re-confirmed, no new findings: rate limiting is consistently applied
+(every public/unauthenticated route in both files has a limiter; the only
+unlimited routes are auth-gated `/me`/`/my-bookings`/both cancel endpoints,
+symmetric between the two files); `getAuthenticatedUserId` is byte-for-byte
+identical between `mutualRoutes.js` and the `server.js`-shared version
+`providerRoutes.js` uses; every `Number()`/`parseInt()` cast in scope is
+`isFinite`/`isInteger`-guarded or falls back before reaching a query;
+Shabbat/Hebrew-calendar DST/polar edges remain correct per existing tests;
+unicode/RTL guest names in Calendar event titles are unsanitized but that is
+an existing app-wide (not feature-specific) convention already present in
+the legacy single-user booking flow in `server.js`, out of this review's
+scope to patch unilaterally. `node --check` clean on all 9 backend files it
+read; full suite re-run unchanged at 278/294 (no test/code touched this
+pass).
+
+Independently re-verified myself: re-ran `node --test` (278/294, same 16
+known failures) and `npm run build` (frontend, clean, untouched) after the
+sub-agent's pass to confirm its "no changes made" claim held.
+
+No code changes this run beyond this file.
+
+**Still open for the human (unchanged four items from rounds 43-52 — now
+eleven consecutive rounds since round 43 that this branch has sat unmerged;
+already pushed once via phone notification in the forty-ninth run; not
+re-notifying this round since nothing about these four items has moved and
+this run's own finding was explicitly "nothing new to fix"):**
+1. `wip/mutual-provider-booking` merges into current `master` cleanly, no
+   conflicts, even after master's latest moves (PR #40 just landed). Worth
+   deciding whether to open a PR / merge now rather than keep accumulating
+   commits (200+ so far) against a branch that never lands.
+2. Whether to stop, slow, or re-scope this scheduled task - the originally
+   assigned work has been done for many rounds, and this round is the first
+   since the fiftieth to find literally nothing (not even a cosmetic fix),
+   suggesting the feature may genuinely be at diminishing-returns steady
+   state now.
+3. The still-open product question: should a provider booking's synced
+   Google Calendar event description include the guest's phone
+   number/notes (currently only their name)?
+4. When `accountRoutes.js` (account deletion, currently only on `master`,
+   not yet merged here) lands on this branch, should it route through
+   `cancelMutualSession` for a deleting user's `completed` mutual sessions
+   instead of a bulk `deleteMany`, to avoid leaving the other party with a
+   stale schedule entry and an orphaned Google Calendar event?
+5. New: the `winsOverlapRace` post-insert recheck's residual check-then-act
+   race (described above) is a real but architecturally-larger-than-this-
+   task's-mandate fix (needs a per-provider lock). Worth deciding whether
+   that's worth a dedicated follow-up task, or accepted as a known,
+   documented limitation given how narrow the window actually is in
+   practice (two bookings for the same provider landing within the same
+   recheck window).
+
+No AI-credit/Lemon Squeezy code touched, no DB schema changes, no secrets,
+no branches other than `wip/mutual-provider-booking` touched.
