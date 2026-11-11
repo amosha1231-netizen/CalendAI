@@ -53,9 +53,25 @@ function platformKey() {
   return '';
 }
 
-/** True in the store apps once a RevenueCat key is set for this platform. */
+/**
+ * Master switch for buying inside the store apps. Off for the first store
+ * release (payment is web-only for now): set VITE_IAP_ENABLED=true in
+ * .env.capacitor and rebuild to turn it on. While off, the apps show no
+ * price, buy button or Pro upgrade, and never point to the website to pay
+ * (App Store 3.1.1/3.1.3, Google Play payments policy). Credits and Pro
+ * bought on the website still work in the app for the same account.
+ */
+export function isIapEnabled() {
+  try {
+    return String(import.meta.env.VITE_IAP_ENABLED || '').trim().toLowerCase() === 'true';
+  } catch (e) {
+    return false;
+  }
+}
+
+/** True in the store apps when IAP is switched on and a RevenueCat key is set. */
 export function isIapAvailable() {
-  return isNativeApp() && !!platformKey();
+  return isNativeApp() && isIapEnabled() && !!platformKey();
 }
 
 let purchasesPromise = null;

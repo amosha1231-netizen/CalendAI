@@ -30,6 +30,10 @@ checkout, or a link to it. A user who paid on the web is simply Pro in the app.
 
 ## App Store and Google Play (apps)
 
+**Currently off** (`VITE_IAP_ENABLED=false` in `frontend/.env.capacitor`):
+the first store release is web-payment only. Do the steps below when turning
+in-app purchase on.
+
 Store setup, RevenueCat project, API keys and the webhook are shared with
 the credit packs: follow `docs/in-app-purchases.md` first. For Pro, add:
 

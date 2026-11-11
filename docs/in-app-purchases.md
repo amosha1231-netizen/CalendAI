@@ -16,7 +16,11 @@ How it works:
    (`CANCELLATION`) takes them back, never below 0.
 4. The app refreshes credits at 0, 3 and 8 seconds.
 
-The purchase button only appears in the apps once a RevenueCat key is set.
+The purchase button only appears in the apps when `VITE_IAP_ENABLED=true`
+and a RevenueCat key is set (`frontend/.env.capacitor`). **It is off for the
+first store release**: payment is web-only, and the apps show no price, buy
+button or pointer to the website. Credits and Pro bought on the website still
+work in the app.
 
 ## One-time setup
 
