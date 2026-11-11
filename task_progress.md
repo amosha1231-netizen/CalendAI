@@ -3960,3 +3960,148 @@ from round 56 unchanged:**
 5. The `winsOverlapRace` post-insert recheck's residual check-then-act race
    — needs a per-provider lock to close properly; accepted as a known,
    documented limitation unless a human wants a dedicated follow-up.
+
+## 2026-11-11 run notes (fifty-eighth overall, second run same day)
+`node_modules` present but stale from round 57's merge of `origin/master`'s
+new RevenueCat/subscription commits — `npm run build` failed with `vite not
+found` and `node --test` failed to load `suncalc` until `npm install` was
+re-run in both `frontend/` and `backend/`. After that: `npm run build`
+(frontend) clean; `node --test` (backend) 290/306 pass, same 16 known
+`fastdl.mongodb.org` sandbox-network failures by test name — unchanged from
+round 57's baseline.
+
+`origin/master` has moved again since round 57's merge (`9de4e2f` →
+`d929b71`, ~5 commits: `4d5eb93`/`5dab49b`/`47bcc0d`/`ae96e09`/`d929b71`,
+all RevenueCat/in-app-subscription work touching `backend/models/User.js`,
+`backend/routes/paymentRoutes.js`, `backend/routes/revenuecatRoutes.js`,
+`backend/server.js`, `backend/services/subscriptions.js`,
+`frontend/src/App.jsx`, `frontend/src/components/InAppCreditsSheet.jsx`/
+`SidebarDrawer.jsx`, `frontend/src/utils/inAppPurchase.js`). Deliberately did
+**not** merge this round: none of it touches any in-scope mutual/provider
+file, and per AGENTS.md's hard rule to never touch payment/credit code, the
+safer choice is to only pull it in on a round where it actually intersects
+this branch's scope (as `accountRoutes.js` did last round) rather than carry
+payment-code conflict risk for no in-scope benefit.
+
+Delegated an adversarial review to a sub-agent, explicitly scoped to
+round 57's brand-new `accountRoutes.js` mutual-session-rollback fix (the one
+file/change least reviewed so far) rather than re-deriving any of the
+57 rounds' worth of already-fixed bug classes in the original 10 files. It
+found four real, previously-missed issues, three fixed this round:
+
+**1. (Fixed, the significant one) `ProviderBooking.deleteMany({providerId:
+id})` in `accountRoutes.js` never deleted the Google Calendar event for any
+confirmed booking before removing the docs — unlike every other
+cancel/rollback path in the codebase (the provider's own single-booking
+cancel route, and the booking-creation rollback, both in
+`providerRoutes.js`), which always delete the Google event first.** Round
+57's note had judged `ProviderBooking.deleteMany` as not needing the same
+fix as `MutualBooking` because "a ProviderBooking's Google event only ever
+lives on the provider's own calendar, never the guest's" — true for the
+*schedule* side, but incomplete for the *Google Calendar* side:
+`syncEventToGoogleCalendar` (`server.js`) sets `attendees: [{email:
+guestEmail}]` with `sendUpdates: 'all'` whenever the guest supplied an
+email at booking time, and Google really does mirror that invite onto the
+guest's own calendar — an outside third party who may have no CalendAI
+account at all. Failure scenario: provider P has a confirmed booking with
+guest G who gave an email; P deletes their account; G is left with a
+permanent, never-cancelled calendar invite for a meeting with a
+now-nonexistent provider. Fixed by querying `ProviderBooking.find({
+providerId: id, status: 'confirmed' })` for `googleEventId`s before the
+bulk delete and deleting each event (best-effort, same try/catch-per-event
+pattern as every other Google cleanup path here), using the deleting user's
+own Google credentials (they're the provider).
+
+**2. (Fixed) Ordering bug: the best-effort Google token revoke ran BEFORE
+both the mutual-session rollback and (new) provider-booking event cleanup,
+all three of which reuse this same user's own Google credentials — so
+`cancelMutualSession`'s own attempt to delete *this* user's half of a
+mirrored event, and the new provider-booking event-delete above, would
+always fail (silently caught/logged) after the token was already revoked.**
+This defeated half of round 57's fix: the *other* party's event was
+correctly cleaned up (their token is untouched), but the deleting user's own
+copy never was. Fixed by moving both the mutual-session rollback and the
+provider-booking Google-event cleanup above the token-revoke block, with a
+comment explaining why the ordering matters.
+
+**3. (Noted, not fixed — pre-existing, codebase-wide, out of proportion to
+fix in one file) No timeout on any of the Google Calendar `events.delete`/
+`events.insert` calls reached via `cancelMutualSession`,
+`providerRoutes.js`'s cancel/booking-rollback paths, or the new
+`accountRoutes.js` cleanup above — unlike the sibling token-revoke `fetch()`
+in the same file, which explicitly uses `AbortSignal.timeout(5000)`.** A
+Google-side hang (not an error) on any of these could leave the enclosing
+request hanging indefinitely. This is the same shape everywhere in
+`googleCalendar.js`'s callers, not something newly introduced by
+`accountRoutes.js` — fixing it well means adding a timeout to
+`createOAuth2ClientWithRefresh`'s returned client or every individual
+`google.calendar(...).events.*` call site across `providerRoutes.js`,
+`mutualRoutes.js`, and now `accountRoutes.js`, which is a broader,
+dedicated-follow-up-sized change, not a one-file patch — same category as
+the already-accepted `winsOverlapRace` per-provider-lock limitation above.
+Recorded here so a future round with a wider mandate picks it up instead of
+re-discovering it.
+
+**4. (Fixed) Test gap: all three of round 57's `accountRoutes.test.js` tests
+mocked `cancelMutualSession` capturing only the `sessionId` argument, never
+asserting the second (`app`) argument — the one `rollbackCompletedSession`
+actually depends on for its own in-memory schedule-cache cleanup
+(`app.get('getUserSchedule')`/`saveSchedulesNow`).** A regression dropping
+or reordering that argument would have passed all three unchanged. Fixed by
+asserting `typeof app?.get === 'function'` in the first test's mock.
+
+Also added one new regression test (`accountRoutes.test.js`, now 4 tests)
+for finding #1: a confirmed booking's real `googleEventId` gets deleted and
+a `null` one is skipped, and `ProviderBooking.deleteMany` only runs after.
+Did **not** add an automated test for finding #2's ordering fix against the
+*real* revoke call — doing so would require monkey-patching `global.fetch`
+(no other test file in this suite does that), and an early draft of exactly
+that test surfaced a separate, pre-existing, unrelated flake (next
+paragraph) strongly enough that the ordering fix is left verified by reading
+`accountRoutes.js` top-to-bottom instead, which is unambiguous.
+
+**New environment finding, not a regression:** while chasing down whether
+that dropped ordering test was itself the cause of an intermittent
+whole-file test failure, confirmed by reverting to round 57's own unmodified
+code and running `node --test` four times in a row that
+`test/accountRoutes.test.js` fails at the **whole-file** level (
+`uncaughtException`, `Unable to deserialize cloned data due to invalid or
+unsupported version`) in roughly half of full-suite runs, entirely
+independent of any change made this round — it reproduces identically on
+code nobody touched. Passes every time run standalone or with
+`--test-concurrency=1`; only flakes as part of the full concurrent
+`node --test` run. This looks like a Node test-runner IPC/reporter
+corruption under this sandbox's concurrency, the same category as the
+already-documented `mongodb-memory-server` network block, just newly
+noticed. Documented in `AGENTS.md` (new paragraph under the existing "Known
+sandbox limitation" section) so future runs don't mistake it for a
+regression; did not attempt to "fix" it since it isn't caused by anything
+in this branch's files.
+
+Full suite after this round's fixes: 291/307 pass (16 known sandbox-network
+failures, net +1 test this round — the new event-deletion test). `npm run
+build` (frontend) clean (no frontend file touched this round).
+
+No AI-credit/Lemon Squeezy code touched, no DB schema/migration changes, no
+secrets. `master` was not merged this round (see above) — only the
+`accountRoutes.js`/`accountRoutes.test.js`/`AGENTS.md`/this-file changes are
+new on top of round 57's head.
+
+**Still open for the human, carried over unchanged from round 57 (items
+1, 2, 3, 5 — item 4 stays resolved):**
+1. `wip/mutual-provider-booking` still merges cleanly into `origin/master`
+   as of round 57's merge point; `origin/master` has since moved further
+   with unrelated payment work not merged in this round (see above). ~220+
+   commits accumulated against a branch that has never landed — worth
+   deciding whether to open a PR / merge now.
+2. Whether to stop, slow, or re-scope this scheduled task remains open.
+   This round again found and fixed real (if lower-severity) bugs, so the
+   feature is clearly not at a permanent fixed point, but the broader
+   cadence/value question for a task now 58 rounds deep still stands.
+3. Product question: should a provider booking's synced Google Calendar
+   event description include the guest's phone number/notes (currently only
+   their name)?
+5. The `winsOverlapRace` post-insert recheck's residual check-then-act race,
+   and now also (3) above's missing-timeout gap on Google Calendar calls —
+   both accepted as known, documented, architecturally-larger limitations
+   unless a human wants a dedicated follow-up for either.

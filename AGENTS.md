@@ -52,3 +52,16 @@ tests) must still pass. Don't try to "fix" this by weakening/skipping those
 tests — it's an environment gap, not a regression. If a future run has real
 network access (e.g. a cached binary or an unblocked host), treat any
 failure in those files as real and investigate normally.
+
+Separately, `test/accountRoutes.test.js` intermittently (roughly half of
+full-suite runs, observed on both modified and completely unmodified code —
+not caused by any particular change) fails at the whole-FILE level under
+plain `node --test` with `failureType: 'uncaughtException'` and
+`error: 'Unable to deserialize cloned data due to invalid or unsupported
+version.'` This is a Node test-runner IPC/reporter corruption under this
+sandbox's default concurrency (many test-file child processes at once), not
+a bug in that file's tests: it passes reliably every time run standalone
+(`node --test test/accountRoutes.test.js`) or with
+`node --test --test-concurrency=1`. If it shows up in a full-suite run,
+re-run just that file on its own to confirm it's this flake before treating
+it as a real regression.
