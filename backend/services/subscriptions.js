@@ -141,8 +141,15 @@ function revenueCatSource(store) {
   return 'revenuecat';
 }
 
+/** Subscription events carry an expiration; consumable credit packs do not. */
+function isRevenueCatSubscriptionEvent(event) {
+  return event?.expiration_at_ms !== null && event?.expiration_at_ms !== undefined && event?.type !== 'NON_RENEWING_PURCHASE';
+}
+
 /**
- * What a RevenueCat webhook event means for the user.
+ * What a RevenueCat subscription event means for the user. Credit packs
+ * (NON_RENEWING_PURCHASE and their refunds) are handled in
+ * routes/revenuecatRoutes.js.
  * https://www.revenuecat.com/docs/integrations/webhooks/event-types-and-fields
  */
 function revenueCatEventEffect(event, now = Date.now()) {
@@ -160,6 +167,12 @@ function revenueCatEventEffect(event, now = Date.now()) {
     case 'UNCANCELLATION':
     case 'PRODUCT_CHANGE':
     case 'CANCELLATION': // auto-renew turned off; still Pro until expiration
+      if (event?.cancel_reason === 'CUSTOMER_SUPPORT') {
+        // Store refund: Pro ends now.
+        return { kind: 'subscription', expiresAt: new Date(now), source };
+      }
+      if (!expires) return { kind: 'ignore', reason: `${type} without expiration` };
+      return { kind: 'subscription', expiresAt: expires, source };
     case 'BILLING_ISSUE':
     case 'SUBSCRIPTION_EXTENDED':
     case 'TEMPORARY_ENTITLEMENT_GRANT':
@@ -167,9 +180,6 @@ function revenueCatEventEffect(event, now = Date.now()) {
       return { kind: 'subscription', expiresAt: expires, source };
     case 'EXPIRATION':
       return { kind: 'subscription', expiresAt: new Date(now), source };
-    case 'NON_RENEWING_PURCHASE':
-      // A consumable credit pack bought in the app.
-      return { kind: 'credits', eventKey: `rc:${id}`, orderId: id, credits: CREDIT_PACK_SIZE, source };
     default:
       return { kind: 'ignore', reason: `unhandled event ${type}` };
   }
@@ -234,6 +244,7 @@ module.exports = {
   lemonSubscriptionExpiry,
   lemonEventEffect,
   revenueCatUserId,
+  isRevenueCatSubscriptionEvent,
   revenueCatEventEffect,
   applyEntitlement
 };

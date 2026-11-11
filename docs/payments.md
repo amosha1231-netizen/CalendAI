@@ -30,25 +30,24 @@ checkout, or a link to it. A user who paid on the web is simply Pro in the app.
 
 ## App Store and Google Play (apps)
 
-1. **App Store Connect**: sign the Paid Applications agreement, add bank and
-   tax details, enroll in the App Store Small Business Program (15%).
-   Create an auto-renewable subscription, e.g. `calendai_pro_monthly`.
-2. **Play Console**: set up a payments profile, create a subscription with a
-   monthly base plan, e.g. `calendai_pro_monthly`. Google charges 15% on
-   subscriptions.
-3. **RevenueCat** (free up to $2.5k/month revenue):
-   - Add both apps (bundle id / package `com.amos.calendai`), connect the
-     App Store Connect API key and the Play service account.
-   - Create entitlement `pro` and attach both products.
-   - Create an offering `default` with a monthly package containing them.
-   - Integrations → Webhooks: URL
-     `https://calendai-backend-dfmi.onrender.com/api/payments/revenuecat-webhook`,
-     Authorization header = a long random string. Put the same string in
-     `REVENUECAT_WEBHOOK_AUTH` on Render.
-   - API keys: put the secret (v1) key in `REVENUECAT_SECRET_KEY` on Render,
-     and the public iOS / Android SDK keys in `frontend/.env.capacitor`
-     (`VITE_REVENUECAT_IOS_KEY`, `VITE_REVENUECAT_ANDROID_KEY`).
-4. Rebuild the apps (`npm run cap:build:ios` / `cap:build:android`).
-   Without a key, that platform's app hides the purchase UI as before.
+Store setup, RevenueCat project, API keys and the webhook are shared with
+the credit packs: follow `docs/in-app-purchases.md` first. For Pro, add:
+
+1. **App Store Connect**: an **auto-renewable subscription** in a
+   subscription group, e.g. `calendai_pro_monthly`, monthly.
+2. **Play Console**: a **subscription** with a monthly base plan, same id.
+3. **RevenueCat**: import the product from both stores, create the
+   entitlement **`pro`** and attach it, and add a monthly package to the
+   current offering next to the credit packs. The in-app sheet shows the
+   subscription with its period, the auto-renew terms and "Restore purchases".
+4. **Render**: `REVENUECAT_SECRET_KEY` = RevenueCat secret API key (v1).
+   Used by `POST /api/payments/revenuecat-sync` so Pro turns on right after
+   a purchase or restore. Optional `REVENUECAT_ENTITLEMENT_ID` if the
+   entitlement is not called `pro`.
+
+The same webhook (`backend/routes/revenuecatRoutes.js`) sends subscription
+events (they carry `expiration_at_ms`) to `services/subscriptions.js`; credit
+packs keep their own path. A store refund of the subscription
+(`CANCELLATION` with `cancel_reason: CUSTOMER_SUPPORT`) ends Pro at once.
 
 Test with sandbox testers (Apple) and license testers (Play) before release.

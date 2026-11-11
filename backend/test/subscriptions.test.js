@@ -7,6 +7,7 @@ const {
   lemonSubscriptionExpiry,
   revenueCatEventEffect,
   revenueCatUserId,
+  isRevenueCatSubscriptionEvent,
   RENEWAL_GRACE_MS
 } = require('../services/subscriptions');
 
@@ -80,7 +81,15 @@ test('RevenueCat cancellation keeps Pro until expiry, expiration ends it', () =>
   assert.equal(expired.expiresAt.getTime(), NOW);
 
   assert.equal(revenueCatEventEffect({ id: 'e5', type: 'TEST' }, NOW).kind, 'ignore');
-  assert.equal(revenueCatEventEffect({ id: 'e6', type: 'NON_RENEWING_PURCHASE', store: 'PLAY_STORE' }, NOW).credits, 100);
+  const refund = revenueCatEventEffect({ id: 'e6', type: 'CANCELLATION', cancel_reason: 'CUSTOMER_SUPPORT', store: 'APP_STORE', expiration_at_ms: exp }, NOW);
+  assert.equal(refund.expiresAt.getTime(), NOW, 'a store refund ends Pro now');
+});
+
+test('credit packs are not subscription events', () => {
+  assert.equal(isRevenueCatSubscriptionEvent({ type: 'NON_RENEWING_PURCHASE', expiration_at_ms: null }), false);
+  assert.equal(isRevenueCatSubscriptionEvent({ type: 'CANCELLATION', expiration_at_ms: null }), false, 'pack refund');
+  assert.equal(isRevenueCatSubscriptionEvent({ type: 'CANCELLATION', expiration_at_ms: NOW }), true);
+  assert.equal(isRevenueCatSubscriptionEvent({ type: 'RENEWAL', expiration_at_ms: NOW }), true);
 });
 
 test('RevenueCat user id comes from app_user_id or an alias', () => {

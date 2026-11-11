@@ -2,18 +2,13 @@ const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
 
-const crypto = require('crypto');
 const mongoose = require('mongoose');
 
 const JWT_SECRET = require('../config/jwtSecret');
 const User = require('../models/User');
-const ProcessedPaymentEvent = require('../models/ProcessedPaymentEvent');
 const {
   isProActive,
-  lemonProVariantId,
-  revenueCatUserId,
-  revenueCatEventEffect,
-  applyEntitlement
+  lemonProVariantId
 } = require('../services/subscriptions');
 
 /** CalendAI user id from the Bearer JWT, or null. */
@@ -175,52 +170,12 @@ router.post('/create-checkout', async (req, res) => {
 });
 
 /**
- * POST /api/payments/revenuecat-webhook
- * App Store and Google Play purchases, reported by RevenueCat.
- * RevenueCat sends the Authorization header configured in its dashboard;
- * it must equal REVENUECAT_WEBHOOK_AUTH.
- */
-router.post('/revenuecat-webhook', async (req, res) => {
-  const expected = process.env.REVENUECAT_WEBHOOK_AUTH?.trim();
-  if (!expected) {
-    console.error('RevenueCat webhook: REVENUECAT_WEBHOOK_AUTH is not configured.');
-    return res.status(500).json({ error: 'Webhook secret not configured' });
-  }
-  const received = String(req.headers.authorization || '');
-  const a = Buffer.from(received);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
-    return res.status(401).json({ error: 'Invalid authorization' });
-  }
-
-  try {
-    const event = req.body?.event;
-    const effect = revenueCatEventEffect(event);
-    if (effect.kind === 'ignore') return res.status(200).json({ received: true });
-
-    const userId = revenueCatUserId(event);
-    const user = userId ? await User.findById(userId) : null;
-    if (!user) {
-      // 200 so RevenueCat does not retry forever for purchases made before login.
-      console.warn(`RevenueCat webhook: no CalendAI user for ${event?.type} (${event?.app_user_id}).`);
-      return res.status(200).json({ received: true, unmatched: true });
-    }
-
-    const result = await applyEntitlement({ User, ProcessedPaymentEvent, user, effect });
-    if (!result.duplicate) console.log(`✅ RevenueCat: ${event.type} (${event.environment}) applied to user ${user._id}.`);
-    return res.status(200).json({ received: true, duplicate: !!result.duplicate });
-  } catch (err) {
-    console.error('RevenueCat webhook processing failed:', err.message);
-    return res.status(500).json({ error: 'Webhook processing failed' });
-  }
-});
-
-/**
  * POST /api/payments/revenuecat-sync
  * Called by the app right after a purchase or "Restore purchases", so Pro
  * turns on without waiting for the webhook. Reads the subscriber from the
  * RevenueCat REST API (REVENUECAT_SECRET_KEY) and stores the Pro expiry.
- * Credits are only granted by the webhook, which is idempotent per event.
+ * Credits are only granted by the webhook (routes/revenuecatRoutes.js),
+ * which is idempotent per event.
  */
 router.post('/revenuecat-sync', async (req, res) => {
   const userId = userIdFromBearer(req);

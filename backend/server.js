@@ -133,10 +133,11 @@ const PORT = process.env.PORT || 5000;
 // The native app opens sign-in in the system browser (Google blocks web views),
 // tagged with ?platform=native. The OAuth `state` carries that tag through the
 // provider, and the callback then returns to the app via its URL scheme.
-const NATIVE_OAUTH_STATE = 'native';
-const NATIVE_APP_AUTH_URL = 'com.amos.calendai://auth';
+// A web sign-in carries the page's own origin the same way (see services/oauthReturn.js).
+const { createOAuthReturn } = require('./services/oauthReturn');
+let oauthReturn = null; // built once the frontend URLs below are known
 function oauthReturnBase(req) {
-  return req.query.state === NATIVE_OAUTH_STATE ? NATIVE_APP_AUTH_URL : FRONTEND_URL;
+  return oauthReturn.baseFor(req.query.state);
 }
 
 async function createOAuthHandoff(userId) {
@@ -144,6 +145,20 @@ async function createOAuthHandoff(userId) {
   const codeHash = crypto.createHash('sha256').update(code).digest('hex');
   await OAuthHandoff.create({ codeHash, userId, expiresAt: new Date(Date.now() + 60_000) });
   return code;
+}
+
+// Leaves the login waiting for a home-screen web app that started this sign-in
+// (see services/oauthReturn.js). Best effort: the normal redirect still happens.
+async function createPwaPollHandoff(state, userId) {
+  const pollHash = oauthReturn.pollHashFor(state);
+  if (!pollHash) return;
+  try {
+    const codeHash = `poll:${pollHash}`;
+    await OAuthHandoff.deleteOne({ codeHash });
+    await OAuthHandoff.create({ codeHash, userId, expiresAt: new Date(Date.now() + 10 * 60_000) });
+  } catch (e) {
+    console.warn('Could not leave home-screen login handoff:', e.message);
+  }
 }
 
 // ──────────────────────────────────────────────
@@ -214,12 +229,21 @@ const corsOrigin = process.env.FRONTEND_URL?.trim() || process.env.CORS_ORIGIN?.
 // Origins of the Capacitor native apps (iOS: capacitor://localhost, Android: https://localhost).
 const NATIVE_APP_ORIGINS = ['capacitor://localhost', 'https://localhost'];
 // CRITICAL: CORS origin must be explicit URLs, NOT wildcard '*', when using credentials: true
+// Other web addresses that serve the same frontend. A home-screen icon added from
+// one of them keeps opening that address, so it must be able to call the API and
+// to finish Google sign-in there (not on www) or the login never sticks.
+const PRODUCTION_ALT_APP_ORIGINS = ['https://calendai.org', 'https://calendai-q59p.onrender.com'];
 const allowedOrigins = [
   ...(corsOrigin && corsOrigin !== '*'
     ? corsOrigin.split(',').map(origin => origin.trim().replace(/\/+$/, '')).filter(Boolean)
     : ['http://localhost:5173', PRODUCTION_APP_URL]),
+  ...(isProduction ? [PRODUCTION_APP_URL, ...PRODUCTION_ALT_APP_ORIGINS] : []),
   ...NATIVE_APP_ORIGINS
 ];
+oauthReturn = createOAuthReturn({
+  frontendUrl: FRONTEND_URL,
+  extraOrigins: allowedOrigins.filter(origin => !NATIVE_APP_ORIGINS.includes(origin))
+});
 // .env's FRONTEND_URL is a production value (e.g. https://calendai.onrender.com),
 // which — when set, even while developing locally — replaced the list above
 // entirely and silently dropped localhost:5173. That made every cross-origin
@@ -621,7 +645,8 @@ async function checkAICredits(userId) {
       allowed: false,
       status: 402,
       credits: 0,
-      error: 'נגמרו לך הקרדיטים! אנא רכוש חבילת פעולות נוספת כדי להמשיך להשתמש ב-AI.'
+      // Neutral on purpose: the iOS/Android apps show this text and must not point to a purchase.
+      error: 'נגמרו לך הקרדיטים לפעולות AI.'
     };
   } catch (err) {
     console.error('Failed to check AI credits:', err.message);
@@ -1184,7 +1209,7 @@ app.get('/api/auth/google',
       scope: OAUTH_SCOPES,
       accessType: 'offline',
       prompt: 'consent',
-      ...(req.query.platform === 'native' ? { state: NATIVE_OAUTH_STATE } : {}),
+      ...(oauthReturn.stateFor(req.query, req.get('referer')) ? { state: oauthReturn.stateFor(req.query, req.get('referer')) } : {}),
       // @ts-ignore - Passport supports custom params via this property
       customParams: { hl }
     })(req, res, next);
@@ -1217,6 +1242,7 @@ app.get('/api/auth/google/callback',
 
       try {
         const code = await createOAuthHandoff(user._id || user.id);
+        await createPwaPollHandoff(req.query.state, user._id || user.id);
         res.redirect(`${rawUrl}/?oauth_code=${encodeURIComponent(code)}&login=success`);
       } catch (jwtErr) {
         console.error('=== GOOGLE CALLBACK: JWT CREATION FAILED ===');
@@ -1266,7 +1292,7 @@ app.get('/api/auth/microsoft', (req, res) => {
     `&redirect_uri=${encodeURIComponent(redirectUri)}` +
     `&scope=${encodeURIComponent(scopes)}` +
     `&response_mode=query` +
-    (req.query.platform === 'native' ? `&state=${NATIVE_OAUTH_STATE}` : '');
+    (oauthReturn.stateFor(req.query, req.get('referer')) ? `&state=${encodeURIComponent(oauthReturn.stateFor(req.query, req.get('referer')))}` : '');
 
   res.redirect(authorizeUrl);
 });
@@ -1359,10 +1385,28 @@ app.get('/api/auth/microsoft/callback', async (req, res) => {
     await user.save();
 
     const codeValue = await createOAuthHandoff(user._id || user.id);
+    await createPwaPollHandoff(req.query.state, user._id || user.id);
     res.redirect(`${returnBase}/?oauth_code=${encodeURIComponent(codeValue)}&login=success`);
   } catch (err) {
     console.error('Microsoft OAuth callback error:', err);
     res.redirect(`${returnBase}/?error=microsoft_auth_failed`);
+  }
+});
+
+// The home-screen web app collects a login that finished in iOS's in-app browser.
+// 204 = not there (yet); the app keeps asking for a few minutes.
+app.post('/api/auth/oauth-poll', async (req, res) => {
+  const secret = String(req.body?.secret || '');
+  try {
+    if (!/^[a-f0-9]{64}$/.test(secret)) return res.status(400).json({ error: 'Invalid secret.' });
+    const pollHash = crypto.createHash('sha256').update(secret).digest('hex');
+    const handoff = await OAuthHandoff.findOneAndDelete({ codeHash: `poll:${pollHash}`, expiresAt: { $gt: new Date() } });
+    if (!handoff) return res.status(204).end();
+    const token = jwt.sign({ id: handoff.userId.toString() }, JWT_SECRET, { expiresIn: '30d' });
+    return res.json({ token });
+  } catch (error) {
+    console.error('Home-screen login pickup failed:', error.message);
+    return res.status(503).json({ error: 'Could not complete sign-in.' });
   }
 });
 
@@ -2887,7 +2931,7 @@ app.post(SIRI_ENDPOINT_PATH, aiLimiter, async (req, res) => {
       return speak(false, body.blockedMessage, { isBlocked: true });
     }
     if (result.status === 402) {
-      return speak(false, 'נגמרו קרדיטי ה-AI בחשבון. אפשר לשדרג באפליקציה.');
+      return speak(false, 'נגמרו קרדיטי ה-AI בחשבון.');
     }
     if (result.status === 400) {
       return speak(false, 'לא הצלחתי להבין איזה אירוע לקבוע. נסו לומר למשל: פגישה עם דני מחר בשלוש.');
@@ -4437,6 +4481,14 @@ app.use('/api/invites', inviteRoutes);
 // ── Expected Expenses Routes (personal expense tracking) ──
 const expenseRoutes = require('./routes/expenseRoutes');
 app.use('/api/expenses', expenseRoutes);
+
+// Delete account from inside the app (App Store 5.1.1(v), Google Play account deletion policy)
+const accountRoutes = require('./routes/accountRoutes');
+app.use('/api/account', accountRoutes);
+
+// In-app purchases (Apple / Google via RevenueCat) -> AI credits
+const revenuecatRoutes = require('./routes/revenuecatRoutes');
+app.use('/api/payments/revenuecat-webhook', revenuecatRoutes);
 
 // ──────────────────────────────────────────────
 // User Search Endpoint — for GlobalSearch component

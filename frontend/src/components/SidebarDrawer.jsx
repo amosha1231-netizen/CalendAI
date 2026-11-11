@@ -5,7 +5,7 @@ import { getDeviceTimeZone, setDetectedLocation, presetLocationForTimeZone } fro
 import SiriSetupModal from './SiriSetupModal';
 import { openCheckout, readCheckoutResponse, notifyCreditsPurchased } from '../utils/lemonCheckout';
 import { isNativeApp } from '../utils/nativeApp';
-import { canPurchaseInApp, manageSubscriptionUrl } from '../utils/nativePurchases';
+import { isIapAvailable, manageSubscriptionUrl } from '../utils/inAppPurchase';
 
 const CATEGORY_KEYWORDS = {
   sport: ['אימון', 'ריצה', 'שחייה', 'הליכה', 'ספורט', 'חדר כושר', 'יוגה', 'פילאטיס', 'רכיבה', 'טיפוס', 'workout', 'run', 'swim', 'walk', 'sport', 'gym', 'yoga', 'pilates', 'bike', 'climb'],
@@ -156,6 +156,31 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangC
   const [upgradeError, setUpgradeError] = useState("");
   const [showSiriModal, setShowSiriModal] = useState(false);
   const [confirmLogout, setConfirmLogout] = useState(false);
+  // In-app account deletion (App Store 5.1.1(v), Google Play policy): two steps, then sign out.
+  const [deleteStep, setDeleteStep] = useState(0); // 0 = link, 1 = confirm
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
+  const handleDeleteAccount = async () => {
+    setDeleteBusy(true);
+    setDeleteError('');
+    try {
+      let token = null;
+      try { token = safeStorage.getItem('token') || safeStorage.getItem('calendai-jwt'); } catch (e) {}
+      const res = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/account`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ confirm: 'DELETE' }),
+        credentials: 'include'
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      setDeleteStep(0);
+      if (onLogout) onLogout();
+    } catch (e) {
+      setDeleteError(lang === 'he' ? 'מחיקת החשבון נכשלה. נסו שוב בעוד רגע.' : 'Could not delete the account. Please try again.');
+    } finally {
+      setDeleteBusy(false);
+    }
+  };
 
   // Each opening lands on the tab it was opened for (e.g. Analytics from the Tools sheet).
   useEffect(() => {
@@ -369,7 +394,7 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangC
             <span>{t.sidebarAnalytics}</span>
           </button>
           {/* In the native app Pro is sold through the store (in-app purchase) only. */}
-          {(!isNativeApp() || canPurchaseInApp()) && (
+          {(!isNativeApp() || isIapAvailable()) && (
             <button
               className={`sidebar-nav-item ${activeTab === 'pro' ? 'active' : ''}`}
               onClick={() => setActiveTab('pro')}
@@ -802,6 +827,30 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangC
                 <button onClick={() => setConfirmLogout(true)} className="text-xs text-red-500 hover:text-red-700 font-medium px-2 py-1.5">
                   {t.logout}
                 </button>
+              )}
+            </div>
+            <div className="px-3 pb-3 text-xs">
+              {deleteStep === 0 ? (
+                <button onClick={() => { setDeleteStep(1); setDeleteError(''); }} className="text-slate-400 hover:text-red-600 underline">
+                  {lang === 'he' ? 'מחיקת החשבון' : 'Delete account'}
+                </button>
+              ) : (
+                <div className="rounded-xl border border-red-200 bg-red-50 p-3 space-y-2">
+                  <p className="text-red-700">
+                    {lang === 'he'
+                      ? 'החשבון וכל הנתונים שלך (אירועים, תזכורות, שגרות, יתרת קרדיטים) יימחקו לצמיתות. אי אפשר לבטל.'
+                      : 'Your account and all your data (events, reminders, routines, credit balance) will be permanently deleted. This cannot be undone.'}
+                  </p>
+                  {deleteError && <p className="text-red-600 font-medium">{deleteError}</p>}
+                  <div className="flex gap-2 justify-end">
+                    <button onClick={() => setDeleteStep(0)} disabled={deleteBusy} className="px-3 py-1.5 text-slate-600">
+                      {t.cancel || (lang === 'he' ? 'ביטול' : 'Cancel')}
+                    </button>
+                    <button onClick={handleDeleteAccount} disabled={deleteBusy} className="px-3 py-1.5 rounded-full bg-red-600 text-white font-medium disabled:opacity-60">
+                      {deleteBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : (lang === 'he' ? 'כן, למחוק לצמיתות' : 'Yes, delete forever')}
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
           </div>

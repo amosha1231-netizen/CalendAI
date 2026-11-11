@@ -43,8 +43,8 @@ import TermsPage from "./pages/Terms";
 import translations from "./i18n";
 import safeStorage from "./utils/safeStorage";
 import { isNativeApp, startOAuth } from './utils/nativeApp';
-import { canPurchaseInApp } from './utils/nativePurchases';
-import NativePaywall from './components/NativePaywall';
+import { isIapAvailable } from './utils/inAppPurchase';
+import InAppCreditsSheet from './components/InAppCreditsSheet';
 import { openCheckout, readCheckoutResponse, consumePaymentSuccessParam, CREDITS_PURCHASED_EVENT, notifyCreditsPurchased } from './utils/lemonCheckout';
 import { isIosWhatsApp, isIosSafari, isIosNonSafari, isStandalone } from "./utils/browserDetection";
 import { normalizeCredits, normalizeUserCredits, formatCredits } from "./utils/credits";
@@ -361,7 +361,8 @@ function AppRoutes() {
   });
   const [showGuestLimitModal, setShowGuestLimitModal] = useState(false);
   const [showCreditsModal, setShowCreditsModal] = useState(false);
-  const [showNativePaywall, setShowNativePaywall] = useState(false);
+  // Store apps: Apple / Google in-app purchase sheet. null | 'menu' | 'out'
+  const [iapSheet, setIapSheet] = useState(null);
   const [creditsError, setCreditsError] = useState("");
   const [checkoutLoading, setCheckoutLoading] = useState(false);
 
@@ -373,14 +374,16 @@ function AppRoutes() {
   const [drawerTab, setDrawerTab] = useState('settings');
 
   const handleBuyCredits = useCallback(async () => {
-    if (!user) {
-      setShowLoginPrompt(true);
+    // App Store / Play rules: digital purchases inside the store apps must use
+    // Apple / Google billing, so the apps never open the web checkout.
+    if (isNativeApp()) {
+      if (!isIapAvailable()) return;
+      if (!user) { setShowLoginPrompt(true); return; }
+      setIapSheet('menu');
       return;
     }
-    // Store rules: digital purchases inside the iOS/Android app must use the
-    // store's in-app purchase, so the native app never opens the web checkout.
-    if (isNativeApp()) {
-      if (canPurchaseInApp()) setShowNativePaywall(true);
+    if (!user) {
+      setShowLoginPrompt(true);
       return;
     }
     setCheckoutLoading(true);
@@ -412,6 +415,19 @@ function AppRoutes() {
       setCheckoutLoading(false);
     }
   }, [user, lang, setShowLoginPrompt, setError]);
+
+  // Out of AI credits. The store apps (iOS/Android) must not point to a purchase,
+  // so only the website mentions buying more.
+  const showOutOfCredits = useCallback(() => {
+    if (isIapAvailable() && user) {
+      setIapSheet('out');
+      return;
+    }
+    setCreditsError(isNativeApp()
+      ? (lang === 'he' ? 'נגמרו לך הקרדיטים לפעולות AI.' : 'You have used all your AI credits.')
+      : (lang === 'he' ? 'נגמרו לך הקרדיטים! אנא רכוש חבילת פעולות נוספת כדי להמשיך להשתמש ב-AI.' : 'You ran out of credits! Please purchase an additional action pack to continue using the AI.'));
+    setShowCreditsModal(true);
+  }, [lang, user]);
 
   const [showWizard, setShowWizard] = useState(false);
   const [showSendInvite, setShowSendInvite] = useState(false);
@@ -1035,6 +1051,10 @@ function AppRoutes() {
         credentials: "include"
       });
       const data = await res.json();
+      if (res.status === 402) {
+        showOutOfCredits();
+        return;
+      }
       if (!res.ok) {
         if (data.error) throw new Error(data.error);
         else throw new Error(t.failedRequest + " " + res.status);
@@ -1124,10 +1144,7 @@ function AppRoutes() {
           return;
         }
         if (res.status === 402) {
-          setCreditsError(isNativeApp() && !canPurchaseInApp()
-            ? (lang === 'he' ? 'נגמרו לך הקרדיטים לפעולות AI.' : 'You have used all your AI credits.')
-            : (errorData.error || 'נגמרו לך הקרדיטים! אנא רכוש חבילת פעולות נוספת כדי להמשיך להשתמש ב-AI.'));
-          setShowCreditsModal(true);
+          showOutOfCredits();
           return;
         }
         throw new Error(t.failedRequest + " " + res.status);
@@ -1281,6 +1298,7 @@ function AppRoutes() {
         method: "POST", headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ reason }), credentials: "include"
       });
+      if (res.status === 402) { setIsRescheduleOpen(false); showOutOfCredits(); return; }
       if (!res.ok) { const e = await res.json(); throw new Error(e.error || "AI failed"); }
       const data = await res.json();
       setReschedulePreview(data);
@@ -1866,7 +1884,7 @@ function AppRoutes() {
               return (
                 <button
                   onClick={handleBuyCredits}
-                  disabled={checkoutLoading || (isNativeApp() && !canPurchaseInApp())}
+                  disabled={checkoutLoading || (isNativeApp() && !isIapAvailable())}
                   title={lang === 'he' ? 'קרדיטים ל-AI' : 'AI credits'}
                   className={`hidden xs:flex items-center gap-1 h-[42px] px-3 rounded-[14px] text-xs font-bold transition ${
                     credits > 0
@@ -2690,6 +2708,16 @@ function AppRoutes() {
         </div>
       )}
 
+      <InAppCreditsSheet
+        open={!!iapSheet}
+        outOfCredits={iapSheet === 'out'}
+        onClose={() => setIapSheet(null)}
+        lang={lang}
+        user={user}
+        credits={user ? normalizeCredits(user.aiCredits) : undefined}
+        onPurchased={notifyCreditsPurchased}
+      />
+
       {/* AI Credits Exhausted Modal */}
       {showCreditsModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-[9999]" onClick={() => setShowCreditsModal(false)}>
@@ -2699,7 +2727,7 @@ function AppRoutes() {
             </div>
             <h3 className="text-lg font-bold text-slate-800 mb-2">{lang === 'he' ? 'נגמרו לך הקרדיטים!' : 'You are out of credits!'}</h3>
             <p className="text-sm text-slate-500 mb-6">{creditsError || (lang === 'he' ? 'נגמרו לך הקרדיטים! אנא רכוש חבילת פעולות נוספת כדי להמשיך להשתמש ב-AI.' : 'You ran out of credits! Please purchase an additional action pack to continue using the AI.')}</p>
-            {(!isNativeApp() || canPurchaseInApp()) ? (
+            {!isNativeApp() ? (
               <button
                 onClick={() => { setShowCreditsModal(false); handleBuyCredits(); }}
                 disabled={checkoutLoading}
@@ -2713,11 +2741,6 @@ function AppRoutes() {
             <button onClick={() => setShowCreditsModal(false)} className="w-full mt-3 text-sm text-slate-400 hover:text-slate-600 py-2 transition">{t.cancel}</button>
           </div>
         </div>
-      )}
-
-      {/* In-app purchase sheet (iOS / Android) */}
-      {showNativePaywall && user && (
-        <NativePaywall lang={lang} user={user} onClose={() => setShowNativePaywall(false)} />
       )}
 
       {/* Guest Usage Limit Modal */}
@@ -2796,7 +2819,7 @@ function AppRoutes() {
         t={t}
         user={user}
         isPro={isPro}
-        onOpenNativePaywall={() => setShowNativePaywall(true)}
+        onOpenNativePaywall={() => setIapSheet('menu')}
         onLogout={handleLogout}
         initialTab={drawerTab}
         title={drawerTab === 'analytics' ? getNavLabels(lang).analytics : getNavLabels(lang).me}
