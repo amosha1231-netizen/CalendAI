@@ -18,9 +18,12 @@ const Goal = require('../models/Goal');
 const Booking = require('../models/Booking');
 const MutualBooking = require('../models/MutualBooking');
 const ProviderBooking = require('../models/ProviderBooking');
+const { google } = require('googleapis');
 // Imported as a namespace (not destructured) so tests can mock
-// mutualRoutes.cancelMutualSession without needing a live DB.
+// mutualRoutes.cancelMutualSession / googleCalendarService.createOAuth2ClientWithRefresh
+// without needing a live DB or a require-cache reset.
 const mutualRoutes = require('./mutualRoutes');
+const googleCalendarService = require('../services/googleCalendar');
 
 // Same auth as the other route files: JWT bearer first, then the passport session.
 function getAuthenticatedUserId(req) {
@@ -67,20 +70,12 @@ router.delete('/', async (req, res) => {
     const user = await User.findById(id).select('_id googleRefreshToken googleAccessToken').lean();
     if (!user) return res.status(404).json({ error: 'Account not found.' });
 
-    // Best effort: revoke CalendAI's access to their Google Calendar. Never blocks the deletion.
-    const googleToken = user.googleRefreshToken || user.googleAccessToken;
-    if (googleToken) {
-      try {
-        await fetch('https://oauth2.googleapis.com/revoke', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({ token: googleToken }).toString(),
-          signal: AbortSignal.timeout(5000)
-        });
-      } catch (e) {
-        console.warn('Google token revoke failed (account still deleted):', e.message);
-      }
-    }
+    // All Google Calendar cleanup below must run BEFORE the token revoke
+    // further down — it reuses this same user's own Google credentials
+    // (directly here, and via cancelMutualSession -> createOAuth2ClientWithRefresh
+    // for a session where this user is the host/invitee), so revoking first
+    // would make every one of these calls fail with an invalid_grant and
+    // leave live events behind on exactly the account being deleted.
 
     // A mutual session the other party is still part of mirrors a schedule
     // entry (and, once 'completed', a synced Google Calendar event) onto
@@ -101,6 +96,49 @@ router.delete('/', async (req, res) => {
         console.error(`Failed to roll back mutual session ${s.sessionId} on account deletion:`, err.message)
       )
     ));
+
+    // A confirmed ProviderBooking where the deleting user is the provider
+    // can carry a synced Google Calendar event with the guest listed as an
+    // attendee (syncEventToGoogleCalendar sets sendUpdates: 'all' whenever
+    // the guest gave an email) — Google mirrors that invite onto the
+    // guest's own calendar even though they may have no CalendAI account at
+    // all. Unlike the provider's own single-booking cancel route, the bulk
+    // ProviderBooking.deleteMany below never deleted that event, leaving a
+    // permanent dangling invite for a meeting with a now-deleted provider.
+    // Clean those up first, the same way that cancel route does.
+    const confirmedProviderBookings = await ProviderBooking.find({
+      providerId: id,
+      status: 'confirmed'
+    }).select('googleEventId').lean();
+    const eventIds = confirmedProviderBookings.map(b => b.googleEventId).filter(Boolean);
+    if (eventIds.length && (user.googleAccessToken || user.googleRefreshToken)) {
+      try {
+        const oauth = await googleCalendarService.createOAuth2ClientWithRefresh(user);
+        const calendar = google.calendar({ version: 'v3', auth: oauth });
+        await Promise.all(eventIds.map(eventId =>
+          calendar.events.delete({ calendarId: 'primary', eventId }).catch(err =>
+            console.error(`Failed to delete provider booking Google event ${eventId} on account deletion:`, err.message)
+          )
+        ));
+      } catch (err) {
+        console.error('Failed to clean up provider booking Google events on account deletion:', err.message);
+      }
+    }
+
+    // Best effort: revoke CalendAI's access to their Google Calendar. Never blocks the deletion.
+    const googleToken = user.googleRefreshToken || user.googleAccessToken;
+    if (googleToken) {
+      try {
+        await fetch('https://oauth2.googleapis.com/revoke', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ token: googleToken }).toString(),
+          signal: AbortSignal.timeout(5000)
+        });
+      } catch (e) {
+        console.warn('Google token revoke failed (account still deleted):', e.message);
+      }
+    }
 
     await Promise.all([
       Event.deleteMany({ userId: id }),
