@@ -3880,3 +3880,83 @@ scheduled task, before the next trigger fires.
 
 No AI-credit/Lemon Squeezy code touched, no DB schema changes, no secrets,
 no branches other than `wip/mutual-provider-booking` touched.
+
+## 2026-11-11 run notes (fifty-seventh overall)
+`origin/master` moved substantially since the fifty-sixth run's check
+(`5b690c6` → `9de4e2f`, ~14 commits), which directly re-triggers open item 4
+from the list above: that commit range includes `becac1e` ("Store review
+fixes: in-app account deletion..."), which adds `backend/routes/accountRoutes.js`
+(`DELETE /api/account`) — the exact file item 4 was waiting on. Verified
+`git merge --no-edit origin/master` into this branch is a clean merge (no
+conflicts) and did it for real this round (prior rounds only dry-ran
+`git merge-tree`) specifically to get this file onto the branch so the
+real, now-concrete bug it raises could actually be fixed rather than kept as
+a hypothetical. `npm install` (fresh clone) + `npm run build` (frontend,
+clean) + `node --test` (backend) right after the merge: 287/303 pass, same
+16 known `fastdl.mongodb.org` sandbox-network failures by test name
+(credit-deduction races, webhook idempotency, booking-link claim races,
+mutual/provider claim+cancel races, owner-credit refill) — confirmed by
+error text, not regressions, see AGENTS.md.
+
+Read the merged-in `accountRoutes.js` and confirmed item 4's concern is a
+real bug, not just a hypothetical: `DELETE /api/account` hard-deleted every
+`MutualBooking` the deleting user was part of with a single
+`MutualBooking.deleteMany({ $or: [{ hostId: id }, { inviteeId: id }] })`,
+never calling `cancelMutualSession`/`rollbackCompletedSession` first. A
+`completed` mutual session mirrors a schedule entry — and, since both
+parties' Google events are inserted together on confirm, a synced Google
+Calendar event — onto BOTH the host's and the invitee's accounts. Deleting
+the only `MutualBooking` document for it without that rollback leaves the
+OTHER (surviving, not-being-deleted) party with a live Google Calendar
+event and a live `schedule` entry forever: there's no session document left
+for them to even call `POST /sessions/:id/cancel` on to clean it up
+themselves. (By contrast, confirmed `ProviderBooking.deleteMany({ providerId: id })`
+right next to it is NOT the same bug — a `ProviderBooking`'s Google event
+only ever lives on the provider's own calendar, never the guest's, and the
+guest-side `bookedByUserId` unlink two lines below already handles the
+guest-deletes-their-account direction correctly. No change needed there.)
+
+Fixed in `backend/routes/accountRoutes.js`: before the existing
+`Promise.all([...])` that bulk-deletes, now does
+`MutualBooking.find({ $or: [...], status: { $ne: 'cancelled' } })` for the
+deleting user's non-cancelled sessions and runs each one through
+`mutualRoutes.cancelMutualSession(sessionId, req.app)` (imported as a
+namespace, not destructured, specifically so tests can mock
+`mutualRoutes.cancelMutualSession` without a live DB) — same function
+`POST /sessions/:id/cancel` itself calls, so the rollback logic isn't
+duplicated. Each rollback is wrapped so one failure (e.g. Google down) is
+logged and never blocks the rest of account deletion. The `MutualBooking.deleteMany`
+immediately after now only removes documents that rollback already handled.
+Added `backend/test/accountRoutes.test.js` (3 tests, no MongoMemoryReplSet —
+mocks the Mongoose statics the same way `providerSearch.test.js`/
+`providerGoogleAvailability.test.js` do): non-cancelled sessions are rolled
+back exactly once each and the rollback runs before the documents are
+removed; a user with zero mutual sessions never calls `cancelMutualSession`
+at all; a rollback failure for one session doesn't fail the whole account
+deletion. All 3 pass. Full suite after the fix: 290/306 pass, same 16 known
+sandbox failures (3 new tests, all green). `npm run build` (frontend) still
+clean (no frontend file touched this round).
+
+No AI-credit/Lemon Squeezy code touched (did not touch `revenuecatRoutes.js`
+or anything payment-related that also came in with this merge), no DB
+schema/migration changes, no secrets. `master` itself was never touched —
+only merged *from* into this WIP branch, same thing earlier rounds' history
+already did once before (see `8339a07`).
+
+**Still open for the human, item 4 now resolved — carrying over 1, 2, 3, 5
+from round 56 unchanged:**
+1. `wip/mutual-provider-booking` still merges cleanly (re-verified against
+   the new `origin/master` head after today's real merge). ~215+ commits
+   accumulated against a branch that has never landed — worth deciding
+   whether to open a PR / merge now.
+2. Whether to stop, slow, or re-scope this scheduled task remains open —
+   this round did find and fix a real, newly-triggered bug (unlike rounds
+   53-56), so "nothing left to do" no longer applies verbatim, but the
+   broader question of cadence/value for a task that mostly re-confirms a
+   mature feature still stands.
+3. Product question: should a provider booking's synced Google Calendar
+   event description include the guest's phone number/notes (currently only
+   their name)?
+5. The `winsOverlapRace` post-insert recheck's residual check-then-act race
+   — needs a per-provider lock to close properly; accepted as a known,
+   documented limitation unless a human wants a dedicated follow-up.
