@@ -396,7 +396,7 @@ function AppRoutes() {
           "Content-Type": "application/json",
           ...(token ? { 'Authorization': `Bearer ${token}` } : {})
         },
-        body: JSON.stringify({ lang }),
+        body: JSON.stringify({ lang, product: 'credits' }),
         credentials: "include"
       });
       const data = await readCheckoutResponse(res, lang);
@@ -698,13 +698,14 @@ function AppRoutes() {
         if (data.user) {
           const normalizedUser = normalizeUserCredits(data.user);
           setUser(normalizedUser);
+          if (setIsPro) setIsPro(data.user?.isPro === true || data.user?.isPro === 'true');
           try { safeStorage.setItem('calendai-user', JSON.stringify(normalizedUser)); } catch (e) {}
         }
       }
     } catch (e) {
       console.warn("Failed to refresh user credits:", e);
     }
-  }, [user, setUser]);
+  }, [user, setUser, setIsPro]);
 
   // ── After a purchase (overlay success event or return from the checkout redirect),
   // refresh credits a few times: the Lemon Squeezy webhook can land a few seconds later.
@@ -2726,7 +2727,17 @@ function AppRoutes() {
             </div>
             <h3 className="text-lg font-bold text-slate-800 mb-2">{lang === 'he' ? 'נגמרו לך הקרדיטים!' : 'You are out of credits!'}</h3>
             <p className="text-sm text-slate-500 mb-6">{creditsError || (lang === 'he' ? 'נגמרו לך הקרדיטים! אנא רכוש חבילת פעולות נוספת כדי להמשיך להשתמש ב-AI.' : 'You ran out of credits! Please purchase an additional action pack to continue using the AI.')}</p>
-            <button onClick={() => setShowCreditsModal(false)} className="w-full px-4 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition shadow-lg">{lang === 'he' ? 'הבנתי' : 'Got it'}</button>
+            {!isNativeApp() ? (
+              <button
+                onClick={() => { setShowCreditsModal(false); handleBuyCredits(); }}
+                disabled={checkoutLoading}
+                className="w-full px-4 py-3 bg-gradient-to-r from-amber-400 to-orange-500 text-white rounded-xl font-bold transition shadow-lg flex items-center justify-center gap-2 disabled:opacity-60"
+              >
+                <Zap className="w-4 h-4" /> {lang === 'he' ? 'לרכישת קרדיטים' : 'Get more credits'}
+              </button>
+            ) : (
+              <button onClick={() => setShowCreditsModal(false)} className="w-full px-4 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition shadow-lg">{lang === 'he' ? 'הבנתי' : 'Got it'}</button>
+            )}
             <button onClick={() => setShowCreditsModal(false)} className="w-full mt-3 text-sm text-slate-400 hover:text-slate-600 py-2 transition">{t.cancel}</button>
           </div>
         </div>
@@ -2808,6 +2819,7 @@ function AppRoutes() {
         t={t}
         user={user}
         isPro={isPro}
+        onOpenNativePaywall={() => setIapSheet('menu')}
         onLogout={handleLogout}
         initialTab={drawerTab}
         title={drawerTab === 'analytics' ? getNavLabels(lang).analytics : getNavLabels(lang).me}

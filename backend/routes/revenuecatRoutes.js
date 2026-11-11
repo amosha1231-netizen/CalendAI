@@ -5,6 +5,7 @@ const mongoose = require('mongoose');
 
 const User = require('../models/User');
 const ProcessedPaymentEvent = require('../models/ProcessedPaymentEvent');
+const { isRevenueCatSubscriptionEvent, revenueCatEventEffect, applyEntitlement } = require('../services/subscriptions');
 
 /**
  * RevenueCat webhook: credits AI credits bought inside the iOS / Android app
@@ -23,6 +24,9 @@ const ProcessedPaymentEvent = require('../models/ProcessedPaymentEvent');
  * Events handled:
  *   NON_RENEWING_PURCHASE  consumable credit pack bought  -> add credits
  *   CANCELLATION           store refunded that purchase   -> take them back (not below 0)
+ *   Pro subscription events (they carry expiration_at_ms): INITIAL_PURCHASE,
+ *   RENEWAL, CANCELLATION, EXPIRATION, ... -> services/subscriptions.js
+ *   (Pro on/off and the monthly credit allowance).
  * Everything else is acknowledged and ignored.
  */
 
@@ -95,11 +99,30 @@ router.post('/', async (req, res) => {
   if (!event || typeof event !== 'object') return res.status(400).json({ error: 'Missing event.' });
 
   const type = event.type;
-  if (type !== 'NON_RENEWING_PURCHASE' && type !== 'CANCELLATION') {
-    return res.status(200).json({ received: true, ignored: type || 'unknown' });
-  }
   if (event.environment === 'SANDBOX' && process.env.REVENUECAT_SANDBOX_CREDITS === '0') {
     return res.status(200).json({ received: true, ignored: 'sandbox' });
+  }
+
+  if (isRevenueCatSubscriptionEvent(event)) {
+    const effect = revenueCatEventEffect(event);
+    if (effect.kind === 'ignore') return res.status(200).json({ received: true, ignored: type || 'unknown' });
+    try {
+      const user = await findUser(event);
+      if (!user) {
+        console.warn(`RevenueCat webhook: no user for app_user_id ${event.app_user_id}`);
+        return res.status(404).json({ error: 'User not found.' });
+      }
+      const result = await applyEntitlement({ User, ProcessedPaymentEvent, user, effect });
+      console.log(`✅ RevenueCat Pro ${type} (${event.store || 'store'}${event.environment === 'SANDBOX' ? ', sandbox' : ''}) for user ${user._id}${result.duplicate ? ' (duplicate)' : ''}.`);
+      return res.status(200).json({ received: true, duplicate: !!result.duplicate });
+    } catch (err) {
+      console.error('RevenueCat subscription webhook failed:', err.message);
+      return res.status(500).json({ error: 'Webhook processing failed' });
+    }
+  }
+
+  if (type !== 'NON_RENEWING_PURCHASE' && type !== 'CANCELLATION') {
+    return res.status(200).json({ received: true, ignored: type || 'unknown' });
   }
 
   const transactionId = event.transaction_id || event.original_transaction_id;

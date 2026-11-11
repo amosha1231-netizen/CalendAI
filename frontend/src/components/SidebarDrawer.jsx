@@ -5,6 +5,7 @@ import { getDeviceTimeZone, setDetectedLocation, presetLocationForTimeZone } fro
 import SiriSetupModal from './SiriSetupModal';
 import { openCheckout, readCheckoutResponse, notifyCreditsPurchased } from '../utils/lemonCheckout';
 import { isNativeApp } from '../utils/nativeApp';
+import { isIapAvailable, manageSubscriptionUrl } from '../utils/inAppPurchase';
 
 const CATEGORY_KEYWORDS = {
   sport: ['אימון', 'ריצה', 'שחייה', 'הליכה', 'ספורט', 'חדר כושר', 'יוגה', 'פילאטיס', 'רכיבה', 'טיפוס', 'workout', 'run', 'swim', 'walk', 'sport', 'gym', 'yoga', 'pilates', 'bike', 'climb'],
@@ -136,7 +137,7 @@ function isDesktopDevice() {
   }
 }
 
-export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangChange, t, user, isPro, onUpgradeToPro, onLogout, onOpenShareModal, selectedLocation, onLocationChange, selectedTimezone, onTimezoneChange, timezoneOptions, initialTab = 'settings', title }) {
+export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangChange, t, user, isPro, onUpgradeToPro, onOpenNativePaywall, onLogout, onOpenShareModal, selectedLocation, onLocationChange, selectedTimezone, onTimezoneChange, timezoneOptions, initialTab = 'settings', title }) {
   const [activeTab, setActiveTab] = useState(initialTab);
   const [settingsData, setSettingsData] = useState({
     lang: lang,
@@ -392,8 +393,8 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangC
             <BarChart3 className="w-5 h-5" />
             <span>{t.sidebarAnalytics}</span>
           </button>
-          {/* Not in the native app: App Store purchases must use in-app purchase, and it is already installed. */}
-          {!isNativeApp() && (
+          {/* In the native app Pro is sold through the store (in-app purchase) only. */}
+          {(!isNativeApp() || isIapAvailable()) && (
             <button
               className={`sidebar-nav-item ${activeTab === 'pro' ? 'active' : ''}`}
               onClick={() => setActiveTab('pro')}
@@ -519,6 +520,30 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangC
                   <CheckCircle className="w-5 h-5 text-green-600" />
                   {lang === 'he' ? 'אתה במנוי Pro פעיל ✨' : 'You have an active Pro subscription ✨'}
                 </div>
+              ) : null}
+              {isPro && (() => {
+                // Store subscriptions are managed in the store; web ones in the Lemon Squeezy portal.
+                // The web portal link is never shown inside the native app.
+                const url = manageSubscriptionUrl(user?.proSource) || (!isNativeApp() ? user?.lemonCustomerPortalUrl : null);
+                return url ? (
+                  <a href={url} target="_blank" rel="noreferrer" className="block mt-3 text-xs text-slate-500 underline">
+                    {lang === 'he' ? 'ניהול או ביטול המנוי' : 'Manage or cancel subscription'}
+                  </a>
+                ) : null;
+              })()}
+              {isPro ? null : isNativeApp() ? (
+                <button
+                  onClick={() => {
+                    if (!user) {
+                      setUpgradeError(lang === 'he' ? 'עליך להתחבר תחילה כדי לשדרג ל-Pro.' : 'Please log in first to upgrade to Pro.');
+                      return;
+                    }
+                    if (onOpenNativePaywall) onOpenNativePaywall();
+                  }}
+                  className="w-full max-w-full box-border flex items-center justify-center gap-2 px-6 py-3 bg-gradient-to-r from-amber-400 to-orange-500 text-white rounded-xl font-bold text-sm shadow-lg hover:shadow-xl transition"
+                >
+                  <Zap className="w-5 h-5" /> {lang === 'he' ? 'שדרג ל-Pro' : 'Upgrade to Pro'}
+                </button>
               ) : (
                 <div>
                   <button
@@ -539,7 +564,7 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangC
                             'Content-Type': 'application/json',
                             ...(token ? { 'Authorization': `Bearer ${token}` } : {})
                           },
-                          body: JSON.stringify({ lang }),
+                          body: JSON.stringify({ lang, product: 'pro' }),
                           credentials: 'include'
                         });
                         const data = await readCheckoutResponse(res, lang);

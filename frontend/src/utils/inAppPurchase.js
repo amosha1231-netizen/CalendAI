@@ -16,6 +16,33 @@
  */
 import { Capacitor } from '@capacitor/core';
 import { isNativeApp } from './nativeApp';
+import safeStorage from './safeStorage';
+
+const API_BASE = import.meta.env.VITE_API_URL || '';
+const SITE_URL = 'https://www.calendai.org';
+
+// Shown under a subscription (App Store 3.1.2 requires terms + privacy links).
+export const LEGAL_LINKS = {
+  terms: `${SITE_URL}/terms`,
+  privacy: `${SITE_URL}/privacy`,
+  // Apple's standard licensed application end user agreement.
+  appleEula: 'https://www.apple.com/legal/internet-services/itunes/dev/stdeula/'
+};
+
+export function nativePlatform() {
+  try {
+    return Capacitor.isNativePlatform() ? Capacitor.getPlatform() : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/** Where a store subscription is managed or cancelled. */
+export function manageSubscriptionUrl(proSource) {
+  if (proSource === 'app_store') return 'https://apps.apple.com/account/subscriptions';
+  if (proSource === 'play_store') return 'https://play.google.com/store/account/subscriptions';
+  return null;
+}
 
 function platformKey() {
   try {
@@ -26,9 +53,25 @@ function platformKey() {
   return '';
 }
 
-/** True in the store apps once a RevenueCat key is set for this platform. */
+/**
+ * Master switch for buying inside the store apps. Off for the first store
+ * release (payment is web-only for now): set VITE_IAP_ENABLED=true in
+ * .env.capacitor and rebuild to turn it on. While off, the apps show no
+ * price, buy button or Pro upgrade, and never point to the website to pay
+ * (App Store 3.1.1/3.1.3, Google Play payments policy). Credits and Pro
+ * bought on the website still work in the app for the same account.
+ */
+export function isIapEnabled() {
+  try {
+    return String(import.meta.env.VITE_IAP_ENABLED || '').trim().toLowerCase() === 'true';
+  } catch (e) {
+    return false;
+  }
+}
+
+/** True in the store apps when IAP is switched on and a RevenueCat key is set. */
 export function isIapAvailable() {
-  return isNativeApp() && !!platformKey();
+  return isNativeApp() && isIapEnabled() && !!platformKey();
 }
 
 let purchasesPromise = null;
@@ -59,9 +102,10 @@ async function getPurchases(userId) {
 }
 
 /**
- * The credit packs from the current RevenueCat offering, cheapest first,
- * with the store's own localized price (e.g. "₪29.90").
- * @returns {Promise<Array<{ id: string, title: string, priceString: string, pkg: object }>>}
+ * The products of the current RevenueCat offering (credit packs and the
+ * Pro subscription), cheapest first, with the store's own localized price.
+ * `period` is an ISO 8601 duration (e.g. "P1M") for subscriptions, else null.
+ * @returns {Promise<Array<{ id: string, title: string, priceString: string, period: string|null, isSubscription: boolean, pkg: object }>>}
  */
 export async function getCreditPacks(userId) {
   const Purchases = await getPurchases(userId);
@@ -74,6 +118,8 @@ export async function getCreditPacks(userId) {
       id: p.identifier,
       title: p.product.title || p.product.identifier,
       priceString: p.product.priceString,
+      period: p.product.subscriptionPeriod || null,
+      isSubscription: !!p.product.subscriptionPeriod,
       pkg: p
     }));
 }
@@ -86,9 +132,38 @@ export async function buyCreditPack(userId, pack) {
   const Purchases = await getPurchases(userId);
   try {
     await Purchases.purchasePackage({ aPackage: pack.pkg });
-    return { ok: true };
   } catch (err) {
     if (err && (err.userCancelled || err.code === '1' || err.code === 1)) return { cancelled: true };
     throw err;
   }
+  // Pro turns on right away; credits still come from the webhook.
+  if (pack.isSubscription) await syncPurchasesWithServer();
+  return { ok: true };
+}
+
+/**
+ * Ask the backend to re-read this user's store subscription from RevenueCat
+ * (POST /api/payments/revenuecat-sync) instead of waiting for the webhook.
+ * @returns {Promise<{ isPro: boolean, proExpiresAt: string|null, aiCredits: number }|null>}
+ */
+export async function syncPurchasesWithServer() {
+  let token = null;
+  try { token = safeStorage.getItem('token') || safeStorage.getItem('calendai-jwt'); } catch (e) {}
+  try {
+    const res = await fetch(`${API_BASE}/api/payments/revenuecat-sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      credentials: 'include'
+    });
+    return res.ok ? await res.json() : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/** "Restore purchases" (required by App Review for subscriptions). */
+export async function restorePurchases(userId) {
+  const Purchases = await getPurchases(userId);
+  await Purchases.restorePurchases();
+  return syncPurchasesWithServer();
 }

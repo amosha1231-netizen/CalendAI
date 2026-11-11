@@ -430,7 +430,9 @@ if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET &&
             email: dbUser.email,
             displayName: dbUser.displayName,
             photo: dbUser.photo,
-            isPro: dbUser.isPro,
+            isPro: isProActive(dbUser),
+            proSource: dbUser.proSource,
+            proExpiresAt: dbUser.proExpiresAt,
             stripeCustomerId: dbUser.stripeCustomerId,
             aiCredits: dbUser.aiCredits
           };
@@ -445,7 +447,9 @@ if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET &&
             email: dbUser.email,
             displayName: dbUser.displayName,
             photo: dbUser.photo,
-            isPro: dbUser.isPro,
+            isPro: isProActive(dbUser),
+            proSource: dbUser.proSource,
+            proExpiresAt: dbUser.proExpiresAt,
             stripeCustomerId: dbUser.stripeCustomerId,
             aiCredits: dbUser.aiCredits
           };
@@ -608,6 +612,7 @@ app.set('DEFAULT_LOCATION_ID', DEFAULT_LOCATION_ID);
 // ── Token Usage Tracker (Pay-As-You-Go billing)
 const { calculateCost, formatCostBreakdown } = require('./services/tokenTracker');
 const { refillOwnerCredits } = require('./services/ownerCredits');
+const { isProActive, lemonEventEffect, applyEntitlement } = require('./services/subscriptions');
 
 // ──────────────────────────────────────────────
 // AI Credit System (Pay As You Go / PAYG)
@@ -1480,7 +1485,10 @@ app.get('/api/auth/me', async (req, res) => {
         email: dbUser.email,
         displayName: dbUser.displayName,
         photo: dbUser.photo,
-        isPro: dbUser.isPro,
+        isPro: isProActive(dbUser),
+        proSource: dbUser.proSource,
+        proExpiresAt: dbUser.proExpiresAt,
+        lemonCustomerPortalUrl: dbUser.lemonCustomerPortalUrl,
         stripeCustomerId: dbUser.stripeCustomerId,
         aiCredits: dbUser.aiCredits
       };
@@ -4206,7 +4214,10 @@ app.get('/api/locations/:id/slots', (req, res) => {
  * POST /api/payments/webhook
  * Receives payment webhook events from Lemon Squeezy.
  *
- * - Lemon Squeezy: On order_created → credits the user with 100 AI credits.
+ * - order_created (credit pack) → adds 100 AI credits.
+ * - subscription_* → keeps Pro on/off (proExpiresAt).
+ * - subscription_payment_success → tops credits up to the monthly Pro allowance.
+ * See services/subscriptions.js.
  *
  * This route is intentionally NOT protected by auth middleware — the requests
  * come from Lemon Squeezy's servers, not from the client.
@@ -4256,62 +4267,41 @@ app.post('/api/payments/webhook',
       // Signature is valid — parse the JSON payload
       const payload = JSON.parse(rawBody.toString('utf-8'));
 
-      // Only process successful order_created events
-      const eventName = payload?.meta?.event_name;
-      if (eventName !== 'order_created') {
+      const effect = lemonEventEffect(payload);
+      if (effect.kind === 'ignore') {
         return res.status(200).json({ received: true });
       }
 
-      const orderId = payload?.data?.id ? String(payload.data.id) : null;
-      if (!orderId) {
-        console.error('Lemon Squeezy webhook: Missing order ID.');
-        return res.status(400).json({ error: 'Missing order ID.' });
-      }
-      const eventKey = `${eventName}:${orderId}`;
+      // Checkout passes the CalendAI user id as custom data; renewals of an
+      // older subscription can fall back to the stored subscription id.
       const userId = payload?.meta?.custom_data?.user_id || payload?.meta?.custom_data?.userId;
-      if (!userId) {
-        console.warn('Lemon Squeezy webhook: No userId found in custom_data.');
-        return res.status(400).json({ error: 'Missing user ID.' });
-      }
-
-      // Find the user in MongoDB and credit them with 100 AI credits
       let user = null;
-      if (mongoose.Types.ObjectId.isValid(userId)) {
+      if (userId && mongoose.Types.ObjectId.isValid(userId)) {
         user = await User.findById(userId);
       }
-      if (!user) {
+      if (!user && userId) {
         user = await User.findOne({ googleId: userId });
       }
+      if (!user && effect.subscriptionId) {
+        user = await User.findOne({ lemonSubscriptionId: effect.subscriptionId });
+      }
 
       if (!user) {
-        console.warn(`Lemon Squeezy webhook: User ${userId} not found in MongoDB.`);
-        return res.status(404).json({ error: 'User not found.' });
+        console.warn(`Lemon Squeezy webhook: User ${userId || '(none)'} not found for ${payload?.meta?.event_name}.`);
+        return res.status(userId ? 404 : 400).json({ error: 'User not found.' });
       }
 
-      const dbSession = await mongoose.startSession();
-      try {
-        await ProcessedPaymentEvent.init();
-        await dbSession.withTransaction(async () => {
-          await ProcessedPaymentEvent.create([{
-            eventKey,
-            orderId,
-            userId: user._id,
-            credits: 100
-          }], { session: dbSession });
-          const updatedUser = await User.findByIdAndUpdate(
-            user._id,
-            { $inc: { aiCredits: 100 } },
-            { new: true, session: dbSession }
-          );
-          if (!updatedUser) throw new Error('Payment user disappeared during crediting.');
-        });
-      } catch (creditError) {
-        if (creditError?.code === 11000) return res.status(200).json({ received: true, duplicate: true });
-        throw creditError;
-      } finally {
-        await dbSession.endSession();
-      }
-      console.log(`✅ Lemon Squeezy: Credited user ${user._id} for order ${orderId}.`);
+      const result = await applyEntitlement({
+        User,
+        ProcessedPaymentEvent,
+        user,
+        effect,
+        source: effect.kind === 'credits' ? undefined : 'lemonsqueezy',
+        subscriptionId: effect.subscriptionId,
+        customerPortalUrl: effect.customerPortalUrl
+      });
+      if (result.duplicate) return res.status(200).json({ received: true, duplicate: true });
+      console.log(`✅ Lemon Squeezy: ${payload?.meta?.event_name} applied to user ${user._id}.`);
 
       return res.status(200).json({ received: true });
     } catch (err) {

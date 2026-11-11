@@ -30,8 +30,8 @@ Distribute App → App Store Connect.
 - **CORS**: the backend always allows `capacitor://localhost` (iOS) and
   `https://localhost` (Android).
 - **Purchases**: App Store guideline 3.1.1 requires Apple in-app purchase for
-  digital goods, so the native app hides the Pro / credits checkout and the
-  "install to home screen" tab.
+  digital goods. The app sells Pro through Apple IAP via RevenueCat and never
+  shows or links to the web checkout. Setup: `docs/payments.md`.
 - **Permissions** (Info.plist): location (time zone and Shabbat times),
   microphone and speech recognition (voice input). iPhone only, portrait.
 - `App/PrivacyInfo.xcprivacy` declares the data the app collects (name, email,
