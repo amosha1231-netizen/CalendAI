@@ -40,6 +40,12 @@ export default function DeleteAccount() {
             <Mail className="w-5 h-5 text-blue-500" />
             <h2 className="text-lg font-bold text-slate-800">How to Request Deletion</h2>
           </div>
+          <p className="text-sm text-slate-600 leading-relaxed mb-3">
+            <strong>In the app or on the website:</strong> sign in, open your account menu (your photo at the
+            top), tap <strong>Delete account</strong> at the bottom and confirm. Your account and data are
+            deleted right away. / <span dir="rtl">באפליקציה או באתר: התחברו, פתחו את תפריט החשבון (התמונה שלכם למעלה), לחצו "מחיקת החשבון" בתחתית ואשרו.</span>
+          </p>
+          <p className="text-sm text-slate-600 leading-relaxed mb-2"><strong>Or by email:</strong></p>
           <ol className="list-decimal list-inside space-y-2 text-sm text-slate-600 leading-relaxed pl-2">
             <li>
               Send an email to{' '}
@@ -70,7 +76,7 @@ export default function DeleteAccount() {
             </ul>
             <p className="mt-3">
               <strong>What we may retain:</strong> billing records tied to completed payments
-              (e.g. invoices held by our payment processor, Stripe/Lemon Squeezy) may be kept
+              (e.g. invoices held by our payment processor) may be kept
               for a limited period as required for accounting and legal/tax obligations, even
               after your account is deleted.
             </p>
