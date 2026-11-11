@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /auth/
+Disallow: /book/
+
+Sitemap: https://www.calendai.org/sitemap.xml
