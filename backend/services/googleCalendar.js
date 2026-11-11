@@ -13,6 +13,15 @@ const PRODUCTION_BACKEND_URL = 'https://calendai-backend-dfmi.onrender.com';
 const BACKEND_URL = (process.env.BACKEND_URL?.trim() || (isProduction ? PRODUCTION_BACKEND_URL : 'http://localhost:5000')).replace(/\/+$/, '');
 const GOOGLE_CALLBACK_URL = (process.env.GOOGLE_CALLBACK_URL?.trim() || `${BACKEND_URL}/api/auth/google/callback`).replace(/\/+$/, '');
 
+// Applied once, below, at the single OAuth2 client construction site so it
+// covers every Google API call made with that client (events.insert,
+// events.delete, freebusy.query, token refresh, ...) without having to touch
+// each call site individually. Mirrors the 5s AbortSignal.timeout() already
+// used for the token-revoke fetch() in accountRoutes.js, sized up slightly
+// since calendar reads/writes can legitimately take a bit longer than a bare
+// revoke POST.
+const GOOGLE_API_TIMEOUT_MS = 10000;
+
 /**
  * Format a Date with given hours and minutes into an ISO 8601 string
  * with the correct timezone offset for the given IANA timezone.
@@ -90,11 +99,17 @@ function zonedDateTime(isoDate, timeHHMM, timeZone) {
  * @returns {Promise<google.auth.OAuth2>} Configured OAuth2 client with auto-refresh
  */
 async function createOAuth2ClientWithRefresh(user) {
-  const oauth2Client = new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID?.trim(),
-    process.env.GOOGLE_CLIENT_SECRET?.trim(),
-    GOOGLE_CALLBACK_URL
-  );
+  // NOTE: must use the object-options form (not the deprecated positional
+  // (clientId, clientSecret, redirectUri) form) — only the object form lets
+  // transporterOptions reach the underlying Gaxios instance that every
+  // request from this client (and every google.calendar({auth: oauth2Client})
+  // call built on it) is sent through, which is what applies the timeout.
+  const oauth2Client = new google.auth.OAuth2({
+    clientId: process.env.GOOGLE_CLIENT_ID?.trim(),
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET?.trim(),
+    redirectUri: GOOGLE_CALLBACK_URL,
+    transporterOptions: { timeout: GOOGLE_API_TIMEOUT_MS }
+  });
 
   oauth2Client.setCredentials({
     access_token: user.googleAccessToken,

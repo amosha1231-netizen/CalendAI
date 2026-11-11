@@ -8,8 +8,9 @@
 // Run with: npm test  (from backend/)
 // ──────────────────────────────────────────────
 const assert = require('node:assert/strict');
+const http = require('node:http');
 const { test } = require('node:test');
-const { formatDateTimeWithTimezone, zonedDateTime, buildGcalEventBody, insertEventWithOptionalMeet } = require('../services/googleCalendar');
+const { formatDateTimeWithTimezone, zonedDateTime, buildGcalEventBody, insertEventWithOptionalMeet, createOAuth2ClientWithRefresh } = require('../services/googleCalendar');
 
 // ── formatDateTimeWithTimezone(): must keep the caller's calendar day ──
 // Every caller builds `date` from literal Y/M/D components (new Date(y, m-1, d),
@@ -136,4 +137,49 @@ test('insertEventWithOptionalMeet: retries without Meet when the conference requ
   assert.equal(calls[1].sendUpdates, 'all');
   assert.equal(event.id, 'ev2');
   assert.equal(meetLink, null);
+});
+
+// ── createOAuth2ClientWithRefresh(): every Google Calendar API call
+// (events.insert/delete, freebusy.query, and the token-refresh request
+// itself) is made with `auth: <this client>`, so a timeout set here is the
+// single place that protects every one of those calls from hanging forever
+// — unlike the token-revoke fetch() in accountRoutes.js, which already had
+// its own AbortSignal.timeout(5000). ──
+test('createOAuth2ClientWithRefresh: the returned client has a request timeout configured', async () => {
+  const oauth2Client = await createOAuth2ClientWithRefresh({
+    _id: 'test-user-id',
+    googleAccessToken: 'fake-access-token'
+    // no googleRefreshToken/expiry_date -> the refresh pre-check in
+    // createOAuth2ClientWithRefresh is a no-op, so this stays offline.
+  });
+  assert.ok(oauth2Client.transporter, 'client exposes the transporter every request goes through');
+  assert.equal(typeof oauth2Client.transporter.defaults.timeout, 'number');
+  assert.ok(oauth2Client.transporter.defaults.timeout > 0, 'timeout must be a positive duration, not disabled');
+});
+
+test('createOAuth2ClientWithRefresh: a hung Google API response is aborted instead of hanging forever', async (t) => {
+  // Simulate a Google Calendar endpoint that never responds (the exact
+  // failure mode this fix protects events.insert/delete/freebusy.query
+  // against) and drive a real request through the client exactly as
+  // mutualRoutes.js/providerRoutes.js/mutualAvailability.js do via
+  // google.calendar({ auth: oauth2Client }).
+  const server = http.createServer(() => { /* never respond */ });
+  await new Promise((resolve) => server.listen(0, resolve));
+  t.after(() => server.close());
+  const port = server.address().port;
+
+  const oauth2Client = await createOAuth2ClientWithRefresh({
+    _id: 'test-user-id',
+    googleAccessToken: 'fake-access-token'
+  });
+
+  const start = Date.now();
+  await assert.rejects(
+    () => oauth2Client.request({ url: `http://127.0.0.1:${port}/` }),
+    /abort/i
+  );
+  const elapsed = Date.now() - start;
+  // Generous upper bound (well under what "no timeout" would mean, which is
+  // never resolving at all) while tolerant of slow CI machines.
+  assert.ok(elapsed < 20000, `expected the request to abort near the configured timeout, took ${elapsed}ms`);
 });

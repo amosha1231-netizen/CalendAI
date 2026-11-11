@@ -75,6 +75,50 @@ function winsOverlapRace(self, others) {
   return kept.some(k => k._id.toString() === self._id.toString());
 }
 
+// In-process mutex, keyed by `${providerId}:${date}`, serializing the
+// check-then-act window between a slot's atomic create (above) and
+// winsOverlapRace's resolution of it against every other booking on that
+// provider+date. Without this, two requests for different-but-overlapping
+// startTimes (so the unique index doesn't block either insert) can each run
+// their own "read other bookings, then decide" step concurrently and each
+// query before the other's row is visible to it — so each one's own
+// winsOverlapRace call sees a world without the other's booking and both
+// survive. Serializing per provider+date means the second request's query
+// always runs after the first's resolution has fully committed (or deleted
+// its own row), so it sees a consistent, up-to-date view and the two
+// candidates are resolved against each other exactly once, deterministically.
+//
+// This is an in-process Map, not a distributed lock: it only serializes
+// requests handled by this one Node process. That is deliberately enough
+// here and not a band-aid — render.yaml defines a single `type: web`
+// instance with no clustering/PM2/replica config, so this process is the
+// only one ever claiming provider bookings. It would stop being sufficient
+// the moment this service runs more than one instance at a time (e.g. a
+// paid Render plan with >1 instance, or any other horizontally-scaled
+// deploy) — at that point this needs a real cross-process lock (e.g. a
+// short-lived DB-backed lock document), not this map.
+const providerDateLocks = new Map();
+
+function withProviderDateLock(key, fn) {
+  const queueTail = providerDateLocks.get(key) || Promise.resolve();
+  let releaseNext;
+  const next = new Promise((resolve) => { releaseNext = resolve; });
+  const ourSlot = queueTail.then(() => next);
+  providerDateLocks.set(key, ourSlot);
+
+  return queueTail.then(async () => {
+    try {
+      return await fn();
+    } finally {
+      releaseNext();
+      // Drop the map entry once nothing is queued behind us, so it doesn't
+      // grow forever — but only if no later caller has already replaced it
+      // with their own slot.
+      if (providerDateLocks.get(key) === ourSlot) providerDateLocks.delete(key);
+    }
+  });
+}
+
 // POST /:id/book is reachable by anonymous guests (no auth required) and
 // writes a DB row + optionally a Google Calendar event per call — without a
 // limiter it's an open door for booking-spam or for sweeping a provider's
@@ -687,58 +731,72 @@ router.post('/:id/book', bookLimiter, async (req, res) => {
     const userId = getUserId(req);
     const bookedByUserId = (userId && mongoose.Types.ObjectId.isValid(userId)) ? userId : undefined;
 
-    // ── Atomic slot claim: a duplicate-key error means another request
-    // just took the same providerId+date+startTime (unique partial index). ──
-    try {
-      createdBooking = await ProviderBooking.create({
-        providerId: provider._id,
-        providerName: provider.providerProfile.businessName || provider.displayName || 'Provider',
-        serviceId: service._id,
-        serviceName: service.name,
-        duration: service.duration,
-        price: service.price,
-        date,
-        day: dayName,
-        startTime: matchedSlot.startTime,
-        endTime: matchedSlot.endTime,
-        bookedByUserId,
-        guestName: guestName.trim(),
-        guestEmail: guestEmail || '',
-        guestPhone: guestPhone || '',
-        guestNotes: guestNotes || '',
-        status: 'processing'
-      });
-    } catch (createErr) {
-      if (createErr && createErr.code === 11000) {
-        return res.status(409).json({ error: 'השעה שנבחרה הוזמנה הרגע על ידי מישהו אחר. בחר שעה אחרת.' });
-      }
-      throw createErr;
-    }
-
-    // The unique index above only catches a second booking at the exact same
+    // ── Atomic slot claim + overlap-race resolution, serialized per
+    // provider+date via withProviderDateLock (see its comment above). The
+    // unique index below only catches a second booking at the exact same
     // startTime — it does NOT stop a double-booking between two *different*
     // services whose slots are sliced to different durations and so can
     // overlap at different startTimes (e.g. a 30-min and a 45-min service
-    // both starting from the same availability window). Re-check for any
-    // other non-cancelled booking on this provider+date whose range overlaps
-    // the one just claimed, and undo our own insert if one slipped in
-    // between the availability read above and this create. Still a
-    // (much narrower) check-then-act race, not a transaction — closing it
-    // fully would need a per-provider lock, which is a larger change.
-    const claimedStartMin = timeToMinutes(matchedSlot.startTime);
-    const claimedEndMin = timeToMinutes(matchedSlot.endTime);
-    const otherBookings = await ProviderBooking.find({
-      providerId: provider._id,
-      date,
-      status: { $ne: 'cancelled' },
-      _id: { $ne: createdBooking._id }
-    }).select('startTime endTime createdAt').lean();
-    const otherRanges = otherBookings
-      .map(b => ({ _id: b._id, createdAt: b.createdAt, start: timeToMinutes(b.startTime), end: timeToMinutes(b.endTime) }))
-      .filter(r => r.start !== null && r.end !== null);
-    const selfRange = { _id: createdBooking._id, createdAt: createdBooking.createdAt, start: claimedStartMin, end: claimedEndMin };
-    if (!winsOverlapRace(selfRange, otherRanges)) {
-      await ProviderBooking.deleteOne({ _id: createdBooking._id }).catch(() => {});
+    // both starting from the same availability window). The recheck inside
+    // this locked section looks for any other non-cancelled booking on this
+    // provider+date whose range overlaps the one just claimed, and undoes
+    // our own insert if one slipped in between the availability read above
+    // and this create — and because the whole create+recheck runs under the
+    // lock, "other bookings on this provider+date" always reflects every
+    // earlier concurrent request's fully-settled outcome, never a
+    // half-finished one still mid-check. ──
+    const lockKey = `${provider._id.toString()}:${date}`;
+    let slotConflict = false;
+    createdBooking = await withProviderDateLock(lockKey, async () => {
+      let booking;
+      try {
+        booking = await ProviderBooking.create({
+          providerId: provider._id,
+          providerName: provider.providerProfile.businessName || provider.displayName || 'Provider',
+          serviceId: service._id,
+          serviceName: service.name,
+          duration: service.duration,
+          price: service.price,
+          date,
+          day: dayName,
+          startTime: matchedSlot.startTime,
+          endTime: matchedSlot.endTime,
+          bookedByUserId,
+          guestName: guestName.trim(),
+          guestEmail: guestEmail || '',
+          guestPhone: guestPhone || '',
+          guestNotes: guestNotes || '',
+          status: 'processing'
+        });
+      } catch (createErr) {
+        if (createErr && createErr.code === 11000) {
+          slotConflict = true;
+          return null;
+        }
+        throw createErr;
+      }
+
+      const claimedStartMin = timeToMinutes(matchedSlot.startTime);
+      const claimedEndMin = timeToMinutes(matchedSlot.endTime);
+      const otherBookings = await ProviderBooking.find({
+        providerId: provider._id,
+        date,
+        status: { $ne: 'cancelled' },
+        _id: { $ne: booking._id }
+      }).select('startTime endTime createdAt').lean();
+      const otherRanges = otherBookings
+        .map(b => ({ _id: b._id, createdAt: b.createdAt, start: timeToMinutes(b.startTime), end: timeToMinutes(b.endTime) }))
+        .filter(r => r.start !== null && r.end !== null);
+      const selfRange = { _id: booking._id, createdAt: booking.createdAt, start: claimedStartMin, end: claimedEndMin };
+      if (!winsOverlapRace(selfRange, otherRanges)) {
+        await ProviderBooking.deleteOne({ _id: booking._id }).catch(() => {});
+        slotConflict = true;
+        return null;
+      }
+      return booking;
+    });
+
+    if (slotConflict || !createdBooking) {
       return res.status(409).json({ error: 'השעה שנבחרה הוזמנה הרגע על ידי מישהו אחר. בחר שעה אחרת.' });
     }
 
@@ -891,3 +949,4 @@ module.exports.mapServicesForSave = mapServicesForSave;
 module.exports.computeAvailableSlots = computeAvailableSlots;
 module.exports.escapeRegex = escapeRegex;
 module.exports.winsOverlapRace = winsOverlapRace;
+module.exports.withProviderDateLock = withProviderDateLock;

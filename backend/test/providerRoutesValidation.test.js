@@ -30,7 +30,7 @@ const providerRoutesPath = require.resolve('../routes/providerRoutes');
 const User = require('../models/User');
 const ProviderBooking = require('../models/ProviderBooking');
 const mutualAvailability = require('../services/mutualAvailability');
-const { winsOverlapRace } = require('../routes/providerRoutes');
+const { winsOverlapRace, withProviderDateLock } = require('../routes/providerRoutes');
 
 function freshProviderRoutes() {
   delete require.cache[providerRoutesPath];
@@ -781,6 +781,151 @@ test('POST /:id/book: a booking that slips in between the availability read and 
     assert.equal(findCallCount, 2, 'expected one find() for availability and one for the post-insert overlap recheck');
     assert.equal(deleteMock.mock.callCount(), 1, 'the losing (later-created) booking must delete itself');
     assert.equal(deleteMock.mock.calls[0].arguments[0]._id, createdBooking._id, 'it must delete its own document, not the conflicting one');
+  } finally {
+    server.close();
+  }
+});
+
+// ── withProviderDateLock: the in-process mutex closing winsOverlapRace's
+// residual check-then-act race (see providerRoutes.js' comment above it).
+// Two requests for different, overlapping startTimes can both insert (the
+// unique index only blocks an exact-startTime dupe) and then each run their
+// own "read other bookings, decide" step — without serializing that window,
+// each one's query can run before the other's row is visible, so each sees a
+// world without its rival and both survive. These tests cover the lock
+// primitive directly; the test below this one drives it through the real
+// HTTP route with two actually-concurrent requests. ──
+test('withProviderDateLock: a second call for the same key does not start until the first finishes', async () => {
+  const order = [];
+  const first = withProviderDateLock('p1:2026-12-07', async () => {
+    order.push('first-start');
+    await new Promise(resolve => setTimeout(resolve, 20));
+    order.push('first-end');
+    return 'first';
+  });
+  const second = withProviderDateLock('p1:2026-12-07', async () => {
+    order.push('second-start');
+    return 'second';
+  });
+  const results = await Promise.all([first, second]);
+  assert.deepEqual(results, ['first', 'second']);
+  assert.deepEqual(order, ['first-start', 'first-end', 'second-start'], 'the second callback must not run until the first has fully finished');
+});
+
+test('withProviderDateLock: different keys run concurrently, not serialized against each other', async () => {
+  const order = [];
+  const a = withProviderDateLock('pA:2026-12-07', async () => {
+    order.push('a-start');
+    await new Promise(resolve => setTimeout(resolve, 20));
+    order.push('a-end');
+  });
+  const b = withProviderDateLock('pB:2026-12-07', async () => {
+    order.push('b-start');
+  });
+  await Promise.all([a, b]);
+  // b (a different key) must be free to start and finish while a is still
+  // mid-flight, not queued behind it.
+  assert.deepEqual(order, ['a-start', 'b-start', 'a-end']);
+});
+
+test('withProviderDateLock: the lock is released even when the callback throws, so a queued call still proceeds', async () => {
+  const key = 'p2:2026-12-07';
+  await assert.rejects(
+    withProviderDateLock(key, async () => { throw new Error('boom'); }),
+    /boom/
+  );
+  // If the failed call had left the lock held, this would hang forever.
+  const result = await withProviderDateLock(key, async () => 'after-failure');
+  assert.equal(result, 'after-failure');
+});
+
+// End-to-end: drives the real route with two genuinely concurrent requests
+// for different, overlapping startTimes (09:30 AM 30-min vs 09:45 AM 45-min
+// both slice validly from a 09:00-11:00 AM availability window, and
+// 09:45-10:30 overlaps 09:30-10:00), reproducing the exact inversion that
+// makes the un-serialized recheck unsafe: Mongoose's timestamps:true sets
+// createdAt client-side the moment ProviderBooking.create() is *called* —
+// before the write round-trips to Mongo — so a request whose createdAt ends
+// up logically earlier can still have its actual commit (and so its
+// visibility to the OTHER request's recheck query) land later, if its own
+// round-trip just happens to take longer. Modeled directly below: the 09:30
+// request is given the earlier createdAt but the slower commit, the 09:45
+// request the later createdAt but the faster commit. Without serializing
+// the create()+recheck window per provider+date, that is enough for BOTH
+// requests' own recheck to end up blind to the other (one because the
+// other hasn't committed yet, the other because it only sees a "younger"
+// sibling and still counts itself as older) and both self-report success —
+// a real double-booking the unique index never catches (different
+// startTimes). The lock's job is to make every request's createdAt land in
+// the same order as its create()+recheck actually runs, which removes the
+// inversion; this test fails (both 200, two surviving rows) if the lock in
+// providerRoutes.js is bypassed — confirmed while writing this fix.
+test('POST /:id/book: two concurrent requests for different, overlapping startTimes — exactly one survives, not both', async (t) => {
+  const serviceAId = new mongoose.Types.ObjectId(); // 30-minute service, 09:30 AM
+  const serviceBId = new mongoose.Types.ObjectId(); // 45-minute service, 09:45 AM
+  const providerId = new mongoose.Types.ObjectId();
+  t.mock.method(User, 'findOne', () => Promise.resolve({
+    _id: providerId,
+    googleAccessToken: null,
+    schedule: {},
+    scheduleRevision: 0,
+    providerProfile: {
+      locationId: 'jerusalem',
+      services: [
+        { _id: serviceAId, name: '30min', duration: 30, active: true },
+        { _id: serviceBId, name: '45min', duration: 45, active: true }
+      ],
+      availability: [{ day: 'Monday', startTime: '09:00 AM', endTime: '11:00 AM' }]
+    }
+  }));
+
+  // In-memory stand-in for the ProviderBooking collection shared by both
+  // concurrent requests — this is what actually exercises whether the lock
+  // serializes their create()+recheck windows against each other.
+  const store = [];
+  t.mock.method(ProviderBooking, 'find', (query) => ({
+    select: () => ({
+      lean: async () => store
+        .filter(b => !query._id || b._id.toString() !== query._id.$ne.toString())
+        .map(b => ({ _id: b._id, startTime: b.startTime, endTime: b.endTime, createdAt: b.createdAt }))
+    })
+  }));
+  t.mock.method(ProviderBooking, 'create', async (doc) => {
+    // 09:30 AM: earlier createdAt, slower commit. 09:45 AM: later createdAt,
+    // faster commit — the inversion described above.
+    const createdAt = doc.startTime === '09:30 AM' ? new Date(2026, 11, 7, 9, 0, 0) : new Date(2026, 11, 7, 9, 0, 5);
+    const delay = doc.startTime === '09:30 AM' ? 20 : 3;
+    await new Promise(resolve => setTimeout(resolve, delay));
+    const record = { _id: new mongoose.Types.ObjectId(), ...doc, createdAt };
+    store.push(record);
+    return record;
+  });
+  t.mock.method(ProviderBooking, 'deleteOne', async ({ _id }) => {
+    const idx = store.findIndex(b => b._id.toString() === _id.toString());
+    if (idx !== -1) store.splice(idx, 1);
+    return { deletedCount: idx !== -1 ? 1 : 0 };
+  });
+  t.mock.method(ProviderBooking, 'findOneAndUpdate', async (filter, update) => {
+    const record = store.find(b => b._id.toString() === filter._id.toString());
+    if (!record || record.status !== filter.status) return null;
+    Object.assign(record, update.$set);
+    return { ...record, toObject() { return { _id: record._id, status: record.status }; } };
+  });
+  t.mock.method(User, 'updateOne', () => Promise.resolve({ matchedCount: 1 }));
+
+  const { server, base } = startApp(freshProviderRoutes());
+  try {
+    const book = (serviceId, startTime, guestName) => fetch(`${base}/api/providers/${providerId}/book`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ serviceId: serviceId.toString(), date: '2026-12-07', startTime, guestName })
+    });
+    const [resA, resB] = await Promise.all([
+      book(serviceAId, '09:30 AM', 'Guest A'),
+      book(serviceBId, '09:45 AM', 'Guest B')
+    ]);
+    const statuses = [resA.status, resB.status].sort();
+    assert.deepEqual(statuses, [200, 409], 'exactly one of the two overlapping requests must succeed, the other must be refused with a 409');
+    assert.equal(store.length, 1, 'exactly one booking document must survive the race — not both (double-booked) and not neither (slot lost entirely)');
   } finally {
     server.close();
   }

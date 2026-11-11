@@ -4105,3 +4105,84 @@ new on top of round 57's head.
    and now also (3) above's missing-timeout gap on Google Calendar calls —
    both accepted as known, documented, architecturally-larger limitations
    unless a human wants a dedicated follow-up for either.
+
+## 2026-11-11 run notes (fifty-ninth overall, third run same day)
+`node_modules` already present (no fresh clone). Baseline before this
+round's changes: `npm run build` (frontend) clean; `node --test` (backend)
+291/307 pass, confirmed by test name to be the same 16 known
+`fastdl.mongodb.org`/accountRoutes-IPC sandbox failures from round 58 — not
+regressions.
+
+This round deliberately did **not** start another general adversarial pass
+over the 10 original files — 58 rounds across two days have exhaustively
+covered that ground, each successive one finding only smaller and
+smaller issues, and two *specific*, previously-accepted-as-architectural
+items (open question 5, carried for several rounds) were sitting
+unaddressed. Instead, delegated a single scoped review asking specifically:
+are items 5a (no timeout on any Google Calendar API call) and 5b
+(`winsOverlapRace`'s residual check-then-act race) actually fixable with a
+small, scoped change, given this service runs as a single process (checked
+`render.yaml`: one `type: web` instance, no clustering) — or do they
+genuinely need the larger architecture change prior rounds assumed. Both
+turned out to be smaller than assumed:
+
+**5a, fixed:** `backend/services/googleCalendar.js`'s
+`createOAuth2ClientWithRefresh()` built its `google.auth.OAuth2` client with
+the deprecated positional constructor, which blocks the `transporterOptions`
+object needed to set a timeout on the client's underlying Gaxios
+transporter. Switched to the object-options form
+(`new google.auth.OAuth2({ clientId, clientSecret, redirectUri,
+transporterOptions: { timeout: 10000 } })`) — one call site, applies to
+every `google.calendar({auth})` call built from that client across
+`mutualRoutes.js`, `providerRoutes.js`, `accountRoutes.js`,
+`mutualAvailability.js`, `inviteRoutes.js`, and `server.js`, mirroring the
+`AbortSignal.timeout(5000)` already used for the token-revoke `fetch()` in
+`accountRoutes.js`. Verified empirically against a hung local HTTP server
+(aborts at ~10s instead of hanging) via two new tests in
+`backend/test/googleCalendar.test.js`.
+
+**5b, fixed:** root-caused the actual interleaving (not just "maybe racy"):
+Mongoose's `timestamps: true` sets `createdAt` client-side at `.create()`
+call time, before the DB round-trip — so a request whose own round-trip is
+slower can commit (become visible to the other's recheck query) *after* a
+request with a later `createdAt`, inverting the order `winsOverlapRace`
+assumes. Reproduced deterministically and got two overlapping provider
+bookings surviving. Fixed in `backend/routes/providerRoutes.js` with
+`withProviderDateLock(key, fn)`, a ~15-line in-process async mutex (a plain
+`Map<string, Promise>` queue, release-on-finally) keyed by
+`${providerId}:${date}`, wrapping the existing atomic create → overlap
+recheck → keep-or-delete block from `POST /:id/book`. Scope is intentionally
+narrow — released right after the keep/delete decision, before the schedule
+push / Google Calendar sync, so a slow Google call never holds the lock.
+Explicitly an in-process lock, not a distributed one — correct only because
+`render.yaml` defines a single web instance today; the code comment says so
+and flags that it would need a real cross-process lock (e.g. a DB-backed
+lock doc) the moment this service is horizontally scaled. Added 3 unit tests
+for the lock primitive plus a rewritten end-to-end test that deterministically
+reproduces the `createdAt`-inversion race and asserts it resolves to exactly
+one surviving booking — confirmed it fails (both survive) with the lock
+bypassed and passes with it restored.
+
+Full suite after both fixes: 297/313 pass (same 16 known sandbox failures,
+net +6 tests this round). `npm run build` (frontend) clean (no frontend file
+touched this round). `node --check` clean on both edited source files. No
+payment/credit code touched, no `User.js`/schema changes, no secrets,
+`master` not touched or merged this round.
+
+**Open items for the human — item 5 is now resolved; 1, 2, 3 carried over
+unchanged:**
+1. `wip/mutual-provider-booking` still merges cleanly as of round 57's merge
+   point (not re-verified against `origin/master`'s further movement this
+   round, since nothing new was pulled in). ~220+ commits accumulated against
+   a branch that has never landed — **this is now the fourth consecutive
+   round flagging the merge/PR decision; recommend making this call rather
+   than letting it carry a fifth time.**
+2. Whether to stop, slow, or re-scope this scheduled task remains open. This
+   round closed out the last two "accepted as architectural" items with
+   real, tested, scoped fixes, so there is no longer a standing list of
+   known-but-deferred gaps in the original 10 files — the natural next
+   question is whether 59 rounds is a reasonable point to pause this task
+   and ship it, rather than continue indefinitely.
+3. Product question: should a provider booking's synced Google Calendar
+   event description include the guest's phone number/notes (currently only
+   their name)?
