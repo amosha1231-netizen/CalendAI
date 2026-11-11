@@ -18,6 +18,9 @@ const Goal = require('../models/Goal');
 const Booking = require('../models/Booking');
 const MutualBooking = require('../models/MutualBooking');
 const ProviderBooking = require('../models/ProviderBooking');
+// Imported as a namespace (not destructured) so tests can mock
+// mutualRoutes.cancelMutualSession without needing a live DB.
+const mutualRoutes = require('./mutualRoutes');
 
 // Same auth as the other route files: JWT bearer first, then the passport session.
 function getAuthenticatedUserId(req) {
@@ -79,6 +82,26 @@ router.delete('/', async (req, res) => {
       }
     }
 
+    // A mutual session the other party is still part of mirrors a schedule
+    // entry (and, once 'completed', a synced Google Calendar event) onto
+    // BOTH accounts. Hard-deleting the MutualBooking doc straight away (as
+    // the deleteMany below used to) would remove the only record of that
+    // session without ever rolling those back — orphaning a live Google
+    // Calendar event and schedule entry on the OTHER party's account
+    // forever, with no session left for them to even cancel it themselves.
+    // Run every non-cancelled session through the same cancelMutualSession
+    // used by POST /sessions/:id/cancel first, so both sides are cleaned up
+    // before the document itself is removed.
+    const mutualSessions = await MutualBooking.find({
+      $or: [{ hostId: id }, { inviteeId: id }],
+      status: { $ne: 'cancelled' }
+    }).select('sessionId').lean();
+    await Promise.all(mutualSessions.map(s =>
+      mutualRoutes.cancelMutualSession(s.sessionId, req.app).catch(err =>
+        console.error(`Failed to roll back mutual session ${s.sessionId} on account deletion:`, err.message)
+      )
+    ));
+
     await Promise.all([
       Event.deleteMany({ userId: id }),
       Reminder.deleteMany({ userId: id }),
@@ -94,6 +117,7 @@ router.delete('/', async (req, res) => {
       // Their booking pages and the bookings made on them.
       Booking.deleteMany({ hostId: id }),
       ProviderBooking.deleteMany({ providerId: id }),
+      // Already rolled back above; this just removes the now-cancelled records.
       MutualBooking.deleteMany({ $or: [{ hostId: id }, { inviteeId: id }] })
     ]);
 
