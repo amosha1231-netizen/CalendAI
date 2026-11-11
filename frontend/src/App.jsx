@@ -43,6 +43,8 @@ import TermsPage from "./pages/Terms";
 import translations from "./i18n";
 import safeStorage from "./utils/safeStorage";
 import { isNativeApp, startOAuth } from './utils/nativeApp';
+import { isIapAvailable } from './utils/inAppPurchase';
+import InAppCreditsSheet from './components/InAppCreditsSheet';
 import { openCheckout, readCheckoutResponse, consumePaymentSuccessParam, CREDITS_PURCHASED_EVENT, notifyCreditsPurchased } from './utils/lemonCheckout';
 import { isIosWhatsApp, isIosSafari, isIosNonSafari, isStandalone } from "./utils/browserDetection";
 import { normalizeCredits, normalizeUserCredits, formatCredits } from "./utils/credits";
@@ -178,6 +180,15 @@ function AppRoutes() {
   // Language state - load from localStorage or default to 'he'
   const [lang, setLang] = useState(() => {
     try {
+      // ?lang=en / ?lang=he (used by the English search result and hreflang links)
+      // wins over the saved choice, so a shared English link opens in English.
+      const fromUrl = typeof window !== 'undefined'
+        ? new URLSearchParams(window.location.search).get('lang')
+        : null;
+      if (fromUrl && LANGUAGE_CYCLE.includes(fromUrl)) {
+        try { safeStorage.setItem('calendai-lang', fromUrl); } catch { /* storage unavailable */ }
+        return fromUrl;
+      }
       const saved = safeStorage.getItem('calendai-lang');
       if (saved && LANGUAGE_CYCLE.includes(saved)) return saved;
       return 'he';
@@ -350,6 +361,8 @@ function AppRoutes() {
   });
   const [showGuestLimitModal, setShowGuestLimitModal] = useState(false);
   const [showCreditsModal, setShowCreditsModal] = useState(false);
+  // Store apps: Apple / Google in-app purchase sheet. null | 'menu' | 'out'
+  const [iapSheet, setIapSheet] = useState(null);
   const [creditsError, setCreditsError] = useState("");
   const [checkoutLoading, setCheckoutLoading] = useState(false);
 
@@ -361,9 +374,14 @@ function AppRoutes() {
   const [drawerTab, setDrawerTab] = useState('settings');
 
   const handleBuyCredits = useCallback(async () => {
-    // App Store rules: digital purchases inside the iOS app must use Apple's
-    // in-app purchase, so the native app does not open the web checkout.
-    if (isNativeApp()) return;
+    // App Store / Play rules: digital purchases inside the store apps must use
+    // Apple / Google billing, so the apps never open the web checkout.
+    if (isNativeApp()) {
+      if (!isIapAvailable()) return;
+      if (!user) { setShowLoginPrompt(true); return; }
+      setIapSheet('menu');
+      return;
+    }
     if (!user) {
       setShowLoginPrompt(true);
       return;
@@ -397,6 +415,19 @@ function AppRoutes() {
       setCheckoutLoading(false);
     }
   }, [user, lang, setShowLoginPrompt, setError]);
+
+  // Out of AI credits. The store apps (iOS/Android) must not point to a purchase,
+  // so only the website mentions buying more.
+  const showOutOfCredits = useCallback(() => {
+    if (isIapAvailable() && user) {
+      setIapSheet('out');
+      return;
+    }
+    setCreditsError(isNativeApp()
+      ? (lang === 'he' ? 'נגמרו לך הקרדיטים לפעולות AI.' : 'You have used all your AI credits.')
+      : (lang === 'he' ? 'נגמרו לך הקרדיטים! אנא רכוש חבילת פעולות נוספת כדי להמשיך להשתמש ב-AI.' : 'You ran out of credits! Please purchase an additional action pack to continue using the AI.'));
+    setShowCreditsModal(true);
+  }, [lang, user]);
 
   const [showWizard, setShowWizard] = useState(false);
   const [showSendInvite, setShowSendInvite] = useState(false);
@@ -514,7 +545,7 @@ function AppRoutes() {
   }, []);
 
   const handleShareApp = useCallback(async () => {
-    const shareUrl = 'https://calendai.org/';
+    const shareUrl = 'https://www.calendai.org/';
     if (navigator.share) {
       try {
         await navigator.share({
@@ -1019,6 +1050,10 @@ function AppRoutes() {
         credentials: "include"
       });
       const data = await res.json();
+      if (res.status === 402) {
+        showOutOfCredits();
+        return;
+      }
       if (!res.ok) {
         if (data.error) throw new Error(data.error);
         else throw new Error(t.failedRequest + " " + res.status);
@@ -1108,10 +1143,7 @@ function AppRoutes() {
           return;
         }
         if (res.status === 402) {
-          setCreditsError(isNativeApp()
-            ? (lang === 'he' ? 'נגמרו לך הקרדיטים לפעולות AI.' : 'You have used all your AI credits.')
-            : (errorData.error || 'נגמרו לך הקרדיטים! אנא רכוש חבילת פעולות נוספת כדי להמשיך להשתמש ב-AI.'));
-          setShowCreditsModal(true);
+          showOutOfCredits();
           return;
         }
         throw new Error(t.failedRequest + " " + res.status);
@@ -1265,6 +1297,7 @@ function AppRoutes() {
         method: "POST", headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ reason }), credentials: "include"
       });
+      if (res.status === 402) { setIsRescheduleOpen(false); showOutOfCredits(); return; }
       if (!res.ok) { const e = await res.json(); throw new Error(e.error || "AI failed"); }
       const data = await res.json();
       setReschedulePreview(data);
@@ -1850,7 +1883,7 @@ function AppRoutes() {
               return (
                 <button
                   onClick={handleBuyCredits}
-                  disabled={checkoutLoading || isNativeApp()}
+                  disabled={checkoutLoading || (isNativeApp() && !isIapAvailable())}
                   title={lang === 'he' ? 'קרדיטים ל-AI' : 'AI credits'}
                   className={`hidden xs:flex items-center gap-1 h-[42px] px-3 rounded-[14px] text-xs font-bold transition ${
                     credits > 0
@@ -2673,6 +2706,16 @@ function AppRoutes() {
           </div>
         </div>
       )}
+
+      <InAppCreditsSheet
+        open={!!iapSheet}
+        outOfCredits={iapSheet === 'out'}
+        onClose={() => setIapSheet(null)}
+        lang={lang}
+        user={user}
+        credits={user ? normalizeCredits(user.aiCredits) : undefined}
+        onPurchased={notifyCreditsPurchased}
+      />
 
       {/* AI Credits Exhausted Modal */}
       {showCreditsModal && (

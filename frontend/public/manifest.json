@@ -1,12 +1,21 @@
 {
   "short_name": "CalendAI",
-  "name": "CalendAI - Smart Schedule Parser",
+  "name": "CalendAI – AI Calendar Assistant",
+  "description": "AI calendar assistant in Hebrew and English: natural-language scheduling, Google Calendar sync and booking links.",
+  "lang": "he",
+  "dir": "rtl",
   "icons": [
     {
       "src": "icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
     }
   ],
   "start_url": ".",
