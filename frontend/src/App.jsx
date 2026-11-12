@@ -2239,6 +2239,7 @@ function AppRoutes() {
                   return remindersOnDate(reminderList, d);
                 })()}
                 onOpenReminders={() => setShowReminders(true)}
+                user={user}
               />
             )}
 

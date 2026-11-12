@@ -4461,6 +4461,7 @@ app.use('/api/action-history', actionHistoryRoutes);
 app.use('/api/goals', goalRoutes);
 app.use('/api/routines', routineRoutes);
 app.use('/api/reminders', reminderRoutes);
+app.use('/api/task-status', require('./routes/taskStatusRoutes'));
 
 // ── Social Provider Bookings (public provider directory) ──
 const providerRoutes = require('./routes/providerRoutes');
