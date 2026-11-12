@@ -1484,7 +1484,7 @@ function AppRoutes() {
   // This prevents the landing page from flashing while the OAuth callback
   // token is being saved to storage by AuthContext.
   if (authLoading && !user && !safeStorage.getItem('token') && !safeStorage.getItem('calendai-jwt')) {
-    return <LuxuryLoader statusText={t.parsing || 'AUTHENTICATING...'} />;
+    return <LuxuryLoader />;
   }
 
   if (guestBookingId) {
