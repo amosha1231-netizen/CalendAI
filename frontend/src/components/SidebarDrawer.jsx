@@ -137,7 +137,7 @@ function isDesktopDevice() {
   }
 }
 
-export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangChange, t, user, isPro, onUpgradeToPro, onOpenNativePaywall, onLogout, onOpenShareModal, selectedLocation, onLocationChange, selectedTimezone, onTimezoneChange, timezoneOptions, initialTab = 'settings', title }) {
+export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangChange, t, user, isPro, onUpgradeToPro, onOpenNativePaywall, onLogout, onOpenShareModal, selectedLocation, onLocationChange, selectedTimezone, onTimezoneChange, timezoneOptions, initialTab = 'settings', title, side = 'right' }) {
   const [activeTab, setActiveTab] = useState(initialTab);
   const [settingsData, setSettingsData] = useState({
     lang: lang,
@@ -376,7 +376,7 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangC
       )}
 
       {/* Drawer */}
-      <div className={`sidebar-drawer ${isOpen ? 'open' : ''} w-full max-w-full box-border`} dir={isRTL ? 'rtl' : 'ltr'}>
+      <div className={`sidebar-drawer ${side === 'left' ? 'from-left' : ''} ${isOpen ? 'open' : ''} w-full max-w-full box-border`} dir={isRTL ? 'rtl' : 'ltr'}>
         <div className="sidebar-header">
           <h2 className="sidebar-title">{title || t.sidebarTitle}</h2>
           <button onClick={onClose} className="sidebar-close-btn">

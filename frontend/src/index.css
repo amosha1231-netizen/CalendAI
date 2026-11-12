@@ -348,6 +348,19 @@
   to { opacity: 1; }
 }
 
+/* Opened from the header menu button, the drawer slides in from that button's
+   side: the left in Hebrew (RTL), the right in English. */
+.sidebar-drawer.from-left {
+  right: auto;
+  left: 0;
+  transform: translateX(-100%);
+  box-shadow: 4px 0 24px rgba(0, 0, 0, 0.15);
+}
+
+.sidebar-drawer.from-left.open {
+  transform: translateX(0);
+}
+
 @keyframes slide-up {
   from {
     transform: translateY(100%);
