@@ -43,7 +43,7 @@ const DAY_NAMES_EN = {
   Saturday: "Saturday"
 };
 
-export default function PublicGoals({ lang, user, onClose, onJoinChallenge, onViewChallenge }) {
+export default function PublicGoals({ lang, user, onClose, onJoinChallenge, onViewChallenge, startCreating = false, initialTitle = "" }) {
   const t = translations[lang] || translations.he;
   const isRtl = lang === "he";
   const dayNames = lang === "he" ? DAY_NAMES : DAY_NAMES_EN;
@@ -54,8 +54,9 @@ export default function PublicGoals({ lang, user, onClose, onJoinChallenge, onVi
   const [error, setError] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
-  const [showCreateForm, setShowCreateForm] = useState(false);
-  const [createTitle, setCreateTitle] = useState("");
+  // Opened from "create challenge" in the search: start on the form, title prefilled.
+  const [showCreateForm, setShowCreateForm] = useState(!!startCreating);
+  const [createTitle, setCreateTitle] = useState(initialTitle || "");
   const [createDay, setCreateDay] = useState("");
   const [createTime, setCreateTime] = useState("05:00");
   const [createAmPm, setCreateAmPm] = useState("AM");

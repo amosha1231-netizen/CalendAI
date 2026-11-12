@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, Suspense, lazy } from 
 import { motion } from "framer-motion";
 import { BrowserRouter } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
-import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff, Home, Plus, Zap, ChevronDown, ChevronUp, FileText, Layout, Trophy, Image, Upload, Search, CalendarPlus, BookOpen, Users, ListChecks, LayoutGrid, Link2, Briefcase, Settings, AlarmClock, Wallet, BarChart3 } from "lucide-react";
+import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff, Home, Menu, Zap, ChevronDown, ChevronUp, FileText, Layout, Trophy, Image, Upload, Search, CalendarPlus, BookOpen, Users, ListChecks, LayoutGrid, Link2, Briefcase, Settings, AlarmClock, Wallet, BarChart3 } from "lucide-react";
 import { staggerContainerVariants, staggerItemVariants } from "./hooks/useStaggeredAnimation";
 import GlobalSearch from "./components/GlobalSearch";
 import MonthlyCalendar from "./components/MonthlyCalendar";
@@ -440,6 +440,20 @@ function AppRoutes() {
   const [showManualEvent, setShowManualEvent] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [showPublicGoals, setShowPublicGoals] = useState(false);
+  // "Create a challenge" from the search opens the challenges screen on its form.
+  const [publicGoalsCreate, setPublicGoalsCreate] = useState(null); // null | { title }
+  // Which side the account drawer slides in from (the header menu button's side).
+  const [drawerSide, setDrawerSide] = useState('right');
+  useEffect(() => {
+    if (!showPublicGoals) setPublicGoalsCreate(null);
+  }, [showPublicGoals]);
+  // Other ways in (avatar, bottom bar) keep the usual side; reset once the
+  // drawer has finished sliding out the way it came in.
+  useEffect(() => {
+    if (isSidebarOpen || drawerSide === 'right') return undefined;
+    const id = setTimeout(() => setDrawerSide('right'), 320);
+    return () => clearTimeout(id);
+  }, [isSidebarOpen, drawerSide]);
   const [showChallengeDetail, setShowChallengeDetail] = useState(false);
   const [selectedChallengeId, setSelectedChallengeId] = useState(null);
   const [showProviderDirectory, setShowProviderDirectory] = useState(false);
@@ -1881,6 +1895,7 @@ function AppRoutes() {
                 setShowPublicGoals(true);
               }}
               onOpenPublicGoals={() => setShowPublicGoals(true)}
+              onCreateChallenge={(title) => { setPublicGoalsCreate({ title }); setShowPublicGoals(true); }}
             />
           </div>
 
@@ -1915,15 +1930,21 @@ function AppRoutes() {
             >
               <Search className="w-5 h-5" />
             </button>
-            {/* Auth */}
-            {/* Add event — top-corner "+" like WhatsApp's new-chat button */}
+            {/* Menu — opens the drawer from this button's own side (left in Hebrew,
+                right in English). Adding an event stays on the home composer. */}
             <button
-              onClick={() => setShowManualEvent(true)}
-              aria-label={getNavLabels(lang).add}
-              title={getNavLabels(lang).add}
-              className="flex items-center justify-center w-[42px] h-[42px] rounded-[14px] bg-[#0E1020] text-white shadow-[0_8px_18px_-10px_rgba(14,16,32,0.7)] hover:bg-[#2A2D45] transition"
+              onClick={() => {
+                setNavSheet(null);
+                setDrawerSide(lang === 'he' ? 'left' : 'right');
+                setDrawerTab('settings');
+                setIsSidebarOpen(true);
+              }}
+              aria-label={lang === 'he' ? 'תפריט' : 'Menu'}
+              title={lang === 'he' ? 'תפריט' : 'Menu'}
+              aria-expanded={isSidebarOpen}
+              className="flex items-center justify-center w-[42px] h-[42px] rounded-[14px] bg-white shadow-[0_4px_14px_-8px_rgba(40,30,120,0.3)] text-[#2A2D45] hover:bg-slate-50 transition"
             >
-              <Plus className="w-5 h-5" />
+              <Menu className="w-5 h-5" />
             </button>
             {/* Auth — signed-in users log out from the "You" tab */}
             {!user && (
@@ -1949,6 +1970,11 @@ function AppRoutes() {
               }}
               onViewProfile={(profileUser) => setShowPublicGoals(true)}
               onOpenPublicGoals={() => {
+                setShowPublicGoals(true);
+                setShowMobileSearch(false);
+              }}
+              onCreateChallenge={(title) => {
+                setPublicGoalsCreate({ title });
                 setShowPublicGoals(true);
                 setShowMobileSearch(false);
               }}
@@ -2818,6 +2844,7 @@ function AppRoutes() {
       {/* Sidebar Drawer */}
       <SidebarDrawer
         isOpen={isSidebarOpen}
+        side={drawerSide}
         onClose={() => setIsSidebarOpen(false)}
         schedule={schedule}
         lang={lang}
@@ -2858,7 +2885,9 @@ function AppRoutes() {
         <PublicGoals
           lang={lang}
           user={user}
-          onClose={() => setShowPublicGoals(false)}
+          onClose={() => { setShowPublicGoals(false); setPublicGoalsCreate(null); }}
+          startCreating={!!publicGoalsCreate}
+          initialTitle={publicGoalsCreate?.title || ''}
           onJoinChallenge={(goal) => {
             fetchSchedule();
             setSuccess(lang === "he" ? "🎯 הצטרפת לאתגר! האירוע נוסף ליומן." : "🎯 Joined the challenge! Event added to your schedule.");
