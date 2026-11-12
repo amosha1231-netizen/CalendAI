@@ -4230,3 +4230,60 @@ ask when all in-scope work appears done.
 3. Still open: should a provider booking's synced Google Calendar event
    description include the guest's phone number/notes (currently name
    only)?
+
+---
+
+## Round 60 (scheduled run, 2026-11-12)
+
+This run started from the exact head round 59 left (no commits landed between
+rounds 59 and 60). Re-verified rather than re-reviewed from scratch, since
+there was no new code to review:
+
+- `npm install` + `npm run build` in `frontend/`: clean.
+- `npm install` + `node --test` in `backend/`: 297/313 pass. Confirmed by name
+  (not just count) that the 16 failures are exactly the documented
+  `mongodb-memory-server`-blocked set (credit-deduction races,
+  webhook-idempotency, booking/mutual-session/provider-booking claim races,
+  owner-refill tests) — no new failure, no regression.
+- Spot-checked that round 58/59's two landed fixes are still in place:
+  `withProviderDateLock` in `backend/routes/providerRoutes.js` and the
+  `defaultDayStart`/`defaultDayEnd` clamp in
+  `backend/services/mutualAvailability.js`. Both intact.
+- Items 1-5 (`handleParse` clear-on-submit, multer + `/api/parse-image` +
+  `parseImageWithVision`, frontend upload button): unchanged, still `[x]`.
+
+**New this round:** checked divergence from `origin/master` directly
+(`git diff --stat wip/mutual-provider-booking..origin/master`), since open
+item 1 below has been carried for 6 rounds without being acted on. The
+branch is now **52 commits behind master**, up from the "never merged" state
+noted in earlier rounds — master has since shipped a real subscription
+system (`backend/services/subscriptions.js`, RevenueCat routes, `User.js`
+field changes, `render.yaml`) and touched `backend/routes/providerRoutes.js`
+(213 lines), `backend/routes/mutualRoutes.js` (41 lines),
+`backend/services/googleCalendar.js`, and all four mutual/provider frontend
+components in this task's own hardening scope. Attempting that merge
+autonomously was judged out of scope for this run: it's large, it touches
+payment/subscription code this task is explicitly barred from modifying, and
+it directly overlaps files this task has been hardening for 50+ rounds, so a
+bad auto-resolved conflict here is exactly the kind of mistake the "ask
+first" rule exists for. No merge attempted; no code changed this round
+beyond this file.
+
+**No code changes this round** (verification only, per this task's own
+instruction to stop and write a status report rather than keep re-reviewing
+with nothing left to find).
+
+**Escalating to the human (6th consecutive round; a push notification was
+sent this round since the prior 5 escalations only lived in this file and
+apparently never reached a human):**
+1. The merge/PR decision for `wip/mutual-provider-booking`. The cost of
+   waiting is now concrete: it's 52 commits behind and the gap touches the
+   exact files this task hardens, so every additional round makes the
+   eventual merge conflict bigger and riskier. Recommend either merging
+   `origin/master` into this branch now (and having a run resolve conflicts
+   carefully against the hardening already done) or opening the PR as-is
+   and letting review happen on GitHub instead of in this file.
+2. Whether to pause or stop this scheduled task. Unchanged from round 59.
+3. Still open: should a provider booking's synced Google Calendar event
+   description include the guest's phone number/notes (currently name
+   only)?
