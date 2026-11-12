@@ -4,13 +4,17 @@
 // anything (lookup is an email-enumeration oracle; book is open to
 // anonymous guests; availability fans out to ~2 Google freebusy.query calls
 // per day in range): mutualRoutes.js' mutualAbuseLimiter (GET /lookup,
-// POST /sessions, GET /sessions/:id/availability, POST /sessions/:id/confirm
+// POST /sessions, GET /sessions/:id/availability, POST /sessions/:id/confirm,
+// POST /sessions/:id/cancel (cancel triggers a real Google events.delete on
+// a completed session's event, same unmetered-Google-call shape as the rest)
 // — confirm pays the same per-party freebusy.query cost as availability via
 // isSlotMutuallyFree, and a losing confirm resets the session back to
 // 'active' so it's just as retryable) and providerRoutes.js'
-// bookLimiter (POST /:id/book) and availabilityLimiter (GET /:id/availability
+// bookLimiter (POST /:id/book), availabilityLimiter (GET /:id/availability
 // — also able to trigger a live Google freebusy call, once computeAvailableSlots
-// started cross-checking the provider's own Google Calendar).
+// started cross-checking the provider's own Google Calendar), and
+// cancelLimiter (POST /bookings/:id/cancel — same events.delete shape as
+// mutual's cancel route).
 //
 // Both limiters sit in front of the auth/validation that would otherwise
 // reject these requests (401 for no token, 400 for a malformed provider
@@ -100,6 +104,21 @@ test('mutual /sessions/:id/confirm: the 21st request in a minute (no auth) is ra
   }
 });
 
+test('mutual /sessions/:id/cancel: the 21st request in a minute (no auth) is rate-limited, not just unauthorized', async () => {
+  const { server, base } = startApp('/api/mutual', freshMutualRoutes());
+  try {
+    const statuses = [];
+    for (let i = 0; i < 21; i++) {
+      const res = await fetch(`${base}/api/mutual/sessions/does-not-exist/cancel`, { method: 'POST' });
+      statuses.push(res.status);
+    }
+    assert.ok(statuses.slice(0, 20).every(s => s === 401), 'the first 20 requests should all reach requireAuth and get 401');
+    assert.equal(statuses[20], 429, 'the 21st request within the window must be rate-limited');
+  } finally {
+    server.close();
+  }
+});
+
 test('provider /:id/book: the 11th request in a minute is rate-limited, not just a validation error', async () => {
   const { server, base } = startApp('/api/providers', providerRoutes);
   try {
@@ -133,6 +152,24 @@ test('provider /:id/availability: the 31st request in a minute is rate-limited, 
     }
     assert.ok(statuses.slice(0, 30).every(s => s === 400), 'the first 30 requests should all reach the handler and fail validation with 400');
     assert.equal(statuses[30], 429, 'the 31st request within the window must be rate-limited');
+  } finally {
+    server.close();
+  }
+});
+
+test('provider /bookings/:id/cancel: the 21st request in a minute (no auth) is rate-limited, not just unauthorized', async () => {
+  const { server, base } = startApp('/api/providers', providerRoutes);
+  try {
+    const statuses = [];
+    for (let i = 0; i < 21; i++) {
+      // No getAuthenticatedUserId set on this bare test app, so getUserId()
+      // always returns null — every request that gets past the limiter is
+      // rejected with 401 before it ever reaches Mongo.
+      const res = await fetch(`${base}/api/providers/bookings/not-a-valid-id/cancel`, { method: 'POST' });
+      statuses.push(res.status);
+    }
+    assert.ok(statuses.slice(0, 20).every(s => s === 401), 'the first 20 requests should all reach the handler and get 401');
+    assert.equal(statuses[20], 429, 'the 21st request within the window must be rate-limited');
   } finally {
     server.close();
   }

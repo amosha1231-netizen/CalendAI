@@ -158,6 +158,18 @@ const browseLimiter = rateLimit({
   message: { error: 'יותר מדי חיפושים. נסה שוב בעוד דקה.' }
 });
 
+// POST /bookings/:id/cancel triggers a real events.delete call on a
+// confirmed booking's Google Calendar event — same unmetered-Google-call
+// shape as bookLimiter above. Authenticated (provider or guest owner only),
+// so a looser ceiling than bookLimiter is fine.
+const cancelLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'יותר מדי ניסיונות ביטול. נסה שוב בעוד דקה.' }
+});
+
 /**
  * Extract the authenticated user's id. Delegates to the same
  * getAuthenticatedUserId server.js uses for /api/booking/:id/confirm
@@ -445,7 +457,7 @@ router.get('/my-bookings', async (req, res) => {
 // Mirrors rollbackCompletedSession's calendar-delete + schedule-pull pattern
 // from mutualRoutes.js, scoped to a single provider-side event.
 // ──────────────────────────────────────────────
-router.post('/bookings/:id/cancel', async (req, res) => {
+router.post('/bookings/:id/cancel', cancelLimiter, async (req, res) => {
   try {
     const userId = getUserId(req);
     if (!userId) return res.status(401).json({ error: 'עליך להתחבר.' });

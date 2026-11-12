@@ -36,6 +36,9 @@ const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Frid
 // (stale slot, optimistic-concurrency loss, Google error) resets the session
 // back to 'active', so nothing stops the same caller from immediately
 // retrying and burning quota just as fast as hammering availability would.
+// `/sessions/:id/cancel` triggers a real events.delete call on a completed
+// session's Google Calendar event (rollbackCompletedSession) — same
+// unmetered-Google-call shape as the routes above.
 // None of these routes are AI-metered, so the server.js aiLimiter doesn't
 // cover them.
 const mutualAbuseLimiter = rateLimit({
@@ -551,7 +554,7 @@ async function cancelMutualSession(sessionId, app) {
 // ──────────────────────────────────────────────
 // POST /api/mutual/sessions/:id/cancel
 // ──────────────────────────────────────────────
-router.post('/sessions/:id/cancel', requireAuth, async (req, res) => {
+router.post('/sessions/:id/cancel', mutualAbuseLimiter, requireAuth, async (req, res) => {
   try {
     const session = await loadAuthorizedSession(req, res);
     if (!session) return;
