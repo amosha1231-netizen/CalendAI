@@ -4385,3 +4385,90 @@ decision this is blocking on):**
 3. Still open: should a provider booking's synced Google Calendar event
    description include the guest's phone number/notes (currently name
    only)?
+
+---
+
+## Round 62 (scheduled run, 2026-11-12)
+
+Fresh clone, `npm install` in both `frontend/` and `backend/`. Items 1-5
+(`handleParse` clear-on-submit, multer + `/api/parse-image` +
+`parseImageWithVision`, frontend upload button): unchanged, still `[x]`.
+
+**Correcting a measurement error carried for 3 rounds:** rounds 60-61
+reported the branch as "52/53 commits behind `origin/master`." Re-measured
+this round with `git log --oneline HEAD..origin/master` / `origin/master..HEAD`
+(not `--stat`, which doesn't count commits) and the real numbers are **7
+commits behind, 55 ahead** — `git merge-base` confirms the common ancestor is
+`9de4e2f`, which round 57's master-merge (`ca83fc5`) already brought in. The
+7 master-only commits are a single subscription/payment feature
+(`4d5eb93` "Make Pro a real subscription and sell it in the apps" plus its
+merge/follow-up commits and an Android version bump) — not a large,
+long-neglected drift. Whatever produced "52/53" in rounds 60-61 was wrong.
+That said, the substance of the concern still holds: those 7 commits touch
+`providerRoutes.js` (231 lines), `server.js` (301 lines), `App.jsx` (60
+lines), `mutualRoutes.js`, `googleCalendar.js`, and all four mutual/provider
+frontend components — a real, non-trivial refactor overlapping this task's
+hardening scope, via subscription/payment-gating logic this task is
+explicitly barred from touching. Did not attempt the merge (same reasoning
+as round 60: large-ish, touches payment-adjacent code, overlaps 50+ rounds
+of hardening — a bad auto-resolved conflict here is exactly what "ask
+first" exists for).
+
+**New bug found and fixed this round:** delegated a ninth independent
+adversarial review (same 10 mutual/provider files + tests + frontend wiring,
+explicit instructions to re-verify — not just grep for — all 6 previously
+landed fixes: day-window clamp, `withProviderDateLock`, `winsOverlapRace`
+3-way chain + `scheduleRevision`, cache-sync isolation, sanitized Google
+error messages, account-deletion ordering). All 6 confirmed still correctly
+in place. One new, real gap found: `POST /api/mutual/sessions/:id/cancel`
+(`backend/routes/mutualRoutes.js`) and `POST /api/providers/bookings/:id/cancel`
+(`backend/routes/providerRoutes.js`) had no rate limiter, unlike every
+sibling route in both files — including ones with a materially *lower*
+abuse cost. Both cancel routes trigger a real Google `events.delete` call on
+an already-confirmed booking/session, the same unmetered-Google-API-quota
+shape the existing `mutualAbuseLimiter`/`bookLimiter`/`availabilityLimiter`/
+`browseLimiter` comments all cite as their reason for existing; a signed-in
+abuser with several completed sessions or confirmed bookings could hammer
+either route and burn Google API quota with no ceiling.
+
+Fixed by adding `mutualAbuseLimiter` to the mutual cancel route (reusing the
+existing shared limiter — same abuse class as the other routes it already
+guards) and a new `cancelLimiter` (max 20/min) to the provider cancel route,
+mirroring the existing per-route-purpose limiter pattern in
+`providerRoutes.js`. Added two regression tests to
+`backend/test/rateLimiting.test.js`, one per route, following the exact
+"Nth request flips to 429" pattern the existing 4 tests in that file use.
+Both routes are authenticated-only (no anonymous-guest exposure), so this
+was a moderate rather than severe gap — no DB/payment/credit logic touched.
+
+**Verification:** `npm run build` (frontend) clean. `node --test` (backend):
+301/317 pass, 16 fail — confirmed by name these are exactly the documented
+`mongodb-memory-server`-blocked set (credit-deduction races,
+webhook-idempotency, booking/mutual-session/provider-booking claim races,
+owner-refill tests), no new failure. `node --check` clean on both edited
+route files and the edited test file. No payment/credit code touched, no
+schema changes, no secrets, `master` not touched or merged.
+
+**Escalating to the human (unchanged open items, now 7 consecutive rounds —
+sending a push notification this round because of the corrected-measurement
+note above and because a real gap was found and fixed, not purely a repeat
+of the same unanswered text):**
+1. The merge/PR decision for `wip/mutual-provider-booking` vs `origin/master`.
+   Corrected framing: only 7 commits behind, all one subscription/payment
+   feature, but it meaningfully overlaps this task's hardening scope in
+   `providerRoutes.js`/`mutualRoutes.js`/`googleCalendar.js`/`server.js`/
+   `App.jsx` and the four mutual/provider frontend components. Recommend
+   either merging `origin/master` into this branch now (small, bounded diff
+   — much more tractable than the "50+ commits" framing of rounds 57-61
+   suggested) or opening a PR for this branch's 55 commits as-is. Note: this
+   branch *has* been merged into master once before, via PR #28 on
+   2026-10-31 — so there's precedent for this exact decision being made
+   quickly once raised.
+2. Whether to pause or stop this scheduled task. Unchanged from round 59 —
+   this round found and fixed a real (if moderate) gap, so the task is
+   still finding things, but 7 rounds of the same two unanswered escalation
+   items is a lot of unattended machine time for a human to eventually
+   review.
+3. Still open: should a provider booking's synced Google Calendar event
+   description include the guest's phone number/notes (currently name
+   only)?
