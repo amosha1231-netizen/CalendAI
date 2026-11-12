@@ -4287,3 +4287,101 @@ apparently never reached a human):**
 3. Still open: should a provider booking's synced Google Calendar event
    description include the guest's phone number/notes (currently name
    only)?
+
+---
+
+## Round 61 (scheduled run, 2026-11-12)
+
+Fresh clone, so `npm install` in both `frontend/` and `backend/` first.
+`npm run build` (frontend) clean both before and after this round's fix.
+`node --test` (backend) before the fix: 297/313 pass, same 16 known
+`mongodb-memory-server` sandbox-network failures confirmed by name (not just
+count) — see AGENTS.md. `git fetch origin master`: branch is now 53 commits
+behind (up from 52 last round) and still 5 ahead; same escalation as round
+60, not re-sent this round since nothing changed besides the count — see
+item 1 below for the raw numbers.
+
+Delegated an eighth independent adversarial review (same 10 mutual/provider
+files + wiring, explicit instructions not to trust prior "no bugs" notes,
+and to double-check the previously-landed fixes — day-window clamp,
+`withProviderDateLock`, `winsOverlapRace` 3-way chain, `scheduleRevision`
+concurrency — are still intact as written, not just present) to a
+sub-agent. It found a real bug this time:
+
+**Best-effort cache sync could trigger rollback of an already-successful
+confirmation/booking** (`backend/routes/mutualRoutes.js`,
+`backend/routes/providerRoutes.js`). In both `POST
+/sessions/:id/confirm` and `POST /:id/book`, the in-memory
+`getUserSchedule()` cache-sync step (`syncPushedEventIntoCache`) ran
+*after* the DB record was already committed to `'completed'`/`'confirmed'`
+with real Google Calendar events inserted and schedules persisted, but
+unwrapped in its own try/catch — any throw from it fell straight into the
+route's outer catch. That catch assumes the record is still `'processing'`:
+in `mutualRoutes.js` it unconditionally calls `rollbackCompletedSession`
+(deleting the real calendar events / schedule mirrors) and then tries to
+reset status from `'processing'`→`'active'`, which silently no-ops because
+the document is already at `'completed'` — leaving a permanently
+inconsistent, unretryable record while telling the client the confirm
+failed. In `providerRoutes.js` the same unwrapped throw reaches a catch
+that unconditionally `ProviderBooking.deleteOne`s the document regardless
+of status, deleting an already-confirmed real booking.
+
+Root cause: `syncPushedEventIntoCache` (`backend/services/scheduleCache.js`)
+itself is safe on a cold-cache Mongo read (`fetchStoredSchedule` catches
+internally), but it calls the app's auto-vivifying `getUserSchedule(userId)`
+helper directly on a cache miss, and that helper's cold-cache path calls
+`saveSchedulesNow()` synchronously (file write) — a disk-level failure
+there throws synchronously out of `getUserSchedule()`, straight through
+`syncPushedEventIntoCache`, unguarded.
+
+Fixed by wrapping each route's cache-sync block (the `getUserSchedule`/
+`syncPushedEventIntoCache`/`saveSchedulesNow` call site) in its own local
+try/catch, logging and swallowing on failure instead of falling into the
+outer catch — the confirmation/booking already succeeded by that point, so
+a cache-sync hiccup should only mean a possibly-stale in-memory cache entry
+until the user's next request reloads it from Mongo, never a false failure
+response or a rollback of real, already-persisted state.
+
+Also fixed, found by the same review, in `mutualRoutes.js`: the
+`events.insert` Google Calendar failure path forwarded the raw googleapis
+error message (e.g. `"Google API rate limit exceeded"`) straight to the
+client via `err.message` — unlike the sibling `isSlotMutuallyFree` catch a
+few lines above it in the same route (deliberately sanitized, per its own
+comment, to avoid leaking internal Google details) and unlike
+`providerRoutes.js`'s equivalent `syncResult.error` path (also sanitized).
+Now sanitized to a fixed message, matching that existing pattern.
+
+Added two regression tests (one per route) to `mutualRoutesValidation.test.js`
+and `providerRoutesValidation.test.js`, each simulating the cache accessor
+throwing after a fully-successful confirm/book, and asserting the response
+still reports success with no rollback (`MutualBooking.updateOne`/
+`ProviderBooking.deleteOne` never called, no `$pull` rollback update sent).
+Updated the existing Google-Calendar-insertion-failure test in
+`mutualRoutesValidation.test.js` to assert the new sanitized message and
+that the raw `"rate limit"` detail no longer leaks.
+
+Full suite after the fix: 299/315 pass (+2 net new tests, both passing),
+same 16 known sandbox-network failures confirmed by name — no regressions.
+`npm run build` (frontend) clean (no frontend file touched). `node --check`
+clean on both edited route files and both edited test files. No
+payment/credit code touched, no schema changes, no secrets, `master` not
+touched or merged.
+
+**Escalating to the human (unchanged from round 60 — not re-sending a push
+notification for the same open items, since nothing material changed
+besides the branch falling 1 more commit behind; see below for the
+decision this is blocking on):**
+1. The merge/PR decision for `wip/mutual-provider-booking`. Now 53 commits
+   behind `origin/master` (was 52 last round), still never merged/opened as
+   a PR, and the gap still directly overlaps this task's own hardening
+   scope (`providerRoutes.js`, `mutualRoutes.js`, `googleCalendar.js`, all
+   four mutual/provider frontend components). Every additional round makes
+   the eventual merge conflict bigger; recommend deciding now rather than
+   carrying this a 7th time.
+2. Whether to pause or stop this scheduled task. Unchanged from round 59 —
+   this round did find a real, fixed bug, so "nothing left to find" isn't
+   quite true, but the task has otherwise been producing mostly
+   re-verification rounds for a while.
+3. Still open: should a provider booking's synced Google Calendar event
+   description include the guest's phone number/notes (currently name
+   only)?
