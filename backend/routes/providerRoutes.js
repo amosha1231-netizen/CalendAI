@@ -892,15 +892,27 @@ router.post('/:id/book', bookLimiter, async (req, res) => {
     // ONLY this one event, misread as "warm" by every later
     // warmScheduleCache-guarded route. See that function's doc comment in
     // scheduleCache.js and its regression test.
-    const getUserSchedule = req.app.get('getUserSchedule');
-    const saveSchedulesNow = req.app.get('saveSchedulesNow');
-    if (getUserSchedule) {
-      await syncPushedEventIntoCache({
-        mongoose, User, getUserSchedule, userId: provider._id.toString(),
-        day: dayName, event: eventToPersist, alsoToday: isBookingToday, source: 'provider-book-cache-sync'
-      });
+    //
+    // The booking is already committed as 'confirmed' above, so this block
+    // gets its own try/catch instead of letting it fall into this route's
+    // outer catch: syncPushedEventIntoCache can hit Mongo (fetchStoredSchedule
+    // on a cold cache) and throw on a transient blip, and the outer catch's
+    // rollback unconditionally deletes the booking doc / Google Calendar
+    // event — it would destroy an already-confirmed booking over nothing
+    // more than a cache-sync hiccup.
+    try {
+      const getUserSchedule = req.app.get('getUserSchedule');
+      const saveSchedulesNow = req.app.get('saveSchedulesNow');
+      if (getUserSchedule) {
+        await syncPushedEventIntoCache({
+          mongoose, User, getUserSchedule, userId: provider._id.toString(),
+          day: dayName, event: eventToPersist, alsoToday: isBookingToday, source: 'provider-book-cache-sync'
+        });
+      }
+      if (saveSchedulesNow) saveSchedulesNow();
+    } catch (cacheSyncErr) {
+      console.error('Provider booking cache sync failed (booking already confirmed; in-memory cache may be stale until next reload):', cacheSyncErr.message);
     }
-    if (saveSchedulesNow) saveSchedulesNow();
 
     res.json({
       ok: true,

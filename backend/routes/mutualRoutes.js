@@ -408,7 +408,8 @@ router.post('/sessions/:id/confirm', mutualAbuseLimiter, requireAuth, async (req
       const inviteeResp = await google.calendar({ version: 'v3', auth: inviteeOAuth }).events.insert({ calendarId: 'primary', requestBody: inviteeBody });
       inviteeEventId = inviteeResp?.data?.id || null;
     } catch (gcalErr) {
-      throw Object.assign(new Error(`Google Calendar insertion failed: ${gcalErr.message}`), { status: 502 });
+      console.error('Mutual confirm Google Calendar insert error:', gcalErr.message);
+      throw Object.assign(new Error('Could not create the calendar events for this meeting. Please try again.'), { status: 502 });
     }
 
     const startTimeStr = formatTime12(startHour, startMinute);
@@ -447,24 +448,36 @@ router.post('/sessions/:id/confirm', mutualAbuseLimiter, requireAuth, async (req
     // meeting for either party — until something else happens to refresh
     // that user's cache entry (e.g. their next GET /api/schedule, which
     // always reloads from Mongo).
-    const getUserSchedule = req.app.get('getUserSchedule');
-    const saveSchedulesNow = req.app.get('saveSchedulesNow');
-    if (getUserSchedule) {
-      const isTodayBucket = date === todayIsoInTimeZone(timeZone);
-      // syncPushedEventIntoCache (not a blind getUserSchedule()-then-push)
-      // so a cold cache for either party gets reloaded from Mongo — which
-      // already has this event, via pushToSchedule above — instead of
-      // being left holding ONLY this one event, misread as "warm" by every
-      // later warmScheduleCache-guarded route. See that function's doc
-      // comment and scheduleCache.test.js's regression test.
-      for (const [user, event] of [[host, hostEvent], [invitee, inviteeEvent]]) {
-        await syncPushedEventIntoCache({
-          mongoose, User, getUserSchedule, userId: user._id.toString(),
-          day: dayOfWeek, event, alsoToday: isTodayBucket, source: 'mutual-confirm-cache-sync'
-        });
+    //
+    // The session is already committed as 'completed' above, so this block
+    // gets its own try/catch instead of letting it fall into this route's
+    // outer catch: syncPushedEventIntoCache can hit Mongo (fetchStoredSchedule
+    // on a cold cache) and throw on a transient blip, and the outer catch's
+    // rollback path assumes a still-'processing' session — it would delete
+    // the just-created Google Calendar events and schedule mirrors out from
+    // under an already-completed, already-successful confirmation.
+    try {
+      const getUserSchedule = req.app.get('getUserSchedule');
+      const saveSchedulesNow = req.app.get('saveSchedulesNow');
+      if (getUserSchedule) {
+        const isTodayBucket = date === todayIsoInTimeZone(timeZone);
+        // syncPushedEventIntoCache (not a blind getUserSchedule()-then-push)
+        // so a cold cache for either party gets reloaded from Mongo — which
+        // already has this event, via pushToSchedule above — instead of
+        // being left holding ONLY this one event, misread as "warm" by every
+        // later warmScheduleCache-guarded route. See that function's doc
+        // comment and scheduleCache.test.js's regression test.
+        for (const [user, event] of [[host, hostEvent], [invitee, inviteeEvent]]) {
+          await syncPushedEventIntoCache({
+            mongoose, User, getUserSchedule, userId: user._id.toString(),
+            day: dayOfWeek, event, alsoToday: isTodayBucket, source: 'mutual-confirm-cache-sync'
+          });
+        }
       }
+      if (saveSchedulesNow) saveSchedulesNow();
+    } catch (cacheSyncErr) {
+      console.error('Mutual confirm cache sync failed (session already completed; in-memory cache may be stale until next reload):', cacheSyncErr.message);
     }
-    if (saveSchedulesNow) saveSchedulesNow();
 
     res.json({ ok: true, message: 'Mutual meeting confirmed on both calendars!', session: completed });
   } catch (err) {

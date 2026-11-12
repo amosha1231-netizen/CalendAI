@@ -1000,6 +1000,64 @@ test('POST /:id/book: a successful booking\'s "Today" push is decided by the pro
   }
 });
 
+// Regression test: the cache-sync step (mirrors the schedule push into
+// server.js' in-memory getUserSchedule() cache) runs AFTER the booking is
+// already committed as 'confirmed', with the schedule push landed in Mongo
+// and (when applicable) a real Google Calendar event inserted. It used to
+// run unwrapped, so a throw from it (e.g. the auto-vivifying
+// getUserSchedule() app helper itself throwing on a cold cache entry) fell
+// into this route's outer catch — which unconditionally deletes the booking
+// document and any synced Google Calendar event, destroying an
+// already-successful booking over nothing more than a cache-sync hiccup.
+// See the try/catch this test guards in providerRoutes.js.
+test('POST /:id/book: a cache-sync failure after the booking is already confirmed does not roll back the real booking', async (t) => {
+  const serviceId = new mongoose.Types.ObjectId();
+  const providerId = new mongoose.Types.ObjectId();
+  mock.timers.enable({ apis: ['Date'], now: new Date('2026-12-07T08:00:00Z').getTime() });
+  t.mock.method(User, 'findOne', () => Promise.resolve({
+    _id: providerId,
+    googleAccessToken: null,
+    schedule: {},
+    scheduleRevision: 0,
+    providerProfile: {
+      locationId: 'jerusalem',
+      services: [{ _id: serviceId, name: 'Haircut', duration: 30, active: true }],
+      availability: [{ day: 'Monday', startTime: '09:00 AM', endTime: '11:00 AM' }]
+    }
+  }));
+  t.mock.method(ProviderBooking, 'find', () => ({ select: () => ({ lean: async () => [] }) }));
+  const createdBooking = {
+    _id: new mongoose.Types.ObjectId(),
+    createdAt: new Date('2026-12-07T08:00:01.000Z'),
+    day: 'Monday',
+    status: 'processing'
+  };
+  t.mock.method(ProviderBooking, 'create', () => Promise.resolve(createdBooking));
+  t.mock.method(ProviderBooking, 'findOneAndUpdate', async (filter, update) => ({
+    ...createdBooking,
+    ...update.$set,
+    toObject() { return { _id: createdBooking._id, status: update.$set.status }; }
+  }));
+  const deleteOneMock = t.mock.method(ProviderBooking, 'deleteOne', async () => ({}));
+  t.mock.method(User, 'updateOne', () => Promise.resolve({ matchedCount: 1 }));
+
+  const getUserSchedule = () => { throw new Error('simulated cache accessor failure'); };
+  const { server, base } = startApp(freshProviderRoutes(), { getUserSchedule });
+  try {
+    const res = await fetch(`${base}/api/providers/${providerId}/book`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ serviceId: serviceId.toString(), date: '2026-12-07', startTime: '10:00 AM', guestName: 'Guest' })
+    });
+    const data = await res.json();
+    assert.equal(res.status, 200, JSON.stringify(data));
+    assert.equal(data.ok, true, 'the already-successful booking must not be reported as failed just because the cache sync hiccuped');
+    assert.equal(deleteOneMock.mock.callCount(), 0, 'an already-confirmed booking must never be deleted over a cache-sync hiccup');
+  } finally {
+    server.close();
+    mock.timers.reset();
+  }
+});
+
 // Neither test above ever reaches these two failure branches: the schedule
 // push's own optimistic-concurrency check (saveResult.matchedCount === 0,
 // i.e. the provider's schedule changed between the availability read and

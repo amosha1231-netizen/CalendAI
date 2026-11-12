@@ -467,6 +467,67 @@ test('POST /sessions/:id/confirm: a fully successful confirmation also syncs bot
   }
 });
 
+// Regression test: the cache-sync step above runs AFTER the MutualBooking
+// document is already committed to 'completed' with real Google Calendar
+// events inserted and both schedules persisted to MongoDB. It used to run
+// unwrapped, so a throw from it (e.g. the auto-vivifying getUserSchedule()
+// cache accessor itself throwing on a cold entry) fell into this route's
+// own outer catch — which assumes a still-'processing' claim and responds
+// by deleting the real calendar events/schedule mirrors via
+// rollbackCompletedSession, even though the confirmation had already fully
+// succeeded. The session's own status-reset-to-'active' can't even undo
+// that: its filter only matches status:'processing', which no longer
+// matches a document already sitting at 'completed'. See the try/catch
+// this test guards in mutualRoutes.js.
+test('POST /sessions/:id/confirm: a cache-sync failure after the session is already completed is swallowed, not treated as a failed confirmation', async (t) => {
+  const hostId = new mongoose.Types.ObjectId();
+  const inviteeId = new mongoose.Types.ObjectId();
+  const existing = { sessionId: 'mut_cachefail', duration: 30, locationId: 'jerusalem', hostId, inviteeId, subject: 'Sync' };
+  const claimedSession = { ...existing, status: 'processing' };
+
+  t.mock.method(MutualBooking, 'findOne', async () => existing);
+  t.mock.method(MutualBooking, 'findOneAndUpdate', async (filter, update) => {
+    if (filter.status === 'active') return claimedSession;
+    if (filter.status === 'processing') {
+      return { ...claimedSession, status: 'completed', hostEventId: update.$set.hostEventId, inviteeEventId: update.$set.inviteeEventId, confirmedAt: update.$set.confirmedAt, lockedSlot: update.$set.lockedSlot };
+    }
+    throw new Error('unexpected findOneAndUpdate filter: ' + JSON.stringify(filter));
+  });
+  const mutualUpdateOneMock = t.mock.method(MutualBooking, 'updateOne', async () => ({}));
+
+  const hostUser = { _id: hostId, email: 'host@test.com', displayName: 'Host', googleAccessToken: 'tok-host', scheduleRevision: 0 };
+  const inviteeUser = { _id: inviteeId, email: 'invitee@test.com', displayName: 'Invitee', googleAccessToken: 'tok-invitee', scheduleRevision: 0 };
+  t.mock.method(User, 'findById', async (id) => (String(id) === String(hostId) ? hostUser : inviteeUser));
+  const userUpdateOneMock = t.mock.method(User, 'updateOne', async () => ({ matchedCount: 1 }));
+  t.mock.method(mutualAvailability, 'isSlotMutuallyFree', async () => ({ free: true, timeZone: 'Asia/Jerusalem' }));
+  t.mock.method(googleCalendarService, 'createOAuth2ClientWithRefresh', async () => ({}));
+  t.mock.method(google, 'calendar', () => ({ events: { insert: async () => ({ data: { id: 'evt-cachefail' } }) } }));
+
+  // A cold-cache read inside syncPushedEventIntoCache calls the real
+  // getUserSchedule() app helper, whose auto-vivify path can itself throw
+  // (e.g. saveSchedulesNow() hitting a disk error) — simulated directly here
+  // without needing to reproduce that exact plumbing.
+  const getUserSchedule = () => { throw new Error('simulated cache accessor failure'); };
+
+  const { server, base } = startApp(freshMutualRoutes(), { getUserSchedule });
+  try {
+    const res = await fetch(`${base}/api/mutual/sessions/mut_cachefail/confirm`, {
+      method: 'POST', headers: authed(hostId),
+      body: JSON.stringify({ date: '2099-12-01', startTime: '10:00 AM', endTime: '10:30 AM' })
+    });
+    const data = await res.json();
+    assert.equal(res.status, 200, JSON.stringify(data));
+    assert.equal(data.ok, true);
+    assert.equal(data.session.status, 'completed', 'the already-successful confirmation must not be reported as failed just because the cache sync hiccuped');
+    assert.equal(mutualUpdateOneMock.mock.callCount(), 0, 'the status must not be reset — the claim was never left stuck, there is nothing to release');
+    for (const call of userUpdateOneMock.mock.calls) {
+      assert.ok(!('$pull' in call.arguments[1]), 'rollbackCompletedSession must never run for an already-completed, successfully-confirmed session');
+    }
+  } finally {
+    server.close();
+  }
+});
+
 // Neither the success test above nor mutualBooking.test.js' atomic-claim
 // tests ever drive /confirm into its own failure/rollback branch — the one
 // that re-checks isSlotMutuallyFree right before writing anything, and the
@@ -606,7 +667,14 @@ test('POST /sessions/:id/confirm: a Google Calendar insertion failure deletes th
     });
     const data = await res.json();
     assert.equal(res.status, 502);
-    assert.match(data.error, /Google Calendar insertion failed/);
+    // The raw googleapis error ("Google API rate limit exceeded") must not
+    // reach the client — mirrors the sibling isSlotMutuallyFree catch a few
+    // lines above it in the route, and providerRoutes.js' own sanitized
+    // syncResult.error message for the same reason (quota/revoked-grant/
+    // project details are internal, not something to hand to a logged-in
+    // host or invitee).
+    assert.equal(data.error, 'Could not create the calendar events for this meeting. Please try again.');
+    assert.doesNotMatch(data.error, /rate limit/i, 'the raw Google error detail must not leak to the client');
     assert.deepEqual(deletedEventIds, ['evt-host-1'], 'the host event that was already inserted must be rolled back, never left orphaned on their calendar');
     assert.equal(mutualUpdateOneMock.mock.callCount(), 1, 'the claim must be released back to active, not left stuck in processing');
     assert.deepEqual(mutualUpdateOneMock.mock.calls[0].arguments[1], { $set: { status: 'active' } });
