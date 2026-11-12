@@ -193,6 +193,8 @@ const translations = {
     successEvents: 'אירועים!',
     scheduleCleared: 'כל האירועים נמחקו',
     failedRequest: 'נכשלה פנייה:',
+    requestFailedRetry: 'הבקשה לא עברה. הטקסט שלך נשמר, אפשר לנסות שוב.',
+    retryRequest: 'נסה שוב',
 
     // Footer
     footerVersion: 'גרסה מעודכנת:',
@@ -854,6 +856,8 @@ const translations = {
     successEvents: 'events!',
     scheduleCleared: 'All events cleared',
     failedRequest: 'Request failed:',
+    requestFailedRetry: "The request didn't go through. Your text is saved, you can try again.",
+    retryRequest: 'Try again',
 
     // Footer
     footerVersion: 'Version:',
@@ -1501,6 +1505,8 @@ const translations = {
     successEvents: 'événements !',
     scheduleCleared: 'Tous les événements effacés',
     failedRequest: 'Échec de la requête :',
+    requestFailedRetry: "La requête n'a pas abouti. Votre texte est conservé, vous pouvez réessayer.",
+    retryRequest: 'Réessayer',
 
     // Footer
     footerVersion: 'Version :',
@@ -2104,6 +2110,8 @@ const translations = {
     successEvents: 'eventos!',
     scheduleCleared: 'Todos los eventos eliminados',
     failedRequest: 'Solicitud fallida:',
+    requestFailedRetry: 'La solicitud no se completó. Tu texto se guardó, puedes intentarlo de nuevo.',
+    retryRequest: 'Reintentar',
 
     // Footer
     footerVersion: 'Versión:',
