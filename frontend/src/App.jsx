@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, Suspense, lazy } from 
 import { motion } from "framer-motion";
 import { BrowserRouter } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
-import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff, Home, Plus, Zap, ChevronDown, ChevronUp, FileText, Layout, Trophy, Image, Upload, Search, CalendarPlus, BookOpen, Users, ListChecks, LayoutGrid, Link2, Briefcase, Settings, AlarmClock, Wallet, BarChart3 } from "lucide-react";
+import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff, Home, Menu, Zap, ChevronDown, ChevronUp, FileText, Layout, Trophy, Image, Upload, Search, CalendarPlus, BookOpen, Users, ListChecks, LayoutGrid, Link2, Briefcase, Settings, AlarmClock, Wallet, BarChart3 } from "lucide-react";
 import { staggerContainerVariants, staggerItemVariants } from "./hooks/useStaggeredAnimation";
 import GlobalSearch from "./components/GlobalSearch";
 import MonthlyCalendar from "./components/MonthlyCalendar";
@@ -13,6 +13,7 @@ import LocationSelector from "./components/LocationSelector";
 import Privacy from "./components/Privacy";
 import ErrorBoundary from "./components/ErrorBoundary";
 import SidebarDrawer from "./components/SidebarDrawer";
+import { installOverlayScrollLock } from "./utils/overlayScrollLock";
 import BottomNav, { NavSheet, getNavLabels } from "./components/BottomNav";
 import MeetingWizard from "./components/MeetingWizard";
 import LuxuryLoader from "./components/LuxuryLoader";
@@ -72,6 +73,16 @@ function isJwtExpired(token) {
 
 // ── Module-level declarations (using var/function to avoid TDZ) ──
 var API_BASE = import.meta.env.VITE_API_URL || "";
+var INPUT_DRAFT_KEY = 'calendai-input-draft';
+
+function hasValidJwt() {
+  try {
+    const token = safeStorage.getItem('token') || safeStorage.getItem('calendai-jwt');
+    return !!token && !isJwtExpired(token);
+  } catch (e) {
+    return false;
+  }
+}
 
 // JWT auth header for raw fetch() calls below — withCredentials cookies alone
 // aren't reliable (e.g. iOS Safari drops third-party session cookies), and the
@@ -200,7 +211,16 @@ function AppRoutes() {
   const [selectedTimezone, setSelectedTimezone] = useState(() => getUserTimeZone());
 
   const [showPrivacy, setShowPrivacy] = useState(false);
-  const [inputText, setInputText] = useState("");
+  // The home request box keeps an unsent request in storage, so it survives a
+  // failed request, a login redirect (Google sign-in reloads the page) or the
+  // app being closed. It is cleared only once the request is actually saved.
+  const [inputText, setInputText] = useState(() => {
+    try { return safeStorage.getItem(INPUT_DRAFT_KEY) || ""; } catch (e) { return ""; }
+  });
+  // Text sent to the AI and not yet saved (the box is emptied while it runs).
+  const pendingInputRef = useRef("");
+  // True when the last request failed for a reason a retry can fix.
+  const [parseRetryable, setParseRetryable] = useState(false);
   // recurrence and eventType are now determined by the AI from natural language text
   // Manual dropdowns have been removed — the AI parses schedules and frequencies intelligently.
   const DEFAULT_RECURRENCE = 'weekly';
@@ -287,6 +307,11 @@ function AppRoutes() {
     }
     return null;
   });
+
+  // While a drawer, sheet or modal is open, only it scrolls, never the page behind it.
+  useEffect(() => {
+    try { return installOverlayScrollLock(); } catch (e) { return undefined; }
+  }, []);
 
   // ?mutual=1 comes from a tapped "a friend wants to find a time" notification.
   useEffect(() => {
@@ -447,6 +472,20 @@ function AppRoutes() {
   const [showManualEvent, setShowManualEvent] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [showPublicGoals, setShowPublicGoals] = useState(false);
+  // "Create a challenge" from the search opens the challenges screen on its form.
+  const [publicGoalsCreate, setPublicGoalsCreate] = useState(null); // null | { title }
+  // Which side the account drawer slides in from (the header menu button's side).
+  const [drawerSide, setDrawerSide] = useState('right');
+  useEffect(() => {
+    if (!showPublicGoals) setPublicGoalsCreate(null);
+  }, [showPublicGoals]);
+  // Other ways in (avatar, bottom bar) keep the usual side; reset once the
+  // drawer has finished sliding out the way it came in.
+  useEffect(() => {
+    if (isSidebarOpen || drawerSide === 'right') return undefined;
+    const id = setTimeout(() => setDrawerSide('right'), 320);
+    return () => clearTimeout(id);
+  }, [isSidebarOpen, drawerSide]);
   const [showChallengeDetail, setShowChallengeDetail] = useState(false);
   const [selectedChallengeId, setSelectedChallengeId] = useState(null);
   const [showProviderDirectory, setShowProviderDirectory] = useState(false);
@@ -616,7 +655,9 @@ function AppRoutes() {
   const handleParseOriginalRef = useRef(null);
 
   const handleLoginRequired = useCallback((action) => {
-    if (!user) {
+    // A valid saved login counts even while the user profile is still loading
+    // (e.g. right after opening the app); the server has the final say.
+    if (!user && !hasValidJwt()) {
       setPendingAction(action);
       setShowLoginPrompt(true);
       return true;
@@ -1116,6 +1157,24 @@ function AppRoutes() {
     setSuccess(data.replyMessage || `${t.successAdded} ${data.events?.length || 0} ${t.successEvents}`);
   };
 
+  // Keep the unsent request in storage (see INPUT_DRAFT_KEY).
+  useEffect(() => {
+    try {
+      const draft = inputText || pendingInputRef.current;
+      if (draft) safeStorage.setItem(INPUT_DRAFT_KEY, draft);
+      else safeStorage.removeItem(INPUT_DRAFT_KEY);
+    } catch (e) {}
+  }, [inputText, loading, parsePreview]);
+
+  useEffect(() => {
+    if (!error) setParseRetryable(false);
+  }, [error]);
+
+  const clearInputDraft = () => {
+    pendingInputRef.current = "";
+    try { safeStorage.removeItem(INPUT_DRAFT_KEY); } catch (e) {}
+  };
+
   const handleParse = async () => {
     if (!inputText.trim()) return;
     if (showShabbatOverlay) {
@@ -1127,9 +1186,15 @@ function AppRoutes() {
     // Clear input immediately and reset button state for responsive UX.
     // Keep the submitted text so a failed request can put it back.
     const submittedText = inputText;
-    const restoreInput = () => setInputText(prev => prev || submittedText);
+    const restoreInput = () => {
+      pendingInputRef.current = "";
+      setInputText(prev => prev || submittedText);
+    };
+    pendingInputRef.current = submittedText;
+    try { safeStorage.setItem(INPUT_DRAFT_KEY, submittedText); } catch (e) {}
     setInputText("");
     setLoading(true);
+    setParseRetryable(false);
     setError("");
     setSuccess("");
     setParsePreview(null);
@@ -1160,12 +1225,22 @@ function AppRoutes() {
           showOutOfCredits();
           return;
         }
-        throw new Error(t.failedRequest + " " + res.status);
+        // Busy AI, server waking up or a gateway error: the text is back in
+        // the box and the same request can simply be sent again.
+        if (errorData.retryable === true || res.status === 429 || res.status >= 500) {
+          setParseRetryable(true);
+          setError(errorData.retryable === true && errorData.error
+            ? errorData.error
+            : (t.requestFailedRetry || `${t.failedRequest} ${res.status}`));
+          return;
+        }
+        throw new Error(errorData.error || `${t.failedRequest} ${res.status}`);
       }
       const data = await res.json();
       applyCreditsFromResponse(data);
       if (!data.preview) {
         // Server without preview support saved directly.
+        clearInputDraft();
         saveScheduleState();
         await applySavedParseResult(data);
         return;
@@ -1180,7 +1255,13 @@ function AppRoutes() {
       setParsePreview({ items, text: submittedText, replyMessage: data.replyMessage, edited: false });
     } catch (err) {
       restoreInput();
-      setError(err.message);
+      if (err instanceof TypeError) {
+        // fetch() itself failed: no connection, or the server is unreachable.
+        setParseRetryable(true);
+        setError(t.requestFailedRetry || err.message);
+      } else {
+        setError(err.message);
+      }
     } finally {
       setLoading(false);
     }
@@ -1207,6 +1288,7 @@ function AppRoutes() {
         throw new Error(errorData.error || `${t.failedRequest} ${res.status}`);
       }
       const data = await res.json();
+      clearInputDraft();
       saveScheduleState();
       setParsePreview(null);
       await applySavedParseResult(data);
@@ -1220,6 +1302,7 @@ function AppRoutes() {
   const handleCancelPreview = () => {
     if (previewSaving) return;
     const text = parsePreview?.text || "";
+    pendingInputRef.current = "";
     setParsePreview(null);
     setInputText(prev => prev || text);
   };
@@ -1497,7 +1580,7 @@ function AppRoutes() {
   // This prevents the landing page from flashing while the OAuth callback
   // token is being saved to storage by AuthContext.
   if (authLoading && !user && !safeStorage.getItem('token') && !safeStorage.getItem('calendai-jwt')) {
-    return <LuxuryLoader statusText={t.parsing || 'AUTHENTICATING...'} />;
+    return <LuxuryLoader />;
   }
 
   if (guestBookingId) {
@@ -1637,7 +1720,7 @@ function AppRoutes() {
     const credits = user ? normalizeCredits(user.aiCredits) : undefined;
     const meetOpen = currentView === 'mutual' || showWizard || showSendInvite || showProviderDirectory || showProviderProfileEditor;
     const toolsOpen = showReminders || showAlarmSettings || showExpenses || showJournal || showPublicGoals || showChallengeDetail || showHistoryModal;
-    // "me" (the account drawer) opens from the avatar in the header, so it has no tab;
+    // "me" opens the account drawer (also reachable from the header avatar);
     // routines live under Tools.
     const activeNav = isSidebarOpen ? 'me'
       : navSheet || ((routinesView || toolsOpen) ? 'tools' : meetOpen ? 'meet' : 'home');
@@ -1647,6 +1730,7 @@ function AppRoutes() {
       { id: 'voice', label: nl.voice, icon: isListening ? MicOff : Mic, orb: true, live: isListening },
       { id: 'meet', label: nl.meet, icon: Users },
       { id: 'tools', label: nl.tools, icon: LayoutGrid },
+      { id: 'me', label: nl.me, icon: User, photo: user?.photo || null },
     ];
     // Moving to another tab leaves whatever screen is open, like switching tabs in WhatsApp.
     const closeOpenScreens = () => {
@@ -1672,6 +1756,8 @@ function AppRoutes() {
       if (currentView === 'mutual') setCurrentView('dashboard');
     };
     const selectTab = (id) => {
+      // Tapping "me" again closes the account drawer.
+      if (id === 'me' && activeNav === 'me') { setIsSidebarOpen(false); return; }
       if (id === activeNav && id !== 'home' && id !== 'voice' && id !== 'schedule') return;
       closeOpenScreens();
       const scrollToId = (elId) => setTimeout(() => {
@@ -1696,7 +1782,7 @@ function AppRoutes() {
       } else if (id === 'routines') {
         setRoutinesView('today');
       } else if (id === 'me') {
-        setDrawerTab('settings');
+        setDrawerTab(user ? 'account' : 'settings');
         setIsSidebarOpen(true);
       } else {
         setNavSheet(id);
@@ -1868,7 +1954,7 @@ function AppRoutes() {
               user={user}
               lang={lang}
               showDot={user ? normalizeCredits(user.aiCredits) === 0 : false}
-              onOpenAccount={() => { setNavSheet(null); setDrawerTab('settings'); setIsSidebarOpen(true); }}
+              onOpenAccount={() => { setNavSheet(null); setDrawerTab(user ? 'account' : 'settings'); setIsSidebarOpen(true); }}
             />
           </div>
 
@@ -1885,6 +1971,7 @@ function AppRoutes() {
                 setShowPublicGoals(true);
               }}
               onOpenPublicGoals={() => setShowPublicGoals(true)}
+              onCreateChallenge={(title) => { setPublicGoalsCreate({ title }); setShowPublicGoals(true); }}
             />
           </div>
 
@@ -1919,15 +2006,21 @@ function AppRoutes() {
             >
               <Search className="w-5 h-5" />
             </button>
-            {/* Auth */}
-            {/* Add event — top-corner "+" like WhatsApp's new-chat button */}
+            {/* Menu — opens the drawer from this button's own side (left in Hebrew,
+                right in English). Adding an event stays on the home composer. */}
             <button
-              onClick={() => setShowManualEvent(true)}
-              aria-label={getNavLabels(lang).add}
-              title={getNavLabels(lang).add}
-              className="flex items-center justify-center w-[42px] h-[42px] rounded-[14px] bg-[#0E1020] text-white shadow-[0_8px_18px_-10px_rgba(14,16,32,0.7)] hover:bg-[#2A2D45] transition"
+              onClick={() => {
+                setNavSheet(null);
+                setDrawerSide(lang === 'he' ? 'left' : 'right');
+                setDrawerTab('settings');
+                setIsSidebarOpen(true);
+              }}
+              aria-label={lang === 'he' ? 'תפריט' : 'Menu'}
+              title={lang === 'he' ? 'תפריט' : 'Menu'}
+              aria-expanded={isSidebarOpen}
+              className="flex items-center justify-center w-[42px] h-[42px] rounded-[14px] bg-white shadow-[0_4px_14px_-8px_rgba(40,30,120,0.3)] text-[#2A2D45] hover:bg-slate-50 transition"
             >
-              <Plus className="w-5 h-5" />
+              <Menu className="w-5 h-5" />
             </button>
             {/* Auth — signed-in users log out from the "You" tab */}
             {!user && (
@@ -1953,6 +2046,11 @@ function AppRoutes() {
               }}
               onViewProfile={(profileUser) => setShowPublicGoals(true)}
               onOpenPublicGoals={() => {
+                setShowPublicGoals(true);
+                setShowMobileSearch(false);
+              }}
+              onCreateChallenge={(title) => {
+                setPublicGoalsCreate({ title });
                 setShowPublicGoals(true);
                 setShowMobileSearch(false);
               }}
@@ -2116,7 +2214,22 @@ function AppRoutes() {
             {/* ── Advanced Options have been removed ── */}
             {/* AI now parses recurrence and event type from natural language text intelligently */}
 
-            {error && <div className="flex items-center gap-2 text-red-600 text-sm mt-3 bg-red-50 p-3 rounded-lg border border-red-200"><AlertCircle className="w-4 h-4 shrink-0" /><span>{error}</span></div>}
+            {error && (
+              <div className="flex items-center gap-2 text-red-600 text-sm mt-3 bg-red-50 p-3 rounded-lg border border-red-200">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span className="flex-1">{error}</span>
+                {parseRetryable && inputText.trim() && !loading && (
+                  <button
+                    type="button"
+                    onClick={handleParse}
+                    className="shrink-0 inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white border border-red-200 text-red-700 font-medium hover:bg-red-100 transition"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    {t.retryRequest || 'Retry'}
+                  </button>
+                )}
+              </div>
+            )}
             {success && <div className="flex items-center gap-2 text-green-700 text-sm mt-3 bg-green-50 p-3 rounded-lg border border-green-200"><Sparkles className="w-4 h-4 text-green-600 shrink-0" /><span>{success}</span></div>}
 
             {parsePreview && (
@@ -2217,6 +2330,7 @@ function AppRoutes() {
                   return remindersOnDate(reminderList, d);
                 })()}
                 onOpenReminders={() => setShowReminders(true)}
+                user={user}
               />
             )}
 
@@ -2822,6 +2936,7 @@ function AppRoutes() {
       {/* Sidebar Drawer */}
       <SidebarDrawer
         isOpen={isSidebarOpen}
+        side={drawerSide}
         onClose={() => setIsSidebarOpen(false)}
         schedule={schedule}
         lang={lang}
@@ -2862,7 +2977,9 @@ function AppRoutes() {
         <PublicGoals
           lang={lang}
           user={user}
-          onClose={() => setShowPublicGoals(false)}
+          onClose={() => { setShowPublicGoals(false); setPublicGoalsCreate(null); }}
+          startCreating={!!publicGoalsCreate}
+          initialTitle={publicGoalsCreate?.title || ''}
           onJoinChallenge={(goal) => {
             fetchSchedule();
             setSuccess(lang === "he" ? "🎯 הצטרפת לאתגר! האירוע נוסף ליומן." : "🎯 Joined the challenge! Event added to your schedule.");

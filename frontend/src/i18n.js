@@ -63,6 +63,16 @@ const translations = {
     reminder1hour: "שעה לפני",
     reminderLabel: "תזכורת מקדימה",
     reminderMinutes: "דקות לפני",
+    taskStatusMark: "סמן סטטוס",
+    taskStatus_done: "בוצע",
+    taskStatus_postponed: "נדחה",
+    taskStatus_missed: "לא בוצע",
+    taskStatusClear: "נקה סימון",
+    taskProgressToday: "היום: {done} מתוך {total} בוצעו",
+    taskProgressWeekRate: "{rate}% עמידה ביעדים",
+    taskProgressNoData: "סמן משימות כדי לראות עמידה ביעדים",
+    taskProgressLast7: "7 ימים אחרונים",
+    taskStatusSaveFailed: "לא הצלחנו לשמור את הסימון. נסה שוב.",
     reminderTitle: "CalendAI - תזכורת",
     reminderStartsIn: "מתחיל בעוד",
 
@@ -183,6 +193,8 @@ const translations = {
     successEvents: 'אירועים!',
     scheduleCleared: 'כל האירועים נמחקו',
     failedRequest: 'נכשלה פנייה:',
+    requestFailedRetry: 'הבקשה לא עברה. הטקסט שלך נשמר, אפשר לנסות שוב.',
+    retryRequest: 'נסה שוב',
 
     // Footer
     footerVersion: 'גרסה מעודכנת:',
@@ -714,6 +726,16 @@ const translations = {
     reminder1hour: "1 hour before",
     reminderLabel: "Reminder",
     reminderMinutes: "minutes before",
+    taskStatusMark: "Mark status",
+    taskStatus_done: "Done",
+    taskStatus_postponed: "Postponed",
+    taskStatus_missed: "Not done",
+    taskStatusClear: "Clear mark",
+    taskProgressToday: "Today: {done} of {total} done",
+    taskProgressWeekRate: "{rate}% on target",
+    taskProgressNoData: "Mark tasks to track your goals",
+    taskProgressLast7: "Last 7 days",
+    taskStatusSaveFailed: "Couldn't save the mark. Please try again.",
     reminderTitle: "CalendAI - Reminder",
     reminderStartsIn: "Starts in",
 
@@ -834,6 +856,8 @@ const translations = {
     successEvents: 'events!',
     scheduleCleared: 'All events cleared',
     failedRequest: 'Request failed:',
+    requestFailedRetry: "The request didn't go through. Your text is saved, you can try again.",
+    retryRequest: 'Try again',
 
     // Footer
     footerVersion: 'Version:',
@@ -1363,6 +1387,16 @@ const translations = {
     reminder1hour: "1 heure avant",
     reminderLabel: "Rappel",
     reminderMinutes: "minutes avant",
+    taskStatusMark: "Marquer le statut",
+    taskStatus_done: "Fait",
+    taskStatus_postponed: "Reporté",
+    taskStatus_missed: "Pas fait",
+    taskStatusClear: "Effacer",
+    taskProgressToday: "Aujourd'hui : {done} sur {total} faits",
+    taskProgressWeekRate: "{rate}% des objectifs",
+    taskProgressNoData: "Marquez vos tâches pour suivre vos objectifs",
+    taskProgressLast7: "7 derniers jours",
+    taskStatusSaveFailed: "Impossible d'enregistrer. Réessayez.",
     reminderTitle: "CalendAI - Rappel",
     reminderStartsIn: "Commence dans",
 
@@ -1471,6 +1505,8 @@ const translations = {
     successEvents: 'événements !',
     scheduleCleared: 'Tous les événements effacés',
     failedRequest: 'Échec de la requête :',
+    requestFailedRetry: "La requête n'a pas abouti. Votre texte est conservé, vous pouvez réessayer.",
+    retryRequest: 'Réessayer',
 
     // Footer
     footerVersion: 'Version :',
@@ -1956,6 +1992,16 @@ const translations = {
     reminder1hour: "1 hora antes",
     reminderLabel: "Recordatorio",
     reminderMinutes: "minutos antes",
+    taskStatusMark: "Marcar estado",
+    taskStatus_done: "Hecho",
+    taskStatus_postponed: "Pospuesto",
+    taskStatus_missed: "No hecho",
+    taskStatusClear: "Borrar marca",
+    taskProgressToday: "Hoy: {done} de {total} hechas",
+    taskProgressWeekRate: "{rate}% de cumplimiento",
+    taskProgressNoData: "Marca tus tareas para seguir tus metas",
+    taskProgressLast7: "Últimos 7 días",
+    taskStatusSaveFailed: "No se pudo guardar. Inténtalo de nuevo.",
     reminderTitle: "CalendAI - Recordatorio",
     reminderStartsIn: "Comienza en",
 
@@ -2064,6 +2110,8 @@ const translations = {
     successEvents: 'eventos!',
     scheduleCleared: 'Todos los eventos eliminados',
     failedRequest: 'Solicitud fallida:',
+    requestFailedRetry: 'La solicitud no se completó. Tu texto se guardó, puedes intentarlo de nuevo.',
+    retryRequest: 'Reintentar',
 
     // Footer
     footerVersion: 'Versión:',

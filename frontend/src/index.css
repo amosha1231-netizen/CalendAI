@@ -348,6 +348,19 @@
   to { opacity: 1; }
 }
 
+/* Opened from the header menu button, the drawer slides in from that button's
+   side: the left in Hebrew (RTL), the right in English. */
+.sidebar-drawer.from-left {
+  right: auto;
+  left: 0;
+  transform: translateX(-100%);
+  box-shadow: 4px 0 24px rgba(0, 0, 0, 0.15);
+}
+
+.sidebar-drawer.from-left.open {
+  transform: translateX(0);
+}
+
 @keyframes slide-up {
   from {
     transform: translateY(100%);
@@ -441,6 +454,7 @@ html, body {
 
 .sidebar-drawer {
   position: fixed;
+  overscroll-behavior: contain;
   top: 0;
   right: 0;
   width: min(340px, 88vw);
@@ -469,6 +483,9 @@ html, body {
 }
 
 .sidebar-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -541,9 +558,10 @@ html, body {
   font-weight: 600;
 }
 
+/* The whole drawer is one scroll area (header stays pinned). A second, nested
+   scroller here used to fight the drawer's own scroll on iPhone. */
 .sidebar-content {
-  flex: 1;
-  overflow-y: auto;
+  flex: 1 0 auto;
   overflow-x: hidden;
   padding: 1rem 1.25rem;
 }
@@ -1796,4 +1814,32 @@ body.has-bottom-nav .sidebar-drawer {
   bottom: var(--bottom-nav-space);
   height: auto;
   padding-bottom: 0;
+}
+
+/* ──────────────────────────────────────────── */
+/* Overlay scroll lock (utils/overlayScrollLock) */
+/* ──────────────────────────────────────────── */
+/* While an overlay is open the page behind it doesn't scroll. */
+html.overlay-open,
+html.overlay-open body {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+/* Scrolling inside an overlay never chains to the page behind it. */
+.fixed.inset-0.overflow-y-auto,
+.fixed.inset-0 .overflow-y-auto,
+.fixed.inset-0 .overflow-auto,
+.sidebar-drawer {
+  overscroll-behavior: contain;
+}
+
+/* iOS draws time/date inputs at their native width and ignores w-full,
+   so they spilled out of the drawer; let them shrink to their box. */
+input[type="time"].w-full,
+input[type="date"].w-full {
+  -webkit-appearance: none;
+  appearance: none;
+  min-width: 0;
+  display: block;
 }

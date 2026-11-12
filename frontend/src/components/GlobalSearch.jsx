@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { Search, Users, Trophy, X, Loader2, User, ExternalLink, Command, Sparkles } from "lucide-react";
+import { Search, Users, Trophy, X, Loader2, User, ExternalLink, Command, Sparkles, Plus } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import safeStorage from "../utils/safeStorage";
 
@@ -10,7 +10,7 @@ var API_BASE = import.meta.env.VITE_API_URL || "";
  * Searches across public goals/challenges and users.
  * Supports joining challenges and viewing user profiles.
  */
-export default function GlobalSearch({ lang, user, onJoinChallenge, onViewProfile, onOpenPublicGoals, autoOpen = false, onClose }) {
+export default function GlobalSearch({ lang, user, onJoinChallenge, onViewProfile, onOpenPublicGoals, onCreateChallenge, autoOpen = false, onClose }) {
   const isRtl = lang === "he";
   const [query, setQuery] = useState("");
   const [results, setResults] = useState({ goals: [], users: [] });
@@ -164,6 +164,35 @@ export default function GlobalSearch({ lang, user, onJoinChallenge, onViewProfil
   const totalResults = results.goals.length + results.users.length;
   const hasResults = totalResults > 0;
 
+  // "Create a challenge" — uses what was typed as the challenge's name.
+  const createTitle = query.trim();
+  const openCreate = () => {
+    setShowDropdown(false);
+    setQuery("");
+    if (onCreateChallenge) onCreateChallenge(createTitle);
+  };
+  const createRow = onCreateChallenge ? (
+    <button
+      type="button"
+      onClick={openCreate}
+      className="w-full px-4 py-3 flex items-center gap-3 text-start hover:bg-brand-soft/60 transition border-b border-slate-100 dark:border-gray-800"
+    >
+      <span className="w-8 h-8 rounded-full bg-aurora text-white flex items-center justify-center shrink-0">
+        <Plus className="w-4 h-4" />
+      </span>
+      <span className="flex-1 min-w-0">
+        <span className="block text-sm font-semibold text-slate-900 dark:text-white truncate">
+          {createTitle
+            ? (lang === "he" ? `צור אתגר: "${createTitle}"` : `Create challenge: "${createTitle}"`)
+            : (lang === "he" ? "צור אתגר חדש" : "Create a new challenge")}
+        </span>
+        <span className="block text-xs text-slate-500 dark:text-slate-400 truncate">
+          {lang === "he" ? "אחרים יוכלו למצוא אותו ולהצטרף" : "Others can find it and join"}
+        </span>
+      </span>
+    </button>
+  ) : null;
+
   // ── Command Palette Modal ──
   return (
     <>
@@ -247,6 +276,7 @@ export default function GlobalSearch({ lang, user, onJoinChallenge, onViewProfil
 
               {/* Results */}
               <div className="max-h-80 overflow-y-auto">
+                {createRow}
                 {!query.trim() ? (
                   <div className="p-8 text-center">
                     <div className="w-12 h-12 bg-slate-100 dark:bg-gray-800 rounded-full flex items-center justify-center mx-auto mb-3">
@@ -255,7 +285,7 @@ export default function GlobalSearch({ lang, user, onJoinChallenge, onViewProfil
                     <p className="text-sm text-slate-400">
                       {lang === "he" ? "הקלד לחיפוש אתגרים ומשתמשים" : "Type to search goals and users"}
                     </p>
-                    <p className="text-xs text-slate-300 mt-2">
+                    <p className="hidden sm:block text-xs text-slate-300 mt-2">
                       {lang === "he" ? 'לחץ על Escape כדי לסגור' : 'Press Escape to close'}
                     </p>
                   </div>
@@ -407,13 +437,22 @@ export default function GlobalSearch({ lang, user, onJoinChallenge, onViewProfil
                 )}
               </div>
 
-              {/* Footer Hint */}
-              <div className="px-4 py-2 bg-slate-50 dark:bg-gray-800/50 border-t border-slate-100 dark:border-gray-800 flex items-center justify-between text-[10px] text-slate-400">
+              {/* Footer: keyboard hints on desktop, a close button on phones */}
+              <div className="hidden sm:flex px-4 py-2 bg-slate-50 dark:bg-gray-800/50 border-t border-slate-100 dark:border-gray-800 items-center justify-between text-[10px] text-slate-400">
                 <div className="flex items-center gap-3">
-                  <span><kbd className="px-1 py-0.5 bg-white dark:bg-gray-700 border border-slate-200 dark:border-gray-600 rounded text-[9px] font-mono">↑↓</kbd> Navigate</span>
-                  <span><kbd className="px-1 py-0.5 bg-white dark:bg-gray-700 border border-slate-200 dark:border-gray-600 rounded text-[9px] font-mono">↵</kbd> Select</span>
+                  <span><kbd className="px-1 py-0.5 bg-white dark:bg-gray-700 border border-slate-200 dark:border-gray-600 rounded text-[9px] font-mono">↑↓</kbd> {lang === "he" ? "ניווט" : "Navigate"}</span>
+                  <span><kbd className="px-1 py-0.5 bg-white dark:bg-gray-700 border border-slate-200 dark:border-gray-600 rounded text-[9px] font-mono">↵</kbd> {lang === "he" ? "בחירה" : "Select"}</span>
                 </div>
-                <span><kbd className="px-1 py-0.5 bg-white dark:bg-gray-700 border border-slate-200 dark:border-gray-600 rounded text-[9px] font-mono">Esc</kbd> Close</span>
+                <span><kbd className="px-1 py-0.5 bg-white dark:bg-gray-700 border border-slate-200 dark:border-gray-600 rounded text-[9px] font-mono">Esc</kbd> {lang === "he" ? "סגירה" : "Close"}</span>
+              </div>
+              <div className="sm:hidden border-t border-slate-100 dark:border-gray-800">
+                <button
+                  type="button"
+                  onClick={() => setShowDropdown(false)}
+                  className="w-full py-3 text-sm font-semibold text-slate-500 hover:bg-slate-50 transition"
+                >
+                  {lang === "he" ? "סגור" : "Close"}
+                </button>
               </div>
             </motion.div>
           </motion.div>
