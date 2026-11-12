@@ -13,6 +13,7 @@ import LocationSelector from "./components/LocationSelector";
 import Privacy from "./components/Privacy";
 import ErrorBoundary from "./components/ErrorBoundary";
 import SidebarDrawer from "./components/SidebarDrawer";
+import { installOverlayScrollLock } from "./utils/overlayScrollLock";
 import BottomNav, { NavSheet, getNavLabels } from "./components/BottomNav";
 import MeetingWizard from "./components/MeetingWizard";
 import LuxuryLoader from "./components/LuxuryLoader";
@@ -287,6 +288,11 @@ function AppRoutes() {
     }
     return null;
   });
+
+  // While a drawer, sheet or modal is open, only it scrolls, never the page behind it.
+  useEffect(() => {
+    try { return installOverlayScrollLock(); } catch (e) { return undefined; }
+  }, []);
 
   useEffect(() => {
     // Leave the landing page once signed in, but keep a booking link (?book=true) open.
@@ -1624,7 +1630,7 @@ function AppRoutes() {
     const credits = user ? normalizeCredits(user.aiCredits) : undefined;
     const meetOpen = currentView === 'mutual' || showWizard || showSendInvite || showProviderDirectory || showProviderProfileEditor;
     const toolsOpen = showReminders || showAlarmSettings || showExpenses || showJournal || showPublicGoals || showChallengeDetail || showHistoryModal;
-    // "me" (the account drawer) opens from the avatar in the header, so it has no tab;
+    // "me" opens the account drawer (also reachable from the header avatar);
     // routines live under Tools.
     const activeNav = isSidebarOpen ? 'me'
       : navSheet || ((routinesView || toolsOpen) ? 'tools' : meetOpen ? 'meet' : 'home');
@@ -1634,6 +1640,7 @@ function AppRoutes() {
       { id: 'voice', label: nl.voice, icon: isListening ? MicOff : Mic, orb: true, live: isListening },
       { id: 'meet', label: nl.meet, icon: Users },
       { id: 'tools', label: nl.tools, icon: LayoutGrid },
+      { id: 'me', label: nl.me, icon: User, photo: user?.photo || null },
     ];
     // Moving to another tab leaves whatever screen is open, like switching tabs in WhatsApp.
     const closeOpenScreens = () => {
@@ -1659,6 +1666,8 @@ function AppRoutes() {
       if (currentView === 'mutual') setCurrentView('dashboard');
     };
     const selectTab = (id) => {
+      // Tapping "me" again closes the account drawer.
+      if (id === 'me' && activeNav === 'me') { setIsSidebarOpen(false); return; }
       if (id === activeNav && id !== 'home' && id !== 'voice' && id !== 'schedule') return;
       closeOpenScreens();
       const scrollToId = (elId) => setTimeout(() => {
@@ -1683,7 +1692,7 @@ function AppRoutes() {
       } else if (id === 'routines') {
         setRoutinesView('today');
       } else if (id === 'me') {
-        setDrawerTab('settings');
+        setDrawerTab(user ? 'account' : 'settings');
         setIsSidebarOpen(true);
       } else {
         setNavSheet(id);
@@ -1855,7 +1864,7 @@ function AppRoutes() {
               user={user}
               lang={lang}
               showDot={user ? normalizeCredits(user.aiCredits) === 0 : false}
-              onOpenAccount={() => { setNavSheet(null); setDrawerTab('settings'); setIsSidebarOpen(true); }}
+              onOpenAccount={() => { setNavSheet(null); setDrawerTab(user ? 'account' : 'settings'); setIsSidebarOpen(true); }}
             />
           </div>
 
