@@ -9,6 +9,10 @@ const mutualBookingSchema = new mongoose.Schema({
   duration: { type: Number, required: true, min: 1, max: 1440 },
   locationId: { type: String, default: 'jerusalem' },
   status: { type: String, enum: ['active', 'processing', 'completed', 'cancelled'], default: 'active', index: true },
+  // Comparing two calendars reads the invitee's free/busy, so it needs their
+  // explicit OK first. Availability and confirm refuse until 'granted'.
+  inviteeConsent: { type: String, enum: ['pending', 'granted', 'declined'], default: 'pending', index: true },
+  consentAt: Date,
   lockedSlot: {
     date: String,
     startTime: String,
