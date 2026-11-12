@@ -3,6 +3,9 @@ const mongoose = require('mongoose');
 const bookingSlotSchema = new mongoose.Schema({
   hour: { type: Number, required: true, min: 0, max: 23 },
   minute: { type: Number, required: true, min: 0, max: 59 },
+  // Per-slot date (YYYY-MM-DD) so one link can offer times on several days.
+  // Older links leave it empty and use the booking-level `date`/`day`.
+  date: String,
   booked: { type: Boolean, default: false },
   bookedBy: String,
   bookedByEmail: String,
@@ -27,6 +30,9 @@ const bookingSchema = new mongoose.Schema({
   locationId: { type: String, default: 'jerusalem' },
   hostTimezone: String,
   slots: { type: [bookingSlotSchema], default: [] },
+  // Who the host sent the link to (optional): an email or a phone number.
+  inviteeContact: String,
+  inviteeContactType: { type: String, enum: ['email', 'phone', null], default: null },
   status: { type: String, enum: ['active', 'processing', 'completed'], default: 'active', index: true },
   confirmedBy: String,
   confirmedAt: Date

@@ -313,6 +313,19 @@ function AppRoutes() {
     try { return installOverlayScrollLock(); } catch (e) { return undefined; }
   }, []);
 
+  // ?mutual=1 comes from a tapped "a friend wants to find a time" notification.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('mutual') !== '1') return;
+      params.delete('mutual');
+      const rest = params.toString();
+      window.history.replaceState({}, document.title, window.location.pathname + (rest ? `?${rest}` : ''));
+      setCurrentView('mutual');
+    } catch (e) {}
+  }, [isAuthenticated]);
+
   useEffect(() => {
     // Leave the landing page once signed in, but keep a booking link (?book=true) open.
     if (isAuthenticated) {
@@ -1825,8 +1838,8 @@ function AppRoutes() {
           lang={lang}
           t={t}
           locationId={selectedLocation}
+          schedule={schedule}
           onClose={() => setCurrentView('dashboard')}
-          onFallbackToShareLink={() => setCurrentView('booking')}
           onMeetingConfirmed={fetchSchedule}
         />
         {renderBottomNav()}

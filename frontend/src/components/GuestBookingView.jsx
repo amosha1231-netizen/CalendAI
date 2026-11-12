@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { Calendar, Clock, Loader2, Check, X, Sparkles, ExternalLink, Mail, Phone, MessageSquare } from "lucide-react";
 import ShabbatGate from "./ShabbatGate";
 import { getUserTimeZone, isValidTimeZone, zonedTimeToDate, formatUtcOffset } from "../utils/userLocation";
+import { detectContact } from "../utils/contactDetect";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
 
@@ -29,6 +30,8 @@ function GuestBookingViewScreen({ bookingId, lang, t, onClose }) {
   const [guestName, setGuestName] = useState("");
   const [guestEmail, setGuestEmail] = useState("");
   const [guestPhone, setGuestPhone] = useState("");
+  // Multi-slot links ask for one field — email or phone — and tell them apart.
+  const [guestContact, setGuestContact] = useState("");
   const [guestNotes, setGuestNotes] = useState("");
   const [confirming, setConfirming] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
@@ -63,14 +66,15 @@ function GuestBookingViewScreen({ bookingId, lang, t, onClose }) {
   const showInGuestZone = !!(booking?.date && isValidTimeZone(hostTimeZone) && hostTimeZone !== guestTimeZone);
   const locale = lang === 'he' ? 'he-IL' : lang === 'fr' ? 'fr-FR' : lang === 'es' ? 'es-ES' : 'en-US';
 
-  function slotInstant(hour, minute) {
-    return booking?.date ? zonedTimeToDate(booking.date, hour, minute, hostTimeZone || guestTimeZone) : null;
+  // A slot can carry its own date (links offering several days); older links use the booking's.
+  function slotInstant(hour, minute, date = booking?.date) {
+    return date ? zonedTimeToDate(date, hour, minute, hostTimeZone || guestTimeZone) : null;
   }
 
-  function formatTimeDisplay(hour, minute) {
+  function formatTimeDisplay(hour, minute, date) {
     const hour12 = lang === 'en';
     if (showInGuestZone) {
-      const instant = slotInstant(hour, minute);
+      const instant = slotInstant(hour, minute, date || booking?.date);
       if (instant) {
         return new Intl.DateTimeFormat(locale, { timeZone: guestTimeZone, hour: '2-digit', minute: '2-digit', hour12 }).format(instant);
       }
@@ -104,7 +108,7 @@ function GuestBookingViewScreen({ bookingId, lang, t, onClose }) {
     const first = booking.isLocked ? null : slots[selectedSlotIndex ?? 0];
     const lockedMatch = String(booking.startTime || '').match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
     let instant = null;
-    if (first) instant = slotInstant(first.hour, first.minute);
+    if (first) instant = slotInstant(first.hour, first.minute, first.date || booking.date);
     else if (lockedMatch) {
       let h = parseInt(lockedMatch[1], 10);
       if (lockedMatch[3]) { const pm = lockedMatch[3].toUpperCase() === 'PM'; if (pm && h !== 12) h += 12; if (!pm && h === 12) h = 0; }
@@ -166,6 +170,39 @@ function GuestBookingViewScreen({ bookingId, lang, t, onClose }) {
     return meetingLabels[typeId] || typeId;
   }
 
+  // Group offered times by day when the host offered several days.
+  const slotGroups = (() => {
+    const indexed = slots.map((slot, index) => ({ slot, index }));
+    if (!slots.some(s => s.date)) return [{ key: 'all', label: '', items: indexed }];
+    const groups = [];
+    for (const item of indexed) {
+      const date = item.slot.date || booking?.date || '';
+      let group = groups.find(g => g.key === date);
+      if (!group) {
+        const instant = slotInstant(12, 0, date);
+        const label = instant
+          ? new Intl.DateTimeFormat(locale, { timeZone: hostTimeZone || guestTimeZone, weekday: 'long', day: 'numeric', month: 'long' }).format(instant)
+          : date;
+        group = { key: date, label, items: [] };
+        groups.push(group);
+      }
+      group.items.push(item);
+    }
+    return groups;
+  })();
+
+  // Google Calendar "add event" link for the picked time (works without CalendAI).
+  const addToCalendarUrl = (() => {
+    if (!booking || booking.isLocked || selectedSlotIndex === null || !slots[selectedSlotIndex]) return '';
+    const slot = slots[selectedSlotIndex];
+    const start = slotInstant(slot.hour, slot.minute, slot.date || booking.date);
+    if (!start) return '';
+    const end = new Date(start.getTime() + Number(booking.duration || 30) * 60000);
+    const fmt = d => d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+    const text = `${booking.subject || 'Meeting'}${booking.hostName ? ` · ${booking.hostName}` : ''}`;
+    return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(text)}&dates=${fmt(start)}/${fmt(end)}&details=${encodeURIComponent('CalendAI')}`;
+  })();
+
   const handleConfirm = async () => {
     if (!guestName.trim()) return;
     setConfirming(true);
@@ -183,8 +220,12 @@ function GuestBookingViewScreen({ bookingId, lang, t, onClose }) {
           // For multi-slot, we need slotIndex
           slotIndex: isLocked ? 0 : (selectedSlotIndex !== null ? selectedSlotIndex : undefined),
           guestName: guestName.trim(),
-          guestEmail: guestEmail.trim(),
-          guestPhone: guestPhone.trim(),
+          ...(isLocked
+            ? { guestEmail: guestEmail.trim(), guestPhone: guestPhone.trim() }
+            : {
+                guestEmail: detectContact(guestContact).type === 'email' ? guestContact.trim() : '',
+                guestPhone: detectContact(guestContact).type === 'phone' ? guestContact.trim() : ''
+              }),
           guestNotes: guestNotes.trim()
         })
       });
@@ -479,13 +520,32 @@ function GuestBookingViewScreen({ bookingId, lang, t, onClose }) {
               </div>
               <div className="flex items-center gap-2 text-sm text-slate-600 mb-2">
                 <Clock className="w-4 h-4 text-blue-500" />
-                <span>{formatTimeDisplay(slots[selectedSlotIndex].hour, slots[selectedSlotIndex].minute)} · {booking.duration} {t.wizardDurationMinutes || 'min'}</span>
+                <span>{formatTimeDisplay(slots[selectedSlotIndex].hour, slots[selectedSlotIndex].minute, slots[selectedSlotIndex].date)} · {booking.duration} {t.wizardDurationMinutes || 'min'}</span>
               </div>
               <div className="flex items-center gap-2 text-sm text-slate-600">
                 <span className="font-medium">{t.wizardSubject}:</span> {booking.subject}
               </div>
             </div>
           )}
+
+          {/* Both sides get the details: the host is pinged and has it in their calendar;
+              the guest saves it here (and gets a Google invite by email if they left one). */}
+          {addToCalendarUrl && (
+            <a
+              href={addToCalendarUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="w-full inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-3 rounded-xl text-sm font-semibold transition shadow-md mb-3"
+            >
+              <Calendar className="w-4 h-4" />
+              {isRTL ? 'הוסף ליומן שלי' : 'Add to my calendar'}
+            </a>
+          )}
+          <p className="text-xs text-slate-500 mb-6">
+            {isRTL
+              ? `${booking?.hostName || 'המארח'} קיבל/ה הודעה, והפגישה כבר ביומן שלו/ה.${detectContact(guestContact).type === 'email' ? ' שלחנו לך הזמנה ליומן במייל.' : ''}`
+              : `${booking?.hostName || 'The host'} has been notified and has it in their calendar.${detectContact(guestContact).type === 'email' ? ' A calendar invite is on its way to your email.' : ''}`}
+          </p>
 
           {/* Referral Banner */}
           <div className="bg-gradient-to-br from-indigo-50 to-blue-50 border border-indigo-200 rounded-xl p-5 mb-6">
@@ -541,8 +601,10 @@ function GuestBookingViewScreen({ bookingId, lang, t, onClose }) {
             <div className="mt-2 flex items-center gap-2 text-xs text-slate-400">
               <Clock className="w-3 h-3" />
               <span>{booking.duration} {t.wizardDurationMinutes || 'min'}</span>
-              <span className="mx-1">·</span>
-              <span>{formatBookingDate()}</span>
+              {slotGroups.length <= 1 && (<>
+                <span className="mx-1">·</span>
+                <span>{formatBookingDate()}</span>
+              </>)}
             </div>
           )}
           {timeZoneNote && <p className="mt-2 text-xs text-blue-700 bg-blue-50 rounded-lg px-3 py-2">{timeZoneNote}</p>}
@@ -559,8 +621,11 @@ function GuestBookingViewScreen({ bookingId, lang, t, onClose }) {
               <label className="block text-sm font-semibold text-slate-700 mb-3">
                 {t.guestViewSelectSlot || 'Select a time slot'}
               </label>
+              {slotGroups.map(group => (
+              <div key={group.key} className="mb-3">
+              {group.label && <p className="text-xs font-bold text-slate-500 mb-2">{group.label}</p>}
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                {slots.map((slot, index) => {
+                {group.items.map(({ slot, index }) => {
                   const isSelected = selectedSlotIndex === index;
                   return (
                     <button
@@ -573,14 +638,16 @@ function GuestBookingViewScreen({ bookingId, lang, t, onClose }) {
                       }`}
                     >
                       {isSelected ? (
-                        <><Check className="w-3.5 h-3.5 mr-1" /> {formatTimeDisplay(slot.hour, slot.minute)}</>
+                        <><Check className="w-3.5 h-3.5 mr-1" /> {formatTimeDisplay(slot.hour, slot.minute, slot.date)}</>
                       ) : (
-                        formatTimeDisplay(slot.hour, slot.minute)
+                        formatTimeDisplay(slot.hour, slot.minute, slot.date)
                       )}
                     </button>
                   );
                 })}
               </div>
+              </div>
+              ))}
             </div>
           )}
 
@@ -602,39 +669,31 @@ function GuestBookingViewScreen({ bookingId, lang, t, onClose }) {
                 />
               </div>
 
-              {/* Email */}
+              {/* Email or phone — one field, detected automatically */}
               <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-2">{t.bookingGuestEmail || 'Email'} *</label>
+                <label className="block text-sm font-semibold text-slate-700 mb-2">{isRTL ? 'מייל או טלפון' : 'Email or phone'} *</label>
                 <div className="relative">
-                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  {detectContact(guestContact).type === 'phone'
+                    ? <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                    : <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />}
                   <input
-                    type="email"
-                    value={guestEmail}
-                    onChange={e => setGuestEmail(e.target.value)}
-                    placeholder={t.bookingGuestEmailPlaceholder || 'Enter your email'}
+                    type="text"
+                    inputMode="email"
+                    autoComplete="email"
+                    value={guestContact}
+                    onChange={e => setGuestContact(e.target.value)}
+                    placeholder={isRTL ? '050-1234567 או name@mail.com' : 'name@mail.com or phone'}
                     className="w-full pl-10 pr-4 py-2.5 border border-slate-300 rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     dir="ltr"
                   />
                 </div>
                 <p className="text-xs text-slate-400 mt-1">
-                  {t.bookingGuestEmailHint || (isRTL ? 'כדי שנוכל לשלוח לך ולמארח אישור פגישה במייל' : "So we can email both you and the host a confirmation")}
+                  {detectContact(guestContact).type === 'email'
+                    ? (isRTL ? 'נשלח לך הזמנה ליומן במייל' : "We'll email you a calendar invite")
+                    : detectContact(guestContact).type === 'phone'
+                      ? (isRTL ? 'זיהינו מספר טלפון. אחרי האישור תוכל/י להוסיף את הפגישה ליומן' : 'Phone number detected. You can add the meeting to your calendar after confirming')
+                      : (isRTL ? 'כדי ששניכם תקבלו את פרטי הפגישה' : 'So you both get the meeting details')}
                 </p>
-              </div>
-
-              {/* Phone */}
-              <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-2">{t.bookingGuestPhone || 'Phone / WhatsApp'}</label>
-                <div className="relative">
-                  <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                  <input
-                    type="tel"
-                    value={guestPhone}
-                    onChange={e => setGuestPhone(e.target.value)}
-                    placeholder={t.bookingGuestPhonePlaceholder || 'Enter your phone number'}
-                    className="w-full pl-10 pr-4 py-2.5 border border-slate-300 rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    dir="ltr"
-                  />
-                </div>
               </div>
 
               {/* Notes */}
@@ -665,7 +724,7 @@ function GuestBookingViewScreen({ bookingId, lang, t, onClose }) {
           {/* Confirm Button */}
           <button
             onClick={handleConfirm}
-            disabled={selectedSlotIndex === null || !guestName.trim() || !isValidEmail(guestEmail) || confirming}
+            disabled={selectedSlotIndex === null || !guestName.trim() || !detectContact(guestContact).type || confirming}
             className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-semibold transition disabled:bg-blue-400 disabled:cursor-not-allowed shadow-lg"
           >
             {confirming ? (

@@ -1,5 +1,9 @@
 // ──────────────────────────────────────────────
 // Mutual (peer-to-peer) scheduling routes.
+// Comparing calendars needs the invitee's consent: a new session starts
+// with inviteeConsent 'pending', the invitee approves or declines it
+// (GET /requests, POST /sessions/:id/consent), and availability/confirm
+// refuse until it is 'granted'.
 // Two CalendAI users, both with Google Calendar connected, see their
 // overlapping free time and lock a slot onto both calendars at once.
 // The host picks the invitee by email (no contacts/friends graph) — if the
@@ -18,6 +22,7 @@ const JWT_SECRET = require('../config/jwtSecret');
 const User = require('../models/User');
 const MutualBooking = require('../models/MutualBooking');
 const { createOAuth2ClientWithRefresh, buildGcalEventBody } = require('../services/googleCalendar');
+const { notifyUser } = require('../services/userNotify');
 const { getMutualFreeSlots, isSlotMutuallyFree, getLocationTimeZone, todayIsoInTimeZone, getTodayDayNameInTimeZone, isValidIsoDate } = require('../services/mutualAvailability');
 
 const DEFAULT_LOCATION_ID = 'jerusalem';
@@ -91,6 +96,16 @@ function formatTime12(h, m) {
   const ampm = h >= 12 ? 'PM' : 'AM';
   const h12 = h % 12 || 12;
   return `${String(h12).padStart(2, '0')}:${String(m).padStart(2, '0')} ${ampm}`;
+}
+
+function consentBlocked(session, res) {
+  if (session.inviteeConsent === 'granted') return false;
+  const declined = session.inviteeConsent === 'declined';
+  res.status(403).json({
+    error: declined ? 'Your friend declined to compare calendars.' : 'Waiting for your friend to approve comparing calendars.',
+    consent: session.inviteeConsent || 'pending'
+  });
+  return true;
 }
 
 async function loadAuthorizedSession(req, res) {
@@ -258,10 +273,109 @@ router.post('/sessions', mutualAbuseLimiter, requireAuth, async (req, res) => {
       status: 'active'
     });
 
-    res.json({ ok: true, sessionId: session.sessionId, inviteeDisplayName: invitee.displayName || invitee.email });
+    notifyUser(invitee._id, {
+      title: `🤝 ${host.displayName || host.email} wants to find a time with you`,
+      body: 'Open CalendAI to approve comparing calendars (only free/busy is shared).',
+      url: '/?mutual=1',
+      tag: `mutual-${sessionId}`
+    });
+
+    res.json({ ok: true, sessionId: session.sessionId, inviteeDisplayName: invitee.displayName || invitee.email, consent: session.inviteeConsent });
   } catch (err) {
     console.error('Create mutual session error:', err);
     res.status(500).json({ error: 'Failed to create mutual scheduling session.' });
+  }
+});
+
+// ──────────────────────────────────────────────
+// GET /api/mutual/requests
+// Pending "compare calendars" requests where the signed-in user is the
+// invitee, newest first.
+// ──────────────────────────────────────────────
+router.get('/requests', mutualAbuseLimiter, requireAuth, async (req, res) => {
+  try {
+    const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const sessions = await MutualBooking.find({
+      inviteeId: req.userId, status: 'active', inviteeConsent: 'pending', createdAt: { $gte: since }
+    }).sort({ createdAt: -1 }).limit(10).lean();
+    const hostIds = [...new Set(sessions.map(s => String(s.hostId)))];
+    const hosts = hostIds.length ? await User.find({ _id: { $in: hostIds } }).select('displayName email').lean() : [];
+    const hostName = Object.fromEntries(hosts.map(h => [String(h._id), h.displayName || h.email]));
+    res.json({
+      ok: true,
+      requests: sessions.map(s => ({
+        sessionId: s.sessionId,
+        hostName: hostName[String(s.hostId)] || 'CalendAI user',
+        subject: s.subject,
+        duration: s.duration,
+        createdAt: s.createdAt
+      }))
+    });
+  } catch (err) {
+    console.error('Mutual requests error:', err);
+    res.status(500).json({ error: 'Failed to load requests.' });
+  }
+});
+
+// ──────────────────────────────────────────────
+// GET /api/mutual/sessions/:id
+// Session state for either party — the host polls it while waiting for consent.
+// ──────────────────────────────────────────────
+router.get('/sessions/:id', mutualAbuseLimiter, requireAuth, async (req, res) => {
+  try {
+    const session = await loadAuthorizedSession(req, res);
+    if (!session) return;
+    res.json({
+      ok: true,
+      sessionId: session.sessionId,
+      status: session.status,
+      consent: session.inviteeConsent || 'pending',
+      subject: session.subject,
+      duration: session.duration,
+      isHost: session.hostId.equals(req.userId)
+    });
+  } catch (err) {
+    console.error('Get mutual session error:', err);
+    res.status(500).json({ error: 'Failed to load session.' });
+  }
+});
+
+// ──────────────────────────────────────────────
+// POST /api/mutual/sessions/:id/consent  { approve: boolean }
+// Only the invitee can answer, and only once, while the session is active.
+// ──────────────────────────────────────────────
+router.post('/sessions/:id/consent', mutualAbuseLimiter, requireAuth, async (req, res) => {
+  try {
+    if (typeof req.body?.approve !== 'boolean') {
+      return res.status(400).json({ error: 'approve must be true or false.' });
+    }
+    const session = await loadAuthorizedSession(req, res);
+    if (!session) return;
+    if (!session.inviteeId.equals(req.userId)) {
+      return res.status(403).json({ error: 'Only the invited person can answer this request.' });
+    }
+    const consent = req.body.approve ? 'granted' : 'declined';
+    const updated = await MutualBooking.findOneAndUpdate(
+      { sessionId: req.params.id, status: 'active', inviteeConsent: 'pending' },
+      { $set: { inviteeConsent: consent, consentAt: new Date() } },
+      { new: true }
+    );
+    if (!updated) return res.status(409).json({ error: 'This request was already answered or is no longer active.' });
+
+    const invitee = await User.findById(req.userId).select('displayName email').lean();
+    notifyUser(updated.hostId, {
+      title: consent === 'granted'
+        ? `✅ ${invitee?.displayName || invitee?.email || 'Your friend'} approved comparing calendars`
+        : `${invitee?.displayName || invitee?.email || 'Your friend'} declined comparing calendars`,
+      body: consent === 'granted' ? 'Open CalendAI to pick a time that works for both of you.' : 'You can still send them a few times to choose from.',
+      url: '/?mutual=1',
+      tag: `mutual-${updated.sessionId}`
+    });
+
+    res.json({ ok: true, consent });
+  } catch (err) {
+    console.error('Mutual consent error:', err);
+    res.status(500).json({ error: 'Failed to save your answer.' });
   }
 });
 
@@ -276,6 +390,7 @@ router.get('/sessions/:id/availability', mutualAbuseLimiter, requireAuth, async 
     if (session.status !== 'active') {
       return res.status(409).json({ error: session.status === 'processing' ? 'This session is being confirmed.' : 'This session is no longer active.' });
     }
+    if (consentBlocked(session, res)) return;
 
     const [host, invitee] = await Promise.all([
       User.findById(session.hostId),
@@ -328,6 +443,7 @@ router.post('/sessions/:id/confirm', mutualAbuseLimiter, requireAuth, async (req
     if (!existing) return res.status(404).json({ error: 'Session not found.' });
     const isParty = existing.hostId.equals(req.userId) || existing.inviteeId.equals(req.userId);
     if (!isParty) return res.status(403).json({ error: 'Not authorized for this session.' });
+    if (consentBlocked(existing, res)) return;
     if (endMin - startMin !== existing.duration) {
       return res.status(400).json({ error: `The selected window must be exactly ${existing.duration} minutes long.` });
     }
@@ -342,7 +458,7 @@ router.post('/sessions/:id/confirm', mutualAbuseLimiter, requireAuth, async (req
     }
 
     claimedSession = await MutualBooking.findOneAndUpdate(
-      { sessionId: req.params.id, status: 'active' },
+      { sessionId: req.params.id, status: 'active', inviteeConsent: 'granted' },
       { $set: { status: 'processing' } },
       { new: true }
     );

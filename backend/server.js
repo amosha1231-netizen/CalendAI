@@ -37,6 +37,8 @@ const crypto = require('crypto'); // For Lemon Squeezy webhook HMAC signature ve
 const multer = require('multer');
 const { getRequestLocation, getRequestTimeZone, isValidTimeZone } = require('./services/userLocation');
 const { getScheduleEventsForDate, isZeroDurationEvent } = require('./services/scheduleOccurrence');
+const { detectContact } = require('./services/contactDetect');
+const { notifyUser } = require('./services/userNotify');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }); // 10MB max
 
 dotenv.config({ path: path.join(__dirname, '.env') });
@@ -3781,7 +3783,8 @@ app.post('/api/booking/ai-find-slot', aiLimiter, async (req, res) => {
  */
 app.post('/api/booking/create-link', async (req, res) => {
   try {
-    const { subject, duration, slots, day, date, hostName, startTime, endTime, meetingType, guestTimezone, locationId } = req.body;
+    const { subject, duration, slots, day, hostName, startTime, endTime, meetingType, guestTimezone, locationId, inviteeContact } = req.body;
+    let { date } = req.body;
     
     // Determine if this is a locked (single exact time) or multi-slot booking
     const isLocked = !!(startTime && endTime);
@@ -3789,6 +3792,18 @@ app.post('/api/booking/create-link', async (req, res) => {
     if (!isLocked && (!slots || !Array.isArray(slots) || slots.length === 0)) {
       return res.status(400).json({ error: 'Either slots array or startTime/endTime are required.' });
     }
+    if (!isLocked && slots.length > 30) {
+      return res.status(400).json({ error: 'Offer at most 30 time slots.' });
+    }
+    // Slots may each carry their own date, so one link can offer times on
+    // several days. Every dated slot must be a real, non-Shabbat ISO date.
+    const isIsoDate = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
+    const slotDates = !isLocked ? slots.map(s => (s && s.date != null ? s.date : null)) : [];
+    if (slotDates.some(d => d !== null && (!isIsoDate(d) || new Date(`${d}T00:00:00Z`).getUTCDay() === 6))) {
+      return res.status(400).json({ error: 'Each slot date must be a valid non-Shabbat ISO date (YYYY-MM-DD).' });
+    }
+    if (!date && slotDates.some(Boolean)) date = slotDates.filter(Boolean).sort()[0];
+    const contact = detectContact(typeof inviteeContact === 'string' ? inviteeContact.slice(0, 200) : '');
     if (!Number.isInteger(Number(duration)) || Number(duration) < 1 || Number(duration) > 1440 || (!date && !day)) {
       return res.status(400).json({ error: 'duration and an ISO date are required.' });
     }
@@ -3831,7 +3846,9 @@ app.post('/api/booking/create-link', async (req, res) => {
       hostTimezone: getRequestTimeZone(req) || resolveLocation(locationId || DEFAULT_LOCATION_ID).timezone,
       slots: isLocked 
         ? [] 
-        : slots.map(s => ({ hour: s.hour, minute: s.minute, booked: false })),
+        : slots.map((s, i) => ({ hour: s.hour, minute: s.minute, ...(slotDates[i] ? { date: slotDates[i] } : {}), booked: false })),
+      inviteeContact: contact.type ? contact.value : null,
+      inviteeContactType: contact.type,
       status: 'active'
     };
     const booking = await Booking.create(bookingData);
@@ -3898,6 +3915,7 @@ app.get('/api/booking/:id', async (req, res) => {
  *   1. Locked time (isLocked=true): uses booking.startTime/endTime directly
  *   2. Multi-slot (isLocked=false): uses slotIndex to pick which slot
  */
+const DAY_NAMES_FOR_BOOKING = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 app.post('/api/booking/:id/confirm', async (req, res) => {
   let claimed = false;
   let persisted = false;
@@ -3910,10 +3928,17 @@ app.post('/api/booking/:id/confirm', async (req, res) => {
     if (typeof guestName !== 'string' || !guestName.trim() || guestName.length > 200) {
       return res.status(400).json({ error: 'guestName is required.' });
     }
-    // Required so Google Calendar can add the guest as an attendee and email
-    // both sides a confirmation — without it there is no way to notify the guest.
-    if (typeof guestEmail !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(guestEmail.trim())) {
-      return res.status(400).json({ error: 'A valid guestEmail is required to send the meeting confirmation.' });
+    // The guest leaves an email or a phone number (at least one). An email
+    // makes Google Calendar add them as an attendee and email both sides an
+    // invite; with only a phone, the confirmation screen gives them an
+    // add-to-calendar link and the host is pinged in the app.
+    const emailOk = typeof guestEmail === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(guestEmail.trim());
+    const phoneOk = typeof guestPhone === 'string' && detectContact(guestPhone).type === 'phone';
+    if (typeof guestEmail === 'string' && guestEmail.trim() && !emailOk) {
+      return res.status(400).json({ error: 'guestEmail is not a valid email address.' });
+    }
+    if (!emailOk && !phoneOk) {
+      return res.status(400).json({ error: 'An email or phone number is required to send the meeting confirmation.' });
     }
     const booking = await Booking.findOne({ bookingId: id }).lean();
     if (!booking) return res.status(404).json({ error: 'Booking not found.' });
@@ -3956,14 +3981,16 @@ app.post('/api/booking/:id/confirm', async (req, res) => {
 
     const host = await User.findById(hostId);
     if (!host) throw Object.assign(new Error('Host account not found.'), { status: 404 });
-    const dayName = bookingData.day;
+    // A slot with its own date (multi-day links) decides the day; older links use the booking's.
+    const chosenDate = (!bookingData.isLocked && bookingData.slots[Number(slotIndex)]?.date) || bookingData.date || null;
+    const dayName = chosenDate ? DAY_NAMES_FOR_BOOKING[new Date(`${chosenDate}T00:00:00Z`).getUTCDay()] : bookingData.day;
     const startMinValue = timeToMinutes(startTimeStr);
     const endMinValue = timeToMinutes(endTimeStr);
     if (startMinValue === null || endMinValue === null || endMinValue <= startMinValue) throw Object.assign(new Error('Invalid booking time.'), { status: 400 });
     const schedule = host.schedule && typeof host.schedule === 'object' ? host.schedule : getDefaultSchedule();
     const observedRevision = Number(host.scheduleRevision || 0);
     const conflicts = (schedule[dayName] || []).filter(event => {
-      if (bookingData.date && event.targetDate && String(event.targetDate).slice(0, 10) !== bookingData.date) return false;
+      if (chosenDate && event.targetDate && String(event.targetDate).slice(0, 10) !== chosenDate) return false;
       const existingStart = timeToMinutes(event.startTime);
       const existingEnd = timeToMinutes(event.endTime);
       return existingStart !== null && existingEnd !== null && startMinValue < existingEnd && endMinValue > existingStart;
@@ -3978,12 +4005,12 @@ app.post('/api/booking/:id/confirm', async (req, res) => {
       recurrence: 'once',
       location: bookingData.locationId || DEFAULT_LOCATION_ID,
       guestName: guestName.trim(),
-      guestEmail: guestEmail || '',
-      guestPhone: guestPhone || '',
-      guestNotes: guestNotes || '',
+      guestEmail: emailOk ? guestEmail.trim() : '',
+      guestPhone: typeof guestPhone === 'string' ? guestPhone.trim().slice(0, 40) : '',
+      guestNotes: typeof guestNotes === 'string' ? guestNotes.slice(0, 1000) : '',
       meetingType: bookingData.meetingType || null,
       bookingId: id,
-      ...(bookingData.date ? { targetDate: bookingData.date } : {})
+      ...(chosenDate ? { targetDate: chosenDate } : {})
     };
     let googleCalendar = { success: false, reason: 'Host has no connected Google Calendar' };
     if (host.googleAccessToken) {
@@ -4017,6 +4044,14 @@ app.post('/api/booking/:id/confirm', async (req, res) => {
     if (dayName === getTodayDayName()) cachedSchedule.Today = [...(cachedSchedule.Today || []), eventToPersist];
     userSchedules.set(hostId, cachedSchedule);
     saveSchedulesNow();
+
+    // Tell the host right away (best-effort; the event is already on their calendar).
+    notifyUser(hostId, {
+      title: `📅 ${guestName.trim()} picked a time`,
+      body: `${bookingData.subject} · ${chosenDate || dayName} ${startTimeStr}–${endTimeStr}`,
+      url: '/',
+      tag: `booking-${id}`
+    });
 
     res.json({
       ok: true,
