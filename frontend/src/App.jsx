@@ -72,6 +72,16 @@ function isJwtExpired(token) {
 
 // ── Module-level declarations (using var/function to avoid TDZ) ──
 var API_BASE = import.meta.env.VITE_API_URL || "";
+var INPUT_DRAFT_KEY = 'calendai-input-draft';
+
+function hasValidJwt() {
+  try {
+    const token = safeStorage.getItem('token') || safeStorage.getItem('calendai-jwt');
+    return !!token && !isJwtExpired(token);
+  } catch (e) {
+    return false;
+  }
+}
 
 // JWT auth header for raw fetch() calls below — withCredentials cookies alone
 // aren't reliable (e.g. iOS Safari drops third-party session cookies), and the
@@ -200,7 +210,16 @@ function AppRoutes() {
   const [selectedTimezone, setSelectedTimezone] = useState(() => getUserTimeZone());
 
   const [showPrivacy, setShowPrivacy] = useState(false);
-  const [inputText, setInputText] = useState("");
+  // The home request box keeps an unsent request in storage, so it survives a
+  // failed request, a login redirect (Google sign-in reloads the page) or the
+  // app being closed. It is cleared only once the request is actually saved.
+  const [inputText, setInputText] = useState(() => {
+    try { return safeStorage.getItem(INPUT_DRAFT_KEY) || ""; } catch (e) { return ""; }
+  });
+  // Text sent to the AI and not yet saved (the box is emptied while it runs).
+  const pendingInputRef = useRef("");
+  // True when the last request failed for a reason a retry can fix.
+  const [parseRetryable, setParseRetryable] = useState(false);
   // recurrence and eventType are now determined by the AI from natural language text
   // Manual dropdowns have been removed — the AI parses schedules and frequencies intelligently.
   const DEFAULT_RECURRENCE = 'weekly';
@@ -603,7 +622,9 @@ function AppRoutes() {
   const handleParseOriginalRef = useRef(null);
 
   const handleLoginRequired = useCallback((action) => {
-    if (!user) {
+    // A valid saved login counts even while the user profile is still loading
+    // (e.g. right after opening the app); the server has the final say.
+    if (!user && !hasValidJwt()) {
       setPendingAction(action);
       setShowLoginPrompt(true);
       return true;
@@ -1103,6 +1124,24 @@ function AppRoutes() {
     setSuccess(data.replyMessage || `${t.successAdded} ${data.events?.length || 0} ${t.successEvents}`);
   };
 
+  // Keep the unsent request in storage (see INPUT_DRAFT_KEY).
+  useEffect(() => {
+    try {
+      const draft = inputText || pendingInputRef.current;
+      if (draft) safeStorage.setItem(INPUT_DRAFT_KEY, draft);
+      else safeStorage.removeItem(INPUT_DRAFT_KEY);
+    } catch (e) {}
+  }, [inputText, loading, parsePreview]);
+
+  useEffect(() => {
+    if (!error) setParseRetryable(false);
+  }, [error]);
+
+  const clearInputDraft = () => {
+    pendingInputRef.current = "";
+    try { safeStorage.removeItem(INPUT_DRAFT_KEY); } catch (e) {}
+  };
+
   const handleParse = async () => {
     if (!inputText.trim()) return;
     if (showShabbatOverlay) {
@@ -1114,9 +1153,15 @@ function AppRoutes() {
     // Clear input immediately and reset button state for responsive UX.
     // Keep the submitted text so a failed request can put it back.
     const submittedText = inputText;
-    const restoreInput = () => setInputText(prev => prev || submittedText);
+    const restoreInput = () => {
+      pendingInputRef.current = "";
+      setInputText(prev => prev || submittedText);
+    };
+    pendingInputRef.current = submittedText;
+    try { safeStorage.setItem(INPUT_DRAFT_KEY, submittedText); } catch (e) {}
     setInputText("");
     setLoading(true);
+    setParseRetryable(false);
     setError("");
     setSuccess("");
     setParsePreview(null);
@@ -1147,12 +1192,22 @@ function AppRoutes() {
           showOutOfCredits();
           return;
         }
-        throw new Error(t.failedRequest + " " + res.status);
+        // Busy AI, server waking up or a gateway error: the text is back in
+        // the box and the same request can simply be sent again.
+        if (errorData.retryable === true || res.status === 429 || res.status >= 500) {
+          setParseRetryable(true);
+          setError(errorData.retryable === true && errorData.error
+            ? errorData.error
+            : (t.requestFailedRetry || `${t.failedRequest} ${res.status}`));
+          return;
+        }
+        throw new Error(errorData.error || `${t.failedRequest} ${res.status}`);
       }
       const data = await res.json();
       applyCreditsFromResponse(data);
       if (!data.preview) {
         // Server without preview support saved directly.
+        clearInputDraft();
         saveScheduleState();
         await applySavedParseResult(data);
         return;
@@ -1167,7 +1222,13 @@ function AppRoutes() {
       setParsePreview({ items, text: submittedText, replyMessage: data.replyMessage, edited: false });
     } catch (err) {
       restoreInput();
-      setError(err.message);
+      if (err instanceof TypeError) {
+        // fetch() itself failed: no connection, or the server is unreachable.
+        setParseRetryable(true);
+        setError(t.requestFailedRetry || err.message);
+      } else {
+        setError(err.message);
+      }
     } finally {
       setLoading(false);
     }
@@ -1194,6 +1255,7 @@ function AppRoutes() {
         throw new Error(errorData.error || `${t.failedRequest} ${res.status}`);
       }
       const data = await res.json();
+      clearInputDraft();
       saveScheduleState();
       setParsePreview(null);
       await applySavedParseResult(data);
@@ -1207,6 +1269,7 @@ function AppRoutes() {
   const handleCancelPreview = () => {
     if (previewSaving) return;
     const text = parsePreview?.text || "";
+    pendingInputRef.current = "";
     setParsePreview(null);
     setInputText(prev => prev || text);
   };
@@ -2103,7 +2166,22 @@ function AppRoutes() {
             {/* ── Advanced Options have been removed ── */}
             {/* AI now parses recurrence and event type from natural language text intelligently */}
 
-            {error && <div className="flex items-center gap-2 text-red-600 text-sm mt-3 bg-red-50 p-3 rounded-lg border border-red-200"><AlertCircle className="w-4 h-4 shrink-0" /><span>{error}</span></div>}
+            {error && (
+              <div className="flex items-center gap-2 text-red-600 text-sm mt-3 bg-red-50 p-3 rounded-lg border border-red-200">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span className="flex-1">{error}</span>
+                {parseRetryable && inputText.trim() && !loading && (
+                  <button
+                    type="button"
+                    onClick={handleParse}
+                    className="shrink-0 inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white border border-red-200 text-red-700 font-medium hover:bg-red-100 transition"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    {t.retryRequest || 'Retry'}
+                  </button>
+                )}
+              </div>
+            )}
             {success && <div className="flex items-center gap-2 text-green-700 text-sm mt-3 bg-green-50 p-3 rounded-lg border border-green-200"><Sparkles className="w-4 h-4 text-green-600 shrink-0" /><span>{success}</span></div>}
 
             {parsePreview && (

@@ -671,8 +671,13 @@ async function deductAICredit(userId, usage = null, modelName = 'deepseek/deepse
   }
 
   if (!usage || typeof usage !== 'object') {
-    const error = new Error('AI usage data is unavailable; refusing to complete an unbilled request.');
-    error.status = 502;
+    // No usage means the AI call itself failed (e.g. OpenRouter/DeepSeek overloaded
+    // with 429) and a local fallback answered. We never complete an unbilled
+    // request, so tell the client the AI is busy and the request can be retried.
+    console.warn(`[PAYG] No AI usage for ${action}: AI unavailable, refusing unbilled request.`);
+    const error = new Error('ה-AI עמוס כרגע. הטקסט שלך נשמר, נסה שוב בעוד כמה שניות.');
+    error.status = 503;
+    error.retryable = true;
     throw error;
   }
 
@@ -2427,7 +2432,10 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
     res.json({ ...result, aiCredits: remainingCredits });
   } catch (error) {
     console.error(error);
-    res.status(error.status || 500).json({ error: error.message || 'Failed to parse schedule.' });
+    res.status(error.status || 500).json({
+      error: error.message || 'Failed to parse schedule.',
+      ...(error.retryable === true && { retryable: true })
+    });
   }
 });
 

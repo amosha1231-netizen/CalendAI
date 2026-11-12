@@ -18,6 +18,10 @@ function initModel() {
     openaiClient = new OpenAI({
       baseURL: 'https://openrouter.ai/api/v1',
       apiKey: apiKey,
+      // DeepSeek on OpenRouter is sometimes rate-limited upstream (429
+      // "engine_overloaded"). Retry a few more times with the SDK's backoff
+      // before the request is given up.
+      maxRetries: 4,
       defaultHeaders: {
         'HTTP-Referer': process.env.BASE_URL || 'https://calendai.org',
         'X-Title': 'CalendAI',
