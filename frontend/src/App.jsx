@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, Suspense, lazy } from 
 import { motion } from "framer-motion";
 import { BrowserRouter } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
-import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff, Home, Menu, Zap, ChevronDown, ChevronUp, FileText, Layout, Trophy, Image, Upload, Search, CalendarPlus, BookOpen, Users, ListChecks, LayoutGrid, Link2, Briefcase, Settings, AlarmClock, Wallet, BarChart3 } from "lucide-react";
+import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff, Home, Zap, ChevronDown, ChevronUp, FileText, Layout, Trophy, Image, Upload, Search, CalendarPlus, BookOpen, Users, ListChecks, LayoutGrid, Link2, Briefcase, Settings, AlarmClock, Wallet, BarChart3 } from "lucide-react";
 import { staggerContainerVariants, staggerItemVariants } from "./hooks/useStaggeredAnimation";
 import GlobalSearch from "./components/GlobalSearch";
 import MonthlyCalendar from "./components/MonthlyCalendar";
@@ -474,18 +474,9 @@ function AppRoutes() {
   const [showPublicGoals, setShowPublicGoals] = useState(false);
   // "Create a challenge" from the search opens the challenges screen on its form.
   const [publicGoalsCreate, setPublicGoalsCreate] = useState(null); // null | { title }
-  // Which side the account drawer slides in from (the header menu button's side).
-  const [drawerSide, setDrawerSide] = useState('right');
   useEffect(() => {
     if (!showPublicGoals) setPublicGoalsCreate(null);
   }, [showPublicGoals]);
-  // Other ways in (avatar, bottom bar) keep the usual side; reset once the
-  // drawer has finished sliding out the way it came in.
-  useEffect(() => {
-    if (isSidebarOpen || drawerSide === 'right') return undefined;
-    const id = setTimeout(() => setDrawerSide('right'), 320);
-    return () => clearTimeout(id);
-  }, [isSidebarOpen, drawerSide]);
   const [showChallengeDetail, setShowChallengeDetail] = useState(false);
   const [selectedChallengeId, setSelectedChallengeId] = useState(null);
   const [showProviderDirectory, setShowProviderDirectory] = useState(false);
@@ -1720,17 +1711,14 @@ function AppRoutes() {
     const credits = user ? normalizeCredits(user.aiCredits) : undefined;
     const meetOpen = currentView === 'mutual' || showWizard || showSendInvite || showProviderDirectory || showProviderProfileEditor;
     const toolsOpen = showReminders || showAlarmSettings || showExpenses || showJournal || showPublicGoals || showChallengeDetail || showHistoryModal;
-    // "me" opens the account drawer (also reachable from the header avatar);
-    // routines live under Tools.
-    const activeNav = isSidebarOpen ? 'me'
-      : navSheet || ((routinesView || toolsOpen) ? 'tools' : meetOpen ? 'meet' : 'home');
+    // The account drawer opens from the header avatar; routines live under Tools.
+    const activeNav = navSheet || ((routinesView || toolsOpen) ? 'tools' : meetOpen ? 'meet' : 'home');
     const tabs = [
       { id: 'home', label: nl.home, icon: Home, badge: schedule.Today?.length || 0 },
       { id: 'schedule', label: nl.schedule, icon: CalendarDays },
       { id: 'voice', label: nl.voice, icon: isListening ? MicOff : Mic, orb: true, live: isListening },
       { id: 'meet', label: nl.meet, icon: Users },
       { id: 'tools', label: nl.tools, icon: LayoutGrid },
-      { id: 'me', label: nl.me, icon: User, photo: user?.photo || null },
     ];
     // Moving to another tab leaves whatever screen is open, like switching tabs in WhatsApp.
     const closeOpenScreens = () => {
@@ -1756,8 +1744,6 @@ function AppRoutes() {
       if (currentView === 'mutual') setCurrentView('dashboard');
     };
     const selectTab = (id) => {
-      // Tapping "me" again closes the account drawer.
-      if (id === 'me' && activeNav === 'me') { setIsSidebarOpen(false); return; }
       if (id === activeNav && id !== 'home' && id !== 'voice' && id !== 'schedule') return;
       closeOpenScreens();
       const scrollToId = (elId) => setTimeout(() => {
@@ -1781,9 +1767,6 @@ function AppRoutes() {
         scrollToId('home-composer');
       } else if (id === 'routines') {
         setRoutinesView('today');
-      } else if (id === 'me') {
-        setDrawerTab(user ? 'account' : 'settings');
-        setIsSidebarOpen(true);
       } else {
         setNavSheet(id);
       }
@@ -2006,23 +1989,7 @@ function AppRoutes() {
             >
               <Search className="w-5 h-5" />
             </button>
-            {/* Menu — opens the drawer from this button's own side (left in Hebrew,
-                right in English). Adding an event stays on the home composer. */}
-            <button
-              onClick={() => {
-                setNavSheet(null);
-                setDrawerSide(lang === 'he' ? 'left' : 'right');
-                setDrawerTab('settings');
-                setIsSidebarOpen(true);
-              }}
-              aria-label={lang === 'he' ? 'תפריט' : 'Menu'}
-              title={lang === 'he' ? 'תפריט' : 'Menu'}
-              aria-expanded={isSidebarOpen}
-              className="flex items-center justify-center w-[42px] h-[42px] rounded-[14px] bg-white shadow-[0_4px_14px_-8px_rgba(40,30,120,0.3)] text-[#2A2D45] hover:bg-slate-50 transition"
-            >
-              <Menu className="w-5 h-5" />
-            </button>
-            {/* Auth — signed-in users log out from the "You" tab */}
+            {/* Auth — signed-in users log out from the avatar menu */}
             {!user && (
               <button onClick={() => handleLogin(lang)} className="flex items-center gap-1 h-[42px] text-xs font-bold px-3 rounded-[14px] bg-aurora text-white shadow-glow transition">
                 <LogIn className="w-3.5 h-3.5" />
@@ -2936,7 +2903,8 @@ function AppRoutes() {
       {/* Sidebar Drawer */}
       <SidebarDrawer
         isOpen={isSidebarOpen}
-        side={drawerSide}
+        // Slides in from the avatar's side: right in Hebrew, left in English.
+        side={lang === 'he' ? 'right' : 'left'}
         onClose={() => setIsSidebarOpen(false)}
         schedule={schedule}
         lang={lang}
