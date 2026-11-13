@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { User, Video, Clock } from 'lucide-react';
+import { User, Video, Clock, Menu } from 'lucide-react';
 import { formatTimeString } from '../utils/timeFormat';
 
 const DAY_KEYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -37,7 +37,7 @@ function greetingFor(hour, isHe) {
   return isHe ? 'לילה טוב' : 'Good night';
 }
 
-/** Avatar + "Good morning, Amos" + today's date. The avatar opens the account drawer. */
+/** Avatar + "Good morning, Amos" + today's date. The avatar (with its menu badge) is the one way into the drawer. */
 export function HomeGreeting({ user, lang, onOpenAccount, showDot }) {
   const now = useMinuteTick();
   const isHe = lang === 'he';
@@ -51,12 +51,18 @@ export function HomeGreeting({ user, lang, onOpenAccount, showDot }) {
     <div className="flex items-center gap-3 min-w-0">
       <button
         onClick={onOpenAccount}
-        aria-label={isHe ? 'החשבון שלי' : 'My account'}
+        aria-label={isHe ? 'תפריט וחשבון' : 'Menu and account'}
         className="relative w-11 h-11 rounded-full shrink-0 bg-gradient-to-br from-[#FFB86B] to-[#FF6FA8] text-white font-bold text-[17px] flex items-center justify-center shadow-[0_6px_14px_-8px_rgba(255,111,168,0.9)]"
       >
         {user?.photo
           ? <img src={user.photo} alt="" className="w-11 h-11 rounded-full object-cover" />
           : (initial || <User className="w-5 h-5" />)}
+        <span
+          aria-hidden="true"
+          className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-aurora text-white flex items-center justify-center ring-[2.5px] ring-[#F6F5FB]"
+        >
+          <Menu className="w-3 h-3" strokeWidth={3} />
+        </span>
         {showDot && <span className="absolute top-0 end-0 w-3 h-3 rounded-full bg-[#FF6B5B] ring-2 ring-[#F6F5FB]" />}
       </button>
       <div className="min-w-0">
