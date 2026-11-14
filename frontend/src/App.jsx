@@ -40,6 +40,7 @@ const ProviderProfileEditor = lazy(() => import("./components/ProviderProfileEdi
 const ExpectedExpenses = lazy(() => import("./components/ExpectedExpenses"));
 import PrivacyPolicyPage from "./pages/PrivacyPolicy";
 import DeleteAccountPage from "./pages/DeleteAccount";
+import AdminCostsPage from "./pages/AdminCosts";
 import TermsPage from "./pages/Terms";
 import translations from "./i18n";
 import safeStorage from "./utils/safeStorage";
@@ -1556,6 +1557,10 @@ function AppRoutes() {
 
   if (typeof window !== 'undefined' && window.location.pathname === '/delete-account') {
     return <DeleteAccountPage />;
+  }
+
+  if (typeof window !== 'undefined' && window.location.pathname === '/admin/costs') {
+    return <AdminCostsPage />;
   }
 
   if (typeof window !== 'undefined' && window.location.pathname === '/terms') {

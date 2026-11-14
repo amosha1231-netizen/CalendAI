@@ -613,7 +613,7 @@ app.set('DEFAULT_LOCATION_ID', DEFAULT_LOCATION_ID);
 
 // ── Token Usage Tracker (Pay-As-You-Go billing)
 const { calculateCost, formatCostBreakdown } = require('./services/tokenTracker');
-const { refillOwnerCredits } = require('./services/ownerCredits');
+const { refillOwnerCredits, isOwnerAccount } = require('./services/ownerCredits');
 const { isProActive, lemonEventEffect, applyEntitlement } = require('./services/subscriptions');
 
 // ──────────────────────────────────────────────
@@ -665,9 +665,12 @@ async function checkAICredits(userId) {
  * @param {Object} usage - The usage object from OpenRouter response ({ prompt_tokens, completion_tokens, total_tokens }).
  * @param {string} [modelName] - The model name (e.g., 'deepseek/deepseek-chat').
  * @param {string} [action] - The action that triggered the deduction (e.g., 'parse-schedule', 'quick-add', 'reschedule').
+ * @param {string} [requestText] - What the user asked. Stored ONLY for owner accounts
+ *   (OWNER_EMAILS), so the owner can see what his own requests cost. Other users'
+ *   request text is never stored in the ledger.
  * @returns {Promise<{remainingCredits: number|null, costInfo: Object|null}>}
  */
-async function deductAICredit(userId, usage = null, modelName = 'deepseek/deepseek-chat', action = 'ai-call') {
+async function deductAICredit(userId, usage = null, modelName = 'deepseek/deepseek-chat', action = 'ai-call', requestText = null) {
   if (!mongoose.Types.ObjectId.isValid(userId)) {
     return { remainingCredits: null, costInfo: null };
   }
@@ -690,6 +693,18 @@ async function deductAICredit(userId, usage = null, modelName = 'deepseek/deepse
   console.log(`[PAYG] User ${userId} | Action: ${action}`);
   console.log(formatCostBreakdown(costInfo));
 
+  // Owner-only extras: the request text and OpenRouter's real cost for that call.
+  let ownerExtras = {};
+  if (typeof requestText === 'string' && requestText.trim()) {
+    try {
+      const owner = await User.findById(userId).select('email googleId').lean();
+      if (isOwnerAccount(owner)) ownerExtras.requestText = requestText.trim().slice(0, 1000);
+    } catch (err) {
+      console.warn('[PAYG] Owner check failed:', err.message);
+    }
+  }
+  if (Number.isFinite(usage.cost)) ownerExtras.providerCostUSD = usage.cost;
+
   try {
     const updated = await User.findOneAndUpdate(
       { _id: userId, aiCredits: { $gte: costInfo.costCredits } },
@@ -707,7 +722,8 @@ async function deductAICredit(userId, usage = null, modelName = 'deepseek/deepse
               rawCostUSD: costInfo.rawCostUSD,
               costUSD: costInfo.costUSD,
               modelName: costInfo.modelName,
-              markupMultiplier: costInfo.markupMultiplier
+              markupMultiplier: costInfo.markupMultiplier,
+              ...ownerExtras
             }],
             $position: 0 // newest first
           }
@@ -2416,7 +2432,7 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
 
     // Charge for the AI call before anything is saved, so a refused charge
     // never leaves half-saved reminders or events behind.
-    const { remainingCredits } = await deductAICredit(userId, parsedResult.usage, parsedResult.modelName || 'deepseek/deepseek-chat', 'parse-schedule');
+    const { remainingCredits } = await deductAICredit(userId, parsedResult.usage, parsedResult.modelName || 'deepseek/deepseek-chat', 'parse-schedule', text);
 
     // ── PREVIEW: return what the AI understood without saving anything. The
     // client shows it for confirmation and saves it via /api/parse-schedule/confirm.
@@ -2551,7 +2567,7 @@ app.post('/api/parse-image', aiLimiter, upload.single('image'), async (req, res)
       });
     }
 
-    const { remainingCredits } = await deductAICredit(userId, parsedResult.usage, parsedResult.modelName || 'google/gemini-2.0-flash-exp', 'parse-image');
+    const { remainingCredits } = await deductAICredit(userId, parsedResult.usage, parsedResult.modelName || 'google/gemini-2.0-flash-exp', 'parse-image', '📷 (תמונה)');
     syncTodayWithCurrentDay(schedule);
     // Save to MongoDB for logged-in users
     if (mongoose.Types.ObjectId.isValid(userId)) {
@@ -2714,7 +2730,7 @@ async function runQuickAdd(userId, userData, text, source = 'quick-add') {
     });
   }
 
-  const { remainingCredits } = await deductAICredit(userId, parsedResult.usage, parsedResult.modelName || 'deepseek/deepseek-chat', source);
+  const { remainingCredits } = await deductAICredit(userId, parsedResult.usage, parsedResult.modelName || 'deepseek/deepseek-chat', source, text);
   syncTodayWithCurrentDay(schedule);
   // Save to MongoDB for logged-in users
   if (userId && mongoose.Types.ObjectId.isValid(userId)) {
@@ -3268,7 +3284,7 @@ app.post('/api/reschedule', aiLimiter, async (req, res) => {
     const currentSchedule = getUserSchedule(userId);
     const result = await rescheduleWithGemini(currentSchedule, effectiveReason);
 
-    const { remainingCredits } = await deductAICredit(userId, result.usage, result.modelName || 'deepseek/deepseek-chat', 'reschedule');
+    const { remainingCredits } = await deductAICredit(userId, result.usage, result.modelName || 'deepseek/deepseek-chat', 'reschedule', effectiveReason);
     // Save to MongoDB for logged-in users
     if (mongoose.Types.ObjectId.isValid(userId)) {
       await saveScheduleToMongo(userId, result.newSchedule);
@@ -4529,6 +4545,10 @@ app.use('/api/expenses', expenseRoutes);
 // Delete account from inside the app (App Store 5.1.1(v), Google Play account deletion policy)
 const accountRoutes = require('./routes/accountRoutes');
 app.use('/api/account', accountRoutes);
+
+// Owner-only cost view of the owner's own AI requests (OWNER_EMAILS)
+const adminRoutes = require('./routes/adminRoutes');
+app.use('/api/admin', adminRoutes);
 
 // In-app purchases (Apple / Google via RevenueCat) -> AI credits
 const revenuecatRoutes = require('./routes/revenuecatRoutes');
