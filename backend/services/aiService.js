@@ -18,6 +18,10 @@ function initModel() {
     openaiClient = new OpenAI({
       baseURL: 'https://openrouter.ai/api/v1',
       apiKey: apiKey,
+      // DeepSeek on OpenRouter is sometimes rate-limited upstream (429
+      // "engine_overloaded"). Retry a few more times with the SDK's backoff
+      // before the request is given up.
+      maxRetries: 4,
       defaultHeaders: {
         'HTTP-Referer': process.env.BASE_URL || 'https://calendai.org',
         'X-Title': 'CalendAI',
@@ -153,6 +157,24 @@ const RECURRING_REMINDER_RULES = `
 `;
 
 /**
+ * Token usage of an OpenRouter completion, plus the real cost OpenRouter charged
+ * (usage.cost, in USD credits) when it reports one. Billing uses tokens only;
+ * the cost is recorded for the owner's cost view.
+ */
+function extractUsage(completion) {
+  const u = completion && completion.usage;
+  if (!u) return null;
+  const usage = {
+    prompt_tokens: u.prompt_tokens || 0,
+    completion_tokens: u.completion_tokens || 0,
+    total_tokens: u.total_tokens || 0
+  };
+  const cost = u.cost == null ? NaN : Number(u.cost);
+  if (Number.isFinite(cost) && cost >= 0) usage.cost = cost;
+  return usage;
+}
+
+/**
  * Parse a free-text Hebrew (or English) scheduling request into structured events.
  * Now accepts existing schedule data for conflict-aware scheduling.
  * @param {string} text - The user's natural language request.
@@ -163,6 +185,7 @@ const RECURRING_REMINDER_RULES = `
  * @param {Object} [options.schedule] - The user's full schedule object
  * @returns {Promise<Object>} Parsed result with events, replyMessage, etc.
  */
+
 async function parseWithGemini(text, options = {}) {
   initModel();
   if (!openaiClient) {
@@ -877,12 +900,13 @@ ${RECURRING_REMINDER_RULES}
       ],
       temperature: 0.3,
       response_format: { type: 'json_object' },
+      usage: { include: true }, // OpenRouter returns the real charged cost in usage.cost
     });
 
     const raw = completion.choices?.[0]?.message?.content || '{}';
     const parsed = JSON.parse(raw);
     // ── Extract token usage from OpenRouter response ──
-    const usage = completion.usage ? { prompt_tokens: completion.usage.prompt_tokens || 0, completion_tokens: completion.usage.completion_tokens || 0, total_tokens: completion.usage.total_tokens || 0 } : null;
+    const usage = extractUsage(completion);
     if (usage) {
       console.log(`[Token Usage] parseWithGemini — Prompt: ${usage.prompt_tokens}, Completion: ${usage.completion_tokens}, Total: ${usage.total_tokens}`);
     }
@@ -1095,16 +1119,13 @@ Current date context: ${todayString}, day: ${todayEnglish}`;
       ],
       temperature:0.2,
       response_format: { type: 'json_object' },
+      usage: { include: true }, // OpenRouter returns the real charged cost in usage.cost
       max_tokens: 4096
     });
 
     const raw = completion.choices?.[0]?.message?.content || '{}';
     const parsed = JSON.parse(raw);
-    const usage = completion.usage ? {
-      prompt_tokens: completion.usage.prompt_tokens || 0,
-      completion_tokens: completion.usage.completion_tokens || 0,
-      total_tokens: completion.usage.total_tokens || 0
-    } : null;
+    const usage = extractUsage(completion);
 
     // Handle error response
     if (parsed.error) {
@@ -1607,13 +1628,14 @@ ${RECURRING_REMINDER_RULES}
       ],
       temperature: 0.3,
       response_format: { type: 'json_object' },
+      usage: { include: true }, // OpenRouter returns the real charged cost in usage.cost
     });
 
     const raw = completion.choices?.[0]?.message?.content || '{}';
     const parsed = JSON.parse(raw);
 
     // ── Extract token usage from OpenRouter response ──
-    const usage = completion.usage ? { prompt_tokens: completion.usage.prompt_tokens || 0, completion_tokens: completion.usage.completion_tokens || 0, total_tokens: completion.usage.total_tokens || 0 } : null;
+    const usage = extractUsage(completion);
     if (usage) {
       console.log(`[Token Usage] parseWithGeminiSmart — Prompt: ${usage.prompt_tokens}, Completion: ${usage.completion_tokens}, Total: ${usage.total_tokens}`);
     }
@@ -1801,13 +1823,14 @@ async function rescheduleWithGemini(currentSchedule, reason) {
       ],
       temperature: 0.3,
       response_format: { type: 'json_object' },
+      usage: { include: true }, // OpenRouter returns the real charged cost in usage.cost
     });
 
     const raw = completion.choices?.[0]?.message?.content || '{}';
     const parsed = JSON.parse(raw);
 
     // ── Extract token usage from OpenRouter response ──
-    const usage = completion.usage || null;
+    const usage = extractUsage(completion);
     if (usage) {
       console.log(`[Token Usage] rescheduleWithGemini — Prompt: ${usage.prompt_tokens}, Completion: ${usage.completion_tokens}, Total: ${usage.total_tokens}`);
     }

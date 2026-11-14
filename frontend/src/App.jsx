@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, Suspense, lazy } from 
 import { motion } from "framer-motion";
 import { BrowserRouter } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
-import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff, Home, Plus, Zap, ChevronDown, ChevronUp, FileText, Layout, Trophy, Image, Upload, Search, CalendarPlus, BookOpen, Users, ListChecks, LayoutGrid, Link2, Briefcase, Settings, AlarmClock, Wallet, BarChart3 } from "lucide-react";
+import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff, Home, Zap, ChevronDown, ChevronUp, FileText, Layout, Trophy, Image, Upload, Search, CalendarPlus, BookOpen, Users, ListChecks, LayoutGrid, Link2, Briefcase, Settings, AlarmClock, Wallet, BarChart3 } from "lucide-react";
 import { staggerContainerVariants, staggerItemVariants } from "./hooks/useStaggeredAnimation";
 import GlobalSearch from "./components/GlobalSearch";
 import MonthlyCalendar from "./components/MonthlyCalendar";
@@ -13,6 +13,7 @@ import LocationSelector from "./components/LocationSelector";
 import Privacy from "./components/Privacy";
 import ErrorBoundary from "./components/ErrorBoundary";
 import SidebarDrawer from "./components/SidebarDrawer";
+import { installOverlayScrollLock } from "./utils/overlayScrollLock";
 import BottomNav, { NavSheet, getNavLabels } from "./components/BottomNav";
 import MeetingWizard from "./components/MeetingWizard";
 import LuxuryLoader from "./components/LuxuryLoader";
@@ -39,10 +40,13 @@ const ProviderProfileEditor = lazy(() => import("./components/ProviderProfileEdi
 const ExpectedExpenses = lazy(() => import("./components/ExpectedExpenses"));
 import PrivacyPolicyPage from "./pages/PrivacyPolicy";
 import DeleteAccountPage from "./pages/DeleteAccount";
+import AdminCostsPage from "./pages/AdminCosts";
 import TermsPage from "./pages/Terms";
 import translations from "./i18n";
 import safeStorage from "./utils/safeStorage";
 import { isNativeApp, startOAuth } from './utils/nativeApp';
+import { isIapAvailable } from './utils/inAppPurchase';
+import InAppCreditsSheet from './components/InAppCreditsSheet';
 import { openCheckout, readCheckoutResponse, consumePaymentSuccessParam, CREDITS_PURCHASED_EVENT, notifyCreditsPurchased } from './utils/lemonCheckout';
 import { isIosWhatsApp, isIosSafari, isIosNonSafari, isStandalone } from "./utils/browserDetection";
 import { normalizeCredits, normalizeUserCredits, formatCredits } from "./utils/credits";
@@ -70,6 +74,16 @@ function isJwtExpired(token) {
 
 // ── Module-level declarations (using var/function to avoid TDZ) ──
 var API_BASE = import.meta.env.VITE_API_URL || "";
+var INPUT_DRAFT_KEY = 'calendai-input-draft';
+
+function hasValidJwt() {
+  try {
+    const token = safeStorage.getItem('token') || safeStorage.getItem('calendai-jwt');
+    return !!token && !isJwtExpired(token);
+  } catch (e) {
+    return false;
+  }
+}
 
 // JWT auth header for raw fetch() calls below — withCredentials cookies alone
 // aren't reliable (e.g. iOS Safari drops third-party session cookies), and the
@@ -178,6 +192,15 @@ function AppRoutes() {
   // Language state - load from localStorage or default to 'he'
   const [lang, setLang] = useState(() => {
     try {
+      // ?lang=en / ?lang=he (used by the English search result and hreflang links)
+      // wins over the saved choice, so a shared English link opens in English.
+      const fromUrl = typeof window !== 'undefined'
+        ? new URLSearchParams(window.location.search).get('lang')
+        : null;
+      if (fromUrl && LANGUAGE_CYCLE.includes(fromUrl)) {
+        try { safeStorage.setItem('calendai-lang', fromUrl); } catch { /* storage unavailable */ }
+        return fromUrl;
+      }
       const saved = safeStorage.getItem('calendai-lang');
       if (saved && LANGUAGE_CYCLE.includes(saved)) return saved;
       return 'he';
@@ -189,7 +212,16 @@ function AppRoutes() {
   const [selectedTimezone, setSelectedTimezone] = useState(() => getUserTimeZone());
 
   const [showPrivacy, setShowPrivacy] = useState(false);
-  const [inputText, setInputText] = useState("");
+  // The home request box keeps an unsent request in storage, so it survives a
+  // failed request, a login redirect (Google sign-in reloads the page) or the
+  // app being closed. It is cleared only once the request is actually saved.
+  const [inputText, setInputText] = useState(() => {
+    try { return safeStorage.getItem(INPUT_DRAFT_KEY) || ""; } catch (e) { return ""; }
+  });
+  // Text sent to the AI and not yet saved (the box is emptied while it runs).
+  const pendingInputRef = useRef("");
+  // True when the last request failed for a reason a retry can fix.
+  const [parseRetryable, setParseRetryable] = useState(false);
   // recurrence and eventType are now determined by the AI from natural language text
   // Manual dropdowns have been removed — the AI parses schedules and frequencies intelligently.
   const DEFAULT_RECURRENCE = 'weekly';
@@ -277,6 +309,24 @@ function AppRoutes() {
     return null;
   });
 
+  // While a drawer, sheet or modal is open, only it scrolls, never the page behind it.
+  useEffect(() => {
+    try { return installOverlayScrollLock(); } catch (e) { return undefined; }
+  }, []);
+
+  // ?mutual=1 comes from a tapped "a friend wants to find a time" notification.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('mutual') !== '1') return;
+      params.delete('mutual');
+      const rest = params.toString();
+      window.history.replaceState({}, document.title, window.location.pathname + (rest ? `?${rest}` : ''));
+      setCurrentView('mutual');
+    } catch (e) {}
+  }, [isAuthenticated]);
+
   useEffect(() => {
     // Leave the landing page once signed in, but keep a booking link (?book=true) open.
     if (isAuthenticated) {
@@ -350,6 +400,8 @@ function AppRoutes() {
   });
   const [showGuestLimitModal, setShowGuestLimitModal] = useState(false);
   const [showCreditsModal, setShowCreditsModal] = useState(false);
+  // Store apps: Apple / Google in-app purchase sheet. null | 'menu' | 'out'
+  const [iapSheet, setIapSheet] = useState(null);
   const [creditsError, setCreditsError] = useState("");
   const [checkoutLoading, setCheckoutLoading] = useState(false);
 
@@ -361,9 +413,14 @@ function AppRoutes() {
   const [drawerTab, setDrawerTab] = useState('settings');
 
   const handleBuyCredits = useCallback(async () => {
-    // App Store rules: digital purchases inside the iOS app must use Apple's
-    // in-app purchase, so the native app does not open the web checkout.
-    if (isNativeApp()) return;
+    // App Store / Play rules: digital purchases inside the store apps must use
+    // Apple / Google billing, so the apps never open the web checkout.
+    if (isNativeApp()) {
+      if (!isIapAvailable()) return;
+      if (!user) { setShowLoginPrompt(true); return; }
+      setIapSheet('menu');
+      return;
+    }
     if (!user) {
       setShowLoginPrompt(true);
       return;
@@ -378,7 +435,7 @@ function AppRoutes() {
           "Content-Type": "application/json",
           ...(token ? { 'Authorization': `Bearer ${token}` } : {})
         },
-        body: JSON.stringify({ lang }),
+        body: JSON.stringify({ lang, product: 'credits' }),
         credentials: "include"
       });
       const data = await readCheckoutResponse(res, lang);
@@ -398,11 +455,29 @@ function AppRoutes() {
     }
   }, [user, lang, setShowLoginPrompt, setError]);
 
+  // Out of AI credits. The store apps (iOS/Android) must not point to a purchase,
+  // so only the website mentions buying more.
+  const showOutOfCredits = useCallback(() => {
+    if (isIapAvailable() && user) {
+      setIapSheet('out');
+      return;
+    }
+    setCreditsError(isNativeApp()
+      ? (lang === 'he' ? 'נגמרו לך הקרדיטים לפעולות AI.' : 'You have used all your AI credits.')
+      : (lang === 'he' ? 'נגמרו לך הקרדיטים! אנא רכוש חבילת פעולות נוספת כדי להמשיך להשתמש ב-AI.' : 'You ran out of credits! Please purchase an additional action pack to continue using the AI.'));
+    setShowCreditsModal(true);
+  }, [lang, user]);
+
   const [showWizard, setShowWizard] = useState(false);
   const [showSendInvite, setShowSendInvite] = useState(false);
   const [showManualEvent, setShowManualEvent] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [showPublicGoals, setShowPublicGoals] = useState(false);
+  // "Create a challenge" from the search opens the challenges screen on its form.
+  const [publicGoalsCreate, setPublicGoalsCreate] = useState(null); // null | { title }
+  useEffect(() => {
+    if (!showPublicGoals) setPublicGoalsCreate(null);
+  }, [showPublicGoals]);
   const [showChallengeDetail, setShowChallengeDetail] = useState(false);
   const [selectedChallengeId, setSelectedChallengeId] = useState(null);
   const [showProviderDirectory, setShowProviderDirectory] = useState(false);
@@ -514,7 +589,7 @@ function AppRoutes() {
   }, []);
 
   const handleShareApp = useCallback(async () => {
-    const shareUrl = 'https://calendai.org/';
+    const shareUrl = 'https://www.calendai.org/';
     if (navigator.share) {
       try {
         await navigator.share({
@@ -572,7 +647,9 @@ function AppRoutes() {
   const handleParseOriginalRef = useRef(null);
 
   const handleLoginRequired = useCallback((action) => {
-    if (!user) {
+    // A valid saved login counts even while the user profile is still loading
+    // (e.g. right after opening the app); the server has the final say.
+    if (!user && !hasValidJwt()) {
       setPendingAction(action);
       setShowLoginPrompt(true);
       return true;
@@ -667,13 +744,14 @@ function AppRoutes() {
         if (data.user) {
           const normalizedUser = normalizeUserCredits(data.user);
           setUser(normalizedUser);
+          if (setIsPro) setIsPro(data.user?.isPro === true || data.user?.isPro === 'true');
           try { safeStorage.setItem('calendai-user', JSON.stringify(normalizedUser)); } catch (e) {}
         }
       }
     } catch (e) {
       console.warn("Failed to refresh user credits:", e);
     }
-  }, [user, setUser]);
+  }, [user, setUser, setIsPro]);
 
   // ── After a purchase (overlay success event or return from the checkout redirect),
   // refresh credits a few times: the Lemon Squeezy webhook can land a few seconds later.
@@ -1019,6 +1097,10 @@ function AppRoutes() {
         credentials: "include"
       });
       const data = await res.json();
+      if (res.status === 402) {
+        showOutOfCredits();
+        return;
+      }
       if (!res.ok) {
         if (data.error) throw new Error(data.error);
         else throw new Error(t.failedRequest + " " + res.status);
@@ -1067,6 +1149,24 @@ function AppRoutes() {
     setSuccess(data.replyMessage || `${t.successAdded} ${data.events?.length || 0} ${t.successEvents}`);
   };
 
+  // Keep the unsent request in storage (see INPUT_DRAFT_KEY).
+  useEffect(() => {
+    try {
+      const draft = inputText || pendingInputRef.current;
+      if (draft) safeStorage.setItem(INPUT_DRAFT_KEY, draft);
+      else safeStorage.removeItem(INPUT_DRAFT_KEY);
+    } catch (e) {}
+  }, [inputText, loading, parsePreview]);
+
+  useEffect(() => {
+    if (!error) setParseRetryable(false);
+  }, [error]);
+
+  const clearInputDraft = () => {
+    pendingInputRef.current = "";
+    try { safeStorage.removeItem(INPUT_DRAFT_KEY); } catch (e) {}
+  };
+
   const handleParse = async () => {
     if (!inputText.trim()) return;
     if (showShabbatOverlay) {
@@ -1078,9 +1178,15 @@ function AppRoutes() {
     // Clear input immediately and reset button state for responsive UX.
     // Keep the submitted text so a failed request can put it back.
     const submittedText = inputText;
-    const restoreInput = () => setInputText(prev => prev || submittedText);
+    const restoreInput = () => {
+      pendingInputRef.current = "";
+      setInputText(prev => prev || submittedText);
+    };
+    pendingInputRef.current = submittedText;
+    try { safeStorage.setItem(INPUT_DRAFT_KEY, submittedText); } catch (e) {}
     setInputText("");
     setLoading(true);
+    setParseRetryable(false);
     setError("");
     setSuccess("");
     setParsePreview(null);
@@ -1108,18 +1214,25 @@ function AppRoutes() {
           return;
         }
         if (res.status === 402) {
-          setCreditsError(isNativeApp()
-            ? (lang === 'he' ? 'נגמרו לך הקרדיטים לפעולות AI.' : 'You have used all your AI credits.')
-            : (errorData.error || 'נגמרו לך הקרדיטים! אנא רכוש חבילת פעולות נוספת כדי להמשיך להשתמש ב-AI.'));
-          setShowCreditsModal(true);
+          showOutOfCredits();
           return;
         }
-        throw new Error(t.failedRequest + " " + res.status);
+        // Busy AI, server waking up or a gateway error: the text is back in
+        // the box and the same request can simply be sent again.
+        if (errorData.retryable === true || res.status === 429 || res.status >= 500) {
+          setParseRetryable(true);
+          setError(errorData.retryable === true && errorData.error
+            ? errorData.error
+            : (t.requestFailedRetry || `${t.failedRequest} ${res.status}`));
+          return;
+        }
+        throw new Error(errorData.error || `${t.failedRequest} ${res.status}`);
       }
       const data = await res.json();
       applyCreditsFromResponse(data);
       if (!data.preview) {
         // Server without preview support saved directly.
+        clearInputDraft();
         saveScheduleState();
         await applySavedParseResult(data);
         return;
@@ -1134,7 +1247,13 @@ function AppRoutes() {
       setParsePreview({ items, text: submittedText, replyMessage: data.replyMessage, edited: false });
     } catch (err) {
       restoreInput();
-      setError(err.message);
+      if (err instanceof TypeError) {
+        // fetch() itself failed: no connection, or the server is unreachable.
+        setParseRetryable(true);
+        setError(t.requestFailedRetry || err.message);
+      } else {
+        setError(err.message);
+      }
     } finally {
       setLoading(false);
     }
@@ -1161,6 +1280,7 @@ function AppRoutes() {
         throw new Error(errorData.error || `${t.failedRequest} ${res.status}`);
       }
       const data = await res.json();
+      clearInputDraft();
       saveScheduleState();
       setParsePreview(null);
       await applySavedParseResult(data);
@@ -1174,6 +1294,7 @@ function AppRoutes() {
   const handleCancelPreview = () => {
     if (previewSaving) return;
     const text = parsePreview?.text || "";
+    pendingInputRef.current = "";
     setParsePreview(null);
     setInputText(prev => prev || text);
   };
@@ -1265,6 +1386,7 @@ function AppRoutes() {
         method: "POST", headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ reason }), credentials: "include"
       });
+      if (res.status === 402) { setIsRescheduleOpen(false); showOutOfCredits(); return; }
       if (!res.ok) { const e = await res.json(); throw new Error(e.error || "AI failed"); }
       const data = await res.json();
       setReschedulePreview(data);
@@ -1437,6 +1559,10 @@ function AppRoutes() {
     return <DeleteAccountPage />;
   }
 
+  if (typeof window !== 'undefined' && window.location.pathname === '/admin/costs') {
+    return <AdminCostsPage />;
+  }
+
   if (typeof window !== 'undefined' && window.location.pathname === '/terms') {
     return <TermsPage />;
   }
@@ -1450,7 +1576,7 @@ function AppRoutes() {
   // This prevents the landing page from flashing while the OAuth callback
   // token is being saved to storage by AuthContext.
   if (authLoading && !user && !safeStorage.getItem('token') && !safeStorage.getItem('calendai-jwt')) {
-    return <LuxuryLoader statusText={t.parsing || 'AUTHENTICATING...'} />;
+    return <LuxuryLoader />;
   }
 
   if (guestBookingId) {
@@ -1590,10 +1716,8 @@ function AppRoutes() {
     const credits = user ? normalizeCredits(user.aiCredits) : undefined;
     const meetOpen = currentView === 'mutual' || showWizard || showSendInvite || showProviderDirectory || showProviderProfileEditor;
     const toolsOpen = showReminders || showAlarmSettings || showExpenses || showJournal || showPublicGoals || showChallengeDetail || showHistoryModal;
-    // "me" (the account drawer) opens from the avatar in the header, so it has no tab;
-    // routines live under Tools.
-    const activeNav = isSidebarOpen ? 'me'
-      : navSheet || ((routinesView || toolsOpen) ? 'tools' : meetOpen ? 'meet' : 'home');
+    // The account drawer opens from the header avatar; routines live under Tools.
+    const activeNav = navSheet || ((routinesView || toolsOpen) ? 'tools' : meetOpen ? 'meet' : 'home');
     const tabs = [
       { id: 'home', label: nl.home, icon: Home, badge: schedule.Today?.length || 0 },
       { id: 'schedule', label: nl.schedule, icon: CalendarDays },
@@ -1648,9 +1772,6 @@ function AppRoutes() {
         scrollToId('home-composer');
       } else if (id === 'routines') {
         setRoutinesView('today');
-      } else if (id === 'me') {
-        setDrawerTab('settings');
-        setIsSidebarOpen(true);
       } else {
         setNavSheet(id);
       }
@@ -1705,8 +1826,8 @@ function AppRoutes() {
           lang={lang}
           t={t}
           locationId={selectedLocation}
+          schedule={schedule}
           onClose={() => setCurrentView('dashboard')}
-          onFallbackToShareLink={() => setCurrentView('booking')}
           onMeetingConfirmed={fetchSchedule}
         />
         {renderBottomNav()}
@@ -1821,7 +1942,7 @@ function AppRoutes() {
               user={user}
               lang={lang}
               showDot={user ? normalizeCredits(user.aiCredits) === 0 : false}
-              onOpenAccount={() => { setNavSheet(null); setDrawerTab('settings'); setIsSidebarOpen(true); }}
+              onOpenAccount={() => { setNavSheet(null); setDrawerTab(user ? 'account' : 'settings'); setIsSidebarOpen(true); }}
             />
           </div>
 
@@ -1838,6 +1959,7 @@ function AppRoutes() {
                 setShowPublicGoals(true);
               }}
               onOpenPublicGoals={() => setShowPublicGoals(true)}
+              onCreateChallenge={(title) => { setPublicGoalsCreate({ title }); setShowPublicGoals(true); }}
             />
           </div>
 
@@ -1850,7 +1972,7 @@ function AppRoutes() {
               return (
                 <button
                   onClick={handleBuyCredits}
-                  disabled={checkoutLoading || isNativeApp()}
+                  disabled={checkoutLoading || (isNativeApp() && !isIapAvailable())}
                   title={lang === 'he' ? 'קרדיטים ל-AI' : 'AI credits'}
                   className={`hidden xs:flex items-center gap-1 h-[42px] px-3 rounded-[14px] text-xs font-bold transition ${
                     credits > 0
@@ -1872,17 +1994,7 @@ function AppRoutes() {
             >
               <Search className="w-5 h-5" />
             </button>
-            {/* Auth */}
-            {/* Add event — top-corner "+" like WhatsApp's new-chat button */}
-            <button
-              onClick={() => setShowManualEvent(true)}
-              aria-label={getNavLabels(lang).add}
-              title={getNavLabels(lang).add}
-              className="flex items-center justify-center w-[42px] h-[42px] rounded-[14px] bg-[#0E1020] text-white shadow-[0_8px_18px_-10px_rgba(14,16,32,0.7)] hover:bg-[#2A2D45] transition"
-            >
-              <Plus className="w-5 h-5" />
-            </button>
-            {/* Auth — signed-in users log out from the "You" tab */}
+            {/* Auth — signed-in users log out from the avatar menu */}
             {!user && (
               <button onClick={() => handleLogin(lang)} className="flex items-center gap-1 h-[42px] text-xs font-bold px-3 rounded-[14px] bg-aurora text-white shadow-glow transition">
                 <LogIn className="w-3.5 h-3.5" />
@@ -1906,6 +2018,11 @@ function AppRoutes() {
               }}
               onViewProfile={(profileUser) => setShowPublicGoals(true)}
               onOpenPublicGoals={() => {
+                setShowPublicGoals(true);
+                setShowMobileSearch(false);
+              }}
+              onCreateChallenge={(title) => {
+                setPublicGoalsCreate({ title });
                 setShowPublicGoals(true);
                 setShowMobileSearch(false);
               }}
@@ -2069,7 +2186,22 @@ function AppRoutes() {
             {/* ── Advanced Options have been removed ── */}
             {/* AI now parses recurrence and event type from natural language text intelligently */}
 
-            {error && <div className="flex items-center gap-2 text-red-600 text-sm mt-3 bg-red-50 p-3 rounded-lg border border-red-200"><AlertCircle className="w-4 h-4 shrink-0" /><span>{error}</span></div>}
+            {error && (
+              <div className="flex items-center gap-2 text-red-600 text-sm mt-3 bg-red-50 p-3 rounded-lg border border-red-200">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span className="flex-1">{error}</span>
+                {parseRetryable && inputText.trim() && !loading && (
+                  <button
+                    type="button"
+                    onClick={handleParse}
+                    className="shrink-0 inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white border border-red-200 text-red-700 font-medium hover:bg-red-100 transition"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    {t.retryRequest || 'Retry'}
+                  </button>
+                )}
+              </div>
+            )}
             {success && <div className="flex items-center gap-2 text-green-700 text-sm mt-3 bg-green-50 p-3 rounded-lg border border-green-200"><Sparkles className="w-4 h-4 text-green-600 shrink-0" /><span>{success}</span></div>}
 
             {parsePreview && (
@@ -2170,6 +2302,7 @@ function AppRoutes() {
                   return remindersOnDate(reminderList, d);
                 })()}
                 onOpenReminders={() => setShowReminders(true)}
+                user={user}
               />
             )}
 
@@ -2674,6 +2807,16 @@ function AppRoutes() {
         </div>
       )}
 
+      <InAppCreditsSheet
+        open={!!iapSheet}
+        outOfCredits={iapSheet === 'out'}
+        onClose={() => setIapSheet(null)}
+        lang={lang}
+        user={user}
+        credits={user ? normalizeCredits(user.aiCredits) : undefined}
+        onPurchased={notifyCreditsPurchased}
+      />
+
       {/* AI Credits Exhausted Modal */}
       {showCreditsModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-[9999]" onClick={() => setShowCreditsModal(false)}>
@@ -2683,7 +2826,17 @@ function AppRoutes() {
             </div>
             <h3 className="text-lg font-bold text-slate-800 mb-2">{lang === 'he' ? 'נגמרו לך הקרדיטים!' : 'You are out of credits!'}</h3>
             <p className="text-sm text-slate-500 mb-6">{creditsError || (lang === 'he' ? 'נגמרו לך הקרדיטים! אנא רכוש חבילת פעולות נוספת כדי להמשיך להשתמש ב-AI.' : 'You ran out of credits! Please purchase an additional action pack to continue using the AI.')}</p>
-            <button onClick={() => setShowCreditsModal(false)} className="w-full px-4 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition shadow-lg">{lang === 'he' ? 'הבנתי' : 'Got it'}</button>
+            {!isNativeApp() ? (
+              <button
+                onClick={() => { setShowCreditsModal(false); handleBuyCredits(); }}
+                disabled={checkoutLoading}
+                className="w-full px-4 py-3 bg-gradient-to-r from-amber-400 to-orange-500 text-white rounded-xl font-bold transition shadow-lg flex items-center justify-center gap-2 disabled:opacity-60"
+              >
+                <Zap className="w-4 h-4" /> {lang === 'he' ? 'לרכישת קרדיטים' : 'Get more credits'}
+              </button>
+            ) : (
+              <button onClick={() => setShowCreditsModal(false)} className="w-full px-4 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition shadow-lg">{lang === 'he' ? 'הבנתי' : 'Got it'}</button>
+            )}
             <button onClick={() => setShowCreditsModal(false)} className="w-full mt-3 text-sm text-slate-400 hover:text-slate-600 py-2 transition">{t.cancel}</button>
           </div>
         </div>
@@ -2755,6 +2908,8 @@ function AppRoutes() {
       {/* Sidebar Drawer */}
       <SidebarDrawer
         isOpen={isSidebarOpen}
+        // Slides in from the avatar's side: right in Hebrew, left in English.
+        side={lang === 'he' ? 'right' : 'left'}
         onClose={() => setIsSidebarOpen(false)}
         schedule={schedule}
         lang={lang}
@@ -2765,6 +2920,7 @@ function AppRoutes() {
         t={t}
         user={user}
         isPro={isPro}
+        onOpenNativePaywall={() => setIapSheet('menu')}
         onLogout={handleLogout}
         initialTab={drawerTab}
         title={drawerTab === 'analytics' ? getNavLabels(lang).analytics : getNavLabels(lang).me}
@@ -2794,7 +2950,9 @@ function AppRoutes() {
         <PublicGoals
           lang={lang}
           user={user}
-          onClose={() => setShowPublicGoals(false)}
+          onClose={() => { setShowPublicGoals(false); setPublicGoalsCreate(null); }}
+          startCreating={!!publicGoalsCreate}
+          initialTitle={publicGoalsCreate?.title || ''}
           onJoinChallenge={(goal) => {
             fetchSchedule();
             setSuccess(lang === "he" ? "🎯 הצטרפת לאתגר! האירוע נוסף ליומן." : "🎯 Joined the challenge! Event added to your schedule.");

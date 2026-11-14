@@ -20,6 +20,14 @@ services:
         sync: false
       - key: LEMON_SQUEEZY_VARIANT_ID  # optional, defaults to the credits pack variant
         sync: false
+      - key: LEMON_SQUEEZY_PRO_VARIANT_ID  # monthly Pro subscription variant (see docs/payments.md)
+        sync: false
+      - key: PRO_MONTHLY_CREDITS  # optional, AI credits per Pro month, default 1000
+        sync: false
+      - key: REVENUECAT_WEBHOOK_AUTH  # Authorization header value set on the RevenueCat webhook
+        sync: false
+      - key: REVENUECAT_SECRET_KEY  # RevenueCat secret API key (v1), used by /api/payments/revenuecat-sync
+        sync: false
       - key: SESSION_SECRET
         generateValue: true  # יווצר אוטומטית
       - key: JWT_SECRET

@@ -21,6 +21,7 @@
     "@capacitor/core": "^8.5.3",
     "@capacitor/ios": "^8.5.3",
     "@hebcal/core": "^6.9.2",
+    "@revenuecat/purchases-capacitor": "^14.1.0",
     "axios": "^1.19.0",
     "framer-motion": "^11.0.0",
     "lucide-react": "^0.436.0",

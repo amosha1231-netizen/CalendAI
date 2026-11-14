@@ -25,7 +25,11 @@ const userSchema = new mongoose.Schema({
   googleRefreshToken: { type: String },
   microsoftAccessToken: { type: String },
   microsoftRefreshToken: { type: String },
-  isPro: { type: Boolean, default: false },
+  isPro: { type: Boolean, default: false }, // mirror of proExpiresAt > now; read through isProActive()
+  proExpiresAt: { type: Date }, // Pro is active until this time (see services/subscriptions.js)
+  proSource: { type: String }, // 'lemonsqueezy' | 'app_store' | 'play_store'
+  lemonSubscriptionId: { type: String, index: true, sparse: true },
+  lemonCustomerPortalUrl: { type: String },
   stripeCustomerId: { type: String },
   aiCredits: { type: Number, default: 100 }, // Freemium: 100 free AI credits for new users (token-based PAYG)
   aiCreditsLedger: { type: Array, default: [] }, // Array of { timestamp, action, promptTokens, completionTokens, totalTokens, costCredits, rawCostUSD, costUSD, modelName }
