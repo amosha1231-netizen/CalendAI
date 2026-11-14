@@ -994,18 +994,28 @@ function AppRoutes() {
       recognitionRef.current = recognition;
       recognition.lang = lang === 'he' ? 'he-IL' : 'en-US';
       recognition.continuous = false;
-      recognition.interimResults = false;
+      // Interim results let the user see their words appear while they speak.
+      recognition.interimResults = true;
       recognition.maxAlternatives = 1;
-      recognition.onstart = () => { setIsListening(true); };
+      const baseText = inputTextRef.current ? `${inputTextRef.current.trim()} ` : '';
+      recognition.onstart = () => { setIsListening(true); setError(''); };
       recognition.onresult = (event) => {
-        const transcript = event.results[0][0].transcript;
-        const currentText = inputTextRef.current;
-        const newText = currentText ? `${currentText} ${transcript}` : transcript;
-        setInputText(newText);
+        let transcript = '';
+        for (let i = 0; i < event.results.length; i++) {
+          transcript += event.results[i][0].transcript;
+        }
+        setInputText(`${baseText}${transcript}`.trimStart());
       };
       recognition.onerror = (event) => {
         console.warn('Speech recognition error:', event.error);
         setIsListening(false);
+        if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+          setError(lang === 'he'
+            ? 'אין גישה למיקרופון. אפשרו גישה למיקרופון בהגדרות הדפדפן ונסו שוב.'
+            : 'Microphone access is blocked. Allow microphone access in your browser settings and try again.');
+        } else if (event.error === 'no-speech') {
+          setError(lang === 'he' ? 'לא שמענו כלום. נסו שוב ודברו קרוב למיקרופון.' : "We didn't hear anything. Try again and speak close to the mic.");
+        }
       };
       recognition.onend = () => { setIsListening(false); };
       recognition.start();

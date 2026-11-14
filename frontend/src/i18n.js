@@ -899,6 +899,9 @@ const translations = {
     viewMonthly: 'Monthly',
     viewYearly: 'Yearly',
     view100Year: '100 Year',
+    slotClickPrefix: 'on',
+    slotClickFrom: 'from ',
+    slotClickUntil: 'until',
     viewToday: 'Today',
 
     // Hebrew Date
