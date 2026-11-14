@@ -6,6 +6,8 @@ import {
 } from 'lucide-react';
 import { getTodayHebrewInfo } from '../utils/hebrewCalendar';
 import { ReminderChip } from './Reminders';
+import TaskStatusCircle, { TaskProgressSummary } from './TaskStatusCircle';
+import { toDateKey, addDaysKey, taskKey, fetchTaskStatuses, saveTaskStatus, summarizeStatuses } from '../utils/taskStatus';
 
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
 
@@ -13,7 +15,7 @@ export default function DayView({
   date, schedule, dayKey, lang, t, 
   onEditEvent, onRemoveEvent, onSlotClick, 
   locationFilter, LOCATION_LABELS,
-  reminders = [], onOpenReminders
+  reminders = [], onOpenReminders, user
 }) {
   const [hebrewInfo, setHebrewInfo] = useState({ hebDate: '', holidays: [], holidayName: null });
   const isRTL = lang === 'he';
@@ -27,19 +29,51 @@ export default function DayView({
     getTodayHebrewInfo().then(setHebrewInfo).catch(() => {});
   }, []);
 
-  const getEventsForDay = useCallback(() => {
-    const allEvents = [];
-    const todayEvents = schedule['Today'] || [];
-    for (const ev of todayEvents) {
-      if (!ev._dayKey) ev._dayKey = 'Today';
-      allEvents.push(ev);
+  // Task marks (done / postponed / not done) for this day and the 6 days before it.
+  const dateKey = toDateKey(date || new Date());
+  const weekFrom = addDaysKey(dateKey, -6);
+  const isSignedIn = Boolean(user);
+  const [statusItems, setStatusItems] = useState([]);
+  const [statusError, setStatusError] = useState('');
+  useEffect(() => {
+    let cancelled = false;
+    fetchTaskStatuses(isSignedIn ? user : null, weekFrom, dateKey)
+      .then(items => { if (!cancelled) setStatusItems(items); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dateKey, isSignedIn]);
+
+  const statusFor = (event) => {
+    const key = taskKey(event);
+    return statusItems.find(i => i.date === dateKey && i.key === key)?.status || null;
+  };
+
+  const handleStatusChange = async (event, status) => {
+    const key = taskKey(event);
+    if (!key) return;
+    const previous = statusItems;
+    const rest = statusItems.filter(i => !(i.date === dateKey && i.key === key));
+    setStatusItems(status ? [...rest, { date: dateKey, key, title: event.title, startTime: event.startTime, status }] : rest);
+    setStatusError('');
+    try {
+      await saveTaskStatus(isSignedIn ? user : null, { date: dateKey, key, title: event.title, startTime: event.startTime, status });
+    } catch (e) {
+      setStatusItems(previous);
+      setStatusError(t.taskStatusSaveFailed);
     }
-    if (dayKey && dayKey !== 'Today') {
-      const dayEvents = schedule[dayKey] || [];
-      for (const ev of dayEvents) {
-        if (!ev._dayKey) ev._dayKey = dayKey;
-        allEvents.push(ev);
-      }
+  };
+
+  const getEventsForDay = useCallback(() => {
+    // schedule['Today'] is a copy of today's weekday list (the server rebuilds
+    // it from schedule[<weekday>] on every save and load), so show one list
+    // or the other, never both: adding both put every event of today on the
+    // screen twice, and put today's events on every other day too.
+    const sourceKey = dayKey || 'Today';
+    const allEvents = [];
+    for (const ev of schedule[sourceKey] || []) {
+      if (!ev._dayKey) ev._dayKey = sourceKey;
+      allEvents.push(ev);
     }
     // Filter by location
     if (locationFilter && locationFilter !== 'all') {
@@ -83,6 +117,9 @@ export default function DayView({
 
   const events = getEventsForDay();
   const sortedEvents = [...events].sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
+  const dayKeys = new Set(sortedEvents.map(taskKey));
+  const dayStatusItems = statusItems.filter(i => i.date === dateKey && dayKeys.has(i.key));
+  const weekSummary = summarizeStatuses(statusItems);
 
   const formatHour = (hour) => formatClock(hour, 0, lang);
 
@@ -143,6 +180,13 @@ export default function DayView({
         </div>
       )}
 
+      {sortedEvents.length > 0 && (
+        <TaskProgressSummary dayItems={dayStatusItems} dayTotal={sortedEvents.length} weekSummary={weekSummary} t={t} />
+      )}
+      {statusError && (
+        <div className="mb-3 text-xs text-rose-600 bg-rose-50 border border-rose-100 rounded-xl px-3 py-2">{statusError}</div>
+      )}
+
       {/* Hourly Timeline */}
       <div className="space-y-1">
         {HOURS.map(hour => {
@@ -183,9 +227,10 @@ export default function DayView({
                             <Trash2 className="w-3 h-3" />
                           </button>
                           <div className="font-semibold text-sm text-slate-800 flex items-center gap-1.5">
+                            <TaskStatusCircle status={statusFor(event)} onChange={s => handleStatusChange(event, s)} t={t} />
                             {event.isSleep && <Moon className="w-3.5 h-3.5 text-indigo-500 shrink-0" />}
                             {event.reminderMinutesBefore > 0 && <Bell className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
-                            <span className="truncate">{event.title}</span>
+                            <span className={`truncate ${statusFor(event) === 'done' ? 'line-through text-slate-400' : ''}`}>{event.title}</span>
                             <Edit3 className="w-3 h-3 text-slate-300 md:opacity-0 md:group-hover:opacity-100 transition-opacity ms-auto shrink-0" />
                           </div>
                           <div className="flex items-center gap-1 text-xs text-slate-500">

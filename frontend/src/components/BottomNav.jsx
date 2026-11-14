@@ -4,7 +4,7 @@ import { X, ChevronLeft, ChevronRight } from 'lucide-react';
 // Labels for the bottom bar and its category sheets.
 const NAV_LABELS = {
   he: {
-    home: 'בית', routines: 'רוטינות', meet: 'תיאום', tools: 'כלים', me: 'אני', add: 'הוספת אירוע', close: 'סגור',
+    home: 'בית', schedule: 'לו״ז', voice: 'דברו עם ה-AI', routinesSub: 'הרגלים יומיים ורצפים', account: 'החשבון שלי', routines: 'רוטינות', meet: 'תיאום', tools: 'כלים', me: 'אני', add: 'הוספת אירוע', close: 'סגור',
     meetTitle: 'תיאום פגישות', toolsTitle: 'כלים',
     mutual: 'תיאום פגישה הדדי', mutualSub: 'בוחרים זמנים, הצד השני בוחר מה מתאים לו',
     invite: 'שליחת הזמנה ליומן', inviteSub: 'הזמנת Google עם Meet לכמה משתתפים',
@@ -20,7 +20,7 @@ const NAV_LABELS = {
     analytics: 'סטטיסטיקה', analyticsSub: 'לאן הולך הזמן שלך',
   },
   en: {
-    home: 'Home', routines: 'Routines', meet: 'Meet', tools: 'Tools', me: 'You', add: 'Add event', close: 'Close',
+    home: 'Home', schedule: 'Schedule', voice: 'Talk to the AI', routinesSub: 'Daily habits and streaks', account: 'My account', routines: 'Routines', meet: 'Meet', tools: 'Tools', me: 'You', add: 'Add event', close: 'Close',
     meetTitle: 'Scheduling', toolsTitle: 'Tools',
     mutual: 'Mutual scheduling', mutualSub: 'Pick times, the other side picks what works',
     invite: 'Send a calendar invite', inviteSub: 'Google invite with Meet, for several guests',
@@ -120,6 +120,7 @@ export default function BottomNav({ tabs, activeId, onSelect, isRTL, screenOpen 
 
   const tabAt = (clientX) => {
     for (const tab of tabs) {
+      if (tab.orb) continue; // sliding across the bar never fires the voice button
       const el = tabRefs.current[tab.id];
       if (!el) continue;
       const r = el.getBoundingClientRect();
@@ -172,19 +173,38 @@ export default function BottomNav({ tabs, activeId, onSelect, isRTL, screenOpen 
         onPointerMove={onPointerMove}
         onPointerUp={e => endDrag(e, true)}
         onPointerCancel={e => endDrag(e, false)}
-        className="relative flex items-stretch justify-between gap-1 p-1.5 rounded-[2rem] bg-white/90 backdrop-blur-xl border border-slate-200/70 shadow-[0_8px_30px_rgba(15,23,42,0.12)] select-none"
+        className="relative flex items-stretch justify-between gap-1 p-1.5 rounded-[1.6rem] bg-white/90 backdrop-blur-xl border border-[#0E1020]/[0.04] shadow-[0_10px_30px_-10px_rgba(40,30,120,0.28)] select-none"
         style={{ touchAction: 'pan-y' }}
       >
         {pill && (
           <span
             aria-hidden="true"
-            className={`absolute top-1.5 bottom-1.5 rounded-[1.6rem] transition-all duration-300 ease-out ${dragId ? 'bg-slate-200/80 scale-105' : 'bg-slate-100'}`}
+            className={`absolute top-1.5 bottom-1.5 rounded-[1.2rem] transition-all duration-300 ease-out ${dragId ? 'bg-[#EEEBFF] scale-105' : 'bg-[#EEEBFF]/70'}`}
             style={{ left: pill.left, width: pill.width }}
           />
         )}
         {tabs.map(tab => {
           const Icon = tab.icon;
           const active = tab.id === highlightId;
+          if (tab.orb) {
+            // Center action: the AI voice button, raised above the bar.
+            return (
+              <div key={tab.id} className="relative flex-1 min-w-0 flex justify-center">
+                <button
+                  ref={el => { tabRefs.current[tab.id] = el; }}
+                  onClick={() => {
+                    if (suppressClick.current) { suppressClick.current = false; return; }
+                    onSelect(tab.id);
+                  }}
+                  aria-label={tab.label}
+                  title={tab.label}
+                  className={`absolute -top-7 w-[60px] h-[60px] rounded-[22px] bg-aurora text-white flex items-center justify-center shadow-[0_14px_26px_-10px_rgba(91,75,255,0.85)] ring-[6px] ring-[#F6F5FB] active:scale-95 transition ${tab.live ? 'animate-pulse' : ''}`}
+                >
+                  <Icon className="w-[26px] h-[26px]" strokeWidth={2.1} />
+                </button>
+              </div>
+            );
+          }
           return (
             <button
               key={tab.id}
@@ -195,12 +215,12 @@ export default function BottomNav({ tabs, activeId, onSelect, isRTL, screenOpen 
               }}
               aria-current={tab.id === activeId ? 'page' : undefined}
               className={`relative flex-1 min-w-0 flex flex-col items-center justify-center gap-1 py-2 min-h-[56px] rounded-[1.6rem] transition-colors ${
-                active ? 'text-slate-900' : 'text-slate-500 hover:text-slate-800'
+                active ? 'text-brand' : 'text-[#A3A6BB] hover:text-[#2A2D45]'
               }`}
             >
               <span className="relative">
                 {tab.photo ? (
-                  <img src={tab.photo} alt="" draggable="false" className={`w-6 h-6 rounded-full object-cover ${active ? 'ring-2 ring-slate-900' : ''}`} />
+                  <img src={tab.photo} alt="" draggable="false" className={`w-6 h-6 rounded-full object-cover ${active ? 'ring-2 ring-brand' : ''}`} />
                 ) : (
                   <Icon className="w-6 h-6" strokeWidth={active ? 2.3 : 1.8} />
                 )}
@@ -234,7 +254,7 @@ export function NavSheet({ title, items, onClose, isRTL, closeLabel }) {
       >
         <div className="flex justify-center pt-2.5 sm:hidden"><span className="w-10 h-1.5 rounded-full bg-slate-200" /></div>
         <div className="flex items-center justify-between px-5 pt-3 pb-2">
-          <h2 className="text-2xl font-bold text-slate-900">{title}</h2>
+          <h2 className="text-2xl font-extrabold tracking-tight text-[#0E1020]">{title}</h2>
           <button onClick={onClose} aria-label={closeLabel} className="w-10 h-10 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-600 transition">
             <X className="w-5 h-5" />
           </button>
@@ -246,9 +266,9 @@ export function NavSheet({ title, items, onClose, isRTL, closeLabel }) {
               <li key={item.id}>
                 <button
                   onClick={item.onClick}
-                  className="w-full flex items-center gap-3 px-2 py-3 rounded-2xl hover:bg-slate-50 active:bg-slate-100 transition text-start"
+                  className="w-full flex items-center gap-3 px-2 py-3 rounded-2xl hover:bg-[#F6F5FB] active:bg-[#EEEBFF]/60 transition text-start"
                 >
-                  <span className={`shrink-0 w-11 h-11 rounded-full flex items-center justify-center ${item.tone}`}>
+                  <span className={`shrink-0 w-11 h-11 rounded-2xl flex items-center justify-center ${item.tone}`}>
                     <Icon className="w-5 h-5" />
                   </span>
                   <span className="flex-1 min-w-0">

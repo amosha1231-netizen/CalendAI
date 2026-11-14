@@ -37,6 +37,8 @@ const crypto = require('crypto'); // For Lemon Squeezy webhook HMAC signature ve
 const multer = require('multer');
 const { getRequestLocation, getRequestTimeZone, isValidTimeZone } = require('./services/userLocation');
 const { getScheduleEventsForDate, isZeroDurationEvent } = require('./services/scheduleOccurrence');
+const { detectContact } = require('./services/contactDetect');
+const { notifyUser } = require('./services/userNotify');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }); // 10MB max
 
 dotenv.config({ path: path.join(__dirname, '.env') });
@@ -133,10 +135,11 @@ const PORT = process.env.PORT || 5000;
 // The native app opens sign-in in the system browser (Google blocks web views),
 // tagged with ?platform=native. The OAuth `state` carries that tag through the
 // provider, and the callback then returns to the app via its URL scheme.
-const NATIVE_OAUTH_STATE = 'native';
-const NATIVE_APP_AUTH_URL = 'com.amos.calendai://auth';
+// A web sign-in carries the page's own origin the same way (see services/oauthReturn.js).
+const { createOAuthReturn } = require('./services/oauthReturn');
+let oauthReturn = null; // built once the frontend URLs below are known
 function oauthReturnBase(req) {
-  return req.query.state === NATIVE_OAUTH_STATE ? NATIVE_APP_AUTH_URL : FRONTEND_URL;
+  return oauthReturn.baseFor(req.query.state);
 }
 
 async function createOAuthHandoff(userId) {
@@ -144,6 +147,20 @@ async function createOAuthHandoff(userId) {
   const codeHash = crypto.createHash('sha256').update(code).digest('hex');
   await OAuthHandoff.create({ codeHash, userId, expiresAt: new Date(Date.now() + 60_000) });
   return code;
+}
+
+// Leaves the login waiting for a home-screen web app that started this sign-in
+// (see services/oauthReturn.js). Best effort: the normal redirect still happens.
+async function createPwaPollHandoff(state, userId) {
+  const pollHash = oauthReturn.pollHashFor(state);
+  if (!pollHash) return;
+  try {
+    const codeHash = `poll:${pollHash}`;
+    await OAuthHandoff.deleteOne({ codeHash });
+    await OAuthHandoff.create({ codeHash, userId, expiresAt: new Date(Date.now() + 10 * 60_000) });
+  } catch (e) {
+    console.warn('Could not leave home-screen login handoff:', e.message);
+  }
 }
 
 // ──────────────────────────────────────────────
@@ -214,12 +231,21 @@ const corsOrigin = process.env.FRONTEND_URL?.trim() || process.env.CORS_ORIGIN?.
 // Origins of the Capacitor native apps (iOS: capacitor://localhost, Android: https://localhost).
 const NATIVE_APP_ORIGINS = ['capacitor://localhost', 'https://localhost'];
 // CRITICAL: CORS origin must be explicit URLs, NOT wildcard '*', when using credentials: true
+// Other web addresses that serve the same frontend. A home-screen icon added from
+// one of them keeps opening that address, so it must be able to call the API and
+// to finish Google sign-in there (not on www) or the login never sticks.
+const PRODUCTION_ALT_APP_ORIGINS = ['https://calendai.org', 'https://calendai-q59p.onrender.com'];
 const allowedOrigins = [
   ...(corsOrigin && corsOrigin !== '*'
     ? corsOrigin.split(',').map(origin => origin.trim().replace(/\/+$/, '')).filter(Boolean)
     : ['http://localhost:5173', PRODUCTION_APP_URL]),
+  ...(isProduction ? [PRODUCTION_APP_URL, ...PRODUCTION_ALT_APP_ORIGINS] : []),
   ...NATIVE_APP_ORIGINS
 ];
+oauthReturn = createOAuthReturn({
+  frontendUrl: FRONTEND_URL,
+  extraOrigins: allowedOrigins.filter(origin => !NATIVE_APP_ORIGINS.includes(origin))
+});
 // .env's FRONTEND_URL is a production value (e.g. https://calendai.onrender.com),
 // which — when set, even while developing locally — replaced the list above
 // entirely and silently dropped localhost:5173. That made every cross-origin
@@ -406,7 +432,9 @@ if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET &&
             email: dbUser.email,
             displayName: dbUser.displayName,
             photo: dbUser.photo,
-            isPro: dbUser.isPro,
+            isPro: isProActive(dbUser),
+            proSource: dbUser.proSource,
+            proExpiresAt: dbUser.proExpiresAt,
             stripeCustomerId: dbUser.stripeCustomerId,
             aiCredits: dbUser.aiCredits
           };
@@ -421,7 +449,9 @@ if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET &&
             email: dbUser.email,
             displayName: dbUser.displayName,
             photo: dbUser.photo,
-            isPro: dbUser.isPro,
+            isPro: isProActive(dbUser),
+            proSource: dbUser.proSource,
+            proExpiresAt: dbUser.proExpiresAt,
             stripeCustomerId: dbUser.stripeCustomerId,
             aiCredits: dbUser.aiCredits
           };
@@ -583,7 +613,8 @@ app.set('DEFAULT_LOCATION_ID', DEFAULT_LOCATION_ID);
 
 // ── Token Usage Tracker (Pay-As-You-Go billing)
 const { calculateCost, formatCostBreakdown } = require('./services/tokenTracker');
-const { refillOwnerCredits } = require('./services/ownerCredits');
+const { refillOwnerCredits, isOwnerAccount } = require('./services/ownerCredits');
+const { isProActive, lemonEventEffect, applyEntitlement } = require('./services/subscriptions');
 
 // ──────────────────────────────────────────────
 // AI Credit System (Pay As You Go / PAYG)
@@ -616,7 +647,8 @@ async function checkAICredits(userId) {
       allowed: false,
       status: 402,
       credits: 0,
-      error: 'נגמרו לך הקרדיטים! אנא רכוש חבילת פעולות נוספת כדי להמשיך להשתמש ב-AI.'
+      // Neutral on purpose: the iOS/Android apps show this text and must not point to a purchase.
+      error: 'נגמרו לך הקרדיטים לפעולות AI.'
     };
   } catch (err) {
     console.error('Failed to check AI credits:', err.message);
@@ -633,16 +665,24 @@ async function checkAICredits(userId) {
  * @param {Object} usage - The usage object from OpenRouter response ({ prompt_tokens, completion_tokens, total_tokens }).
  * @param {string} [modelName] - The model name (e.g., 'deepseek/deepseek-chat').
  * @param {string} [action] - The action that triggered the deduction (e.g., 'parse-schedule', 'quick-add', 'reschedule').
+ * @param {string} [requestText] - What the user asked. Stored ONLY for owner accounts
+ *   (OWNER_EMAILS), so the owner can see what his own requests cost. Other users'
+ *   request text is never stored in the ledger.
  * @returns {Promise<{remainingCredits: number|null, costInfo: Object|null}>}
  */
-async function deductAICredit(userId, usage = null, modelName = 'deepseek/deepseek-chat', action = 'ai-call') {
+async function deductAICredit(userId, usage = null, modelName = 'deepseek/deepseek-chat', action = 'ai-call', requestText = null) {
   if (!mongoose.Types.ObjectId.isValid(userId)) {
     return { remainingCredits: null, costInfo: null };
   }
 
   if (!usage || typeof usage !== 'object') {
-    const error = new Error('AI usage data is unavailable; refusing to complete an unbilled request.');
-    error.status = 502;
+    // No usage means the AI call itself failed (e.g. OpenRouter/DeepSeek overloaded
+    // with 429) and a local fallback answered. We never complete an unbilled
+    // request, so tell the client the AI is busy and the request can be retried.
+    console.warn(`[PAYG] No AI usage for ${action}: AI unavailable, refusing unbilled request.`);
+    const error = new Error('ה-AI עמוס כרגע. הטקסט שלך נשמר, נסה שוב בעוד כמה שניות.');
+    error.status = 503;
+    error.retryable = true;
     throw error;
   }
 
@@ -652,6 +692,18 @@ async function deductAICredit(userId, usage = null, modelName = 'deepseek/deepse
   // Log the token usage and cost
   console.log(`[PAYG] User ${userId} | Action: ${action}`);
   console.log(formatCostBreakdown(costInfo));
+
+  // Owner-only extras: the request text and OpenRouter's real cost for that call.
+  let ownerExtras = {};
+  if (typeof requestText === 'string' && requestText.trim()) {
+    try {
+      const owner = await User.findById(userId).select('email googleId').lean();
+      if (isOwnerAccount(owner)) ownerExtras.requestText = requestText.trim().slice(0, 1000);
+    } catch (err) {
+      console.warn('[PAYG] Owner check failed:', err.message);
+    }
+  }
+  if (Number.isFinite(usage.cost)) ownerExtras.providerCostUSD = usage.cost;
 
   try {
     const updated = await User.findOneAndUpdate(
@@ -670,7 +722,8 @@ async function deductAICredit(userId, usage = null, modelName = 'deepseek/deepse
               rawCostUSD: costInfo.rawCostUSD,
               costUSD: costInfo.costUSD,
               modelName: costInfo.modelName,
-              markupMultiplier: costInfo.markupMultiplier
+              markupMultiplier: costInfo.markupMultiplier,
+              ...ownerExtras
             }],
             $position: 0 // newest first
           }
@@ -1179,7 +1232,7 @@ app.get('/api/auth/google',
       scope: OAUTH_SCOPES,
       accessType: 'offline',
       prompt: 'consent',
-      ...(req.query.platform === 'native' ? { state: NATIVE_OAUTH_STATE } : {}),
+      ...(oauthReturn.stateFor(req.query, req.get('referer')) ? { state: oauthReturn.stateFor(req.query, req.get('referer')) } : {}),
       // @ts-ignore - Passport supports custom params via this property
       customParams: { hl }
     })(req, res, next);
@@ -1212,6 +1265,7 @@ app.get('/api/auth/google/callback',
 
       try {
         const code = await createOAuthHandoff(user._id || user.id);
+        await createPwaPollHandoff(req.query.state, user._id || user.id);
         res.redirect(`${rawUrl}/?oauth_code=${encodeURIComponent(code)}&login=success`);
       } catch (jwtErr) {
         console.error('=== GOOGLE CALLBACK: JWT CREATION FAILED ===');
@@ -1261,7 +1315,7 @@ app.get('/api/auth/microsoft', (req, res) => {
     `&redirect_uri=${encodeURIComponent(redirectUri)}` +
     `&scope=${encodeURIComponent(scopes)}` +
     `&response_mode=query` +
-    (req.query.platform === 'native' ? `&state=${NATIVE_OAUTH_STATE}` : '');
+    (oauthReturn.stateFor(req.query, req.get('referer')) ? `&state=${encodeURIComponent(oauthReturn.stateFor(req.query, req.get('referer')))}` : '');
 
   res.redirect(authorizeUrl);
 });
@@ -1354,10 +1408,28 @@ app.get('/api/auth/microsoft/callback', async (req, res) => {
     await user.save();
 
     const codeValue = await createOAuthHandoff(user._id || user.id);
+    await createPwaPollHandoff(req.query.state, user._id || user.id);
     res.redirect(`${returnBase}/?oauth_code=${encodeURIComponent(codeValue)}&login=success`);
   } catch (err) {
     console.error('Microsoft OAuth callback error:', err);
     res.redirect(`${returnBase}/?error=microsoft_auth_failed`);
+  }
+});
+
+// The home-screen web app collects a login that finished in iOS's in-app browser.
+// 204 = not there (yet); the app keeps asking for a few minutes.
+app.post('/api/auth/oauth-poll', async (req, res) => {
+  const secret = String(req.body?.secret || '');
+  try {
+    if (!/^[a-f0-9]{64}$/.test(secret)) return res.status(400).json({ error: 'Invalid secret.' });
+    const pollHash = crypto.createHash('sha256').update(secret).digest('hex');
+    const handoff = await OAuthHandoff.findOneAndDelete({ codeHash: `poll:${pollHash}`, expiresAt: { $gt: new Date() } });
+    if (!handoff) return res.status(204).end();
+    const token = jwt.sign({ id: handoff.userId.toString() }, JWT_SECRET, { expiresIn: '30d' });
+    return res.json({ token });
+  } catch (error) {
+    console.error('Home-screen login pickup failed:', error.message);
+    return res.status(503).json({ error: 'Could not complete sign-in.' });
   }
 });
 
@@ -1436,7 +1508,10 @@ app.get('/api/auth/me', async (req, res) => {
         email: dbUser.email,
         displayName: dbUser.displayName,
         photo: dbUser.photo,
-        isPro: dbUser.isPro,
+        isPro: isProActive(dbUser),
+        proSource: dbUser.proSource,
+        proExpiresAt: dbUser.proExpiresAt,
+        lemonCustomerPortalUrl: dbUser.lemonCustomerPortalUrl,
         stripeCustomerId: dbUser.stripeCustomerId,
         aiCredits: dbUser.aiCredits
       };
@@ -2357,7 +2432,7 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
 
     // Charge for the AI call before anything is saved, so a refused charge
     // never leaves half-saved reminders or events behind.
-    const { remainingCredits } = await deductAICredit(userId, parsedResult.usage, parsedResult.modelName || 'deepseek/deepseek-chat', 'parse-schedule');
+    const { remainingCredits } = await deductAICredit(userId, parsedResult.usage, parsedResult.modelName || 'deepseek/deepseek-chat', 'parse-schedule', text);
 
     // ── PREVIEW: return what the AI understood without saving anything. The
     // client shows it for confirmation and saves it via /api/parse-schedule/confirm.
@@ -2375,7 +2450,10 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
     res.json({ ...result, aiCredits: remainingCredits });
   } catch (error) {
     console.error(error);
-    res.status(error.status || 500).json({ error: error.message || 'Failed to parse schedule.' });
+    res.status(error.status || 500).json({
+      error: error.message || 'Failed to parse schedule.',
+      ...(error.retryable === true && { retryable: true })
+    });
   }
 });
 
@@ -2489,7 +2567,7 @@ app.post('/api/parse-image', aiLimiter, upload.single('image'), async (req, res)
       });
     }
 
-    const { remainingCredits } = await deductAICredit(userId, parsedResult.usage, parsedResult.modelName || 'google/gemini-2.0-flash-exp', 'parse-image');
+    const { remainingCredits } = await deductAICredit(userId, parsedResult.usage, parsedResult.modelName || 'google/gemini-2.0-flash-exp', 'parse-image', '📷 (תמונה)');
     syncTodayWithCurrentDay(schedule);
     // Save to MongoDB for logged-in users
     if (mongoose.Types.ObjectId.isValid(userId)) {
@@ -2652,7 +2730,7 @@ async function runQuickAdd(userId, userData, text, source = 'quick-add') {
     });
   }
 
-  const { remainingCredits } = await deductAICredit(userId, parsedResult.usage, parsedResult.modelName || 'deepseek/deepseek-chat', source);
+  const { remainingCredits } = await deductAICredit(userId, parsedResult.usage, parsedResult.modelName || 'deepseek/deepseek-chat', source, text);
   syncTodayWithCurrentDay(schedule);
   // Save to MongoDB for logged-in users
   if (userId && mongoose.Types.ObjectId.isValid(userId)) {
@@ -2879,7 +2957,7 @@ app.post(SIRI_ENDPOINT_PATH, aiLimiter, async (req, res) => {
       return speak(false, body.blockedMessage, { isBlocked: true });
     }
     if (result.status === 402) {
-      return speak(false, 'נגמרו קרדיטי ה-AI בחשבון. אפשר לשדרג באפליקציה.');
+      return speak(false, 'נגמרו קרדיטי ה-AI בחשבון.');
     }
     if (result.status === 400) {
       return speak(false, 'לא הצלחתי להבין איזה אירוע לקבוע. נסו לומר למשל: פגישה עם דני מחר בשלוש.');
@@ -3206,7 +3284,7 @@ app.post('/api/reschedule', aiLimiter, async (req, res) => {
     const currentSchedule = getUserSchedule(userId);
     const result = await rescheduleWithGemini(currentSchedule, effectiveReason);
 
-    const { remainingCredits } = await deductAICredit(userId, result.usage, result.modelName || 'deepseek/deepseek-chat', 'reschedule');
+    const { remainingCredits } = await deductAICredit(userId, result.usage, result.modelName || 'deepseek/deepseek-chat', 'reschedule', effectiveReason);
     // Save to MongoDB for logged-in users
     if (mongoose.Types.ObjectId.isValid(userId)) {
       await saveScheduleToMongo(userId, result.newSchedule);
@@ -3721,7 +3799,8 @@ app.post('/api/booking/ai-find-slot', aiLimiter, async (req, res) => {
  */
 app.post('/api/booking/create-link', async (req, res) => {
   try {
-    const { subject, duration, slots, day, date, hostName, startTime, endTime, meetingType, guestTimezone, locationId } = req.body;
+    const { subject, duration, slots, day, hostName, startTime, endTime, meetingType, guestTimezone, locationId, inviteeContact } = req.body;
+    let { date } = req.body;
     
     // Determine if this is a locked (single exact time) or multi-slot booking
     const isLocked = !!(startTime && endTime);
@@ -3729,6 +3808,18 @@ app.post('/api/booking/create-link', async (req, res) => {
     if (!isLocked && (!slots || !Array.isArray(slots) || slots.length === 0)) {
       return res.status(400).json({ error: 'Either slots array or startTime/endTime are required.' });
     }
+    if (!isLocked && slots.length > 30) {
+      return res.status(400).json({ error: 'Offer at most 30 time slots.' });
+    }
+    // Slots may each carry their own date, so one link can offer times on
+    // several days. Every dated slot must be a real, non-Shabbat ISO date.
+    const isIsoDate = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
+    const slotDates = !isLocked ? slots.map(s => (s && s.date != null ? s.date : null)) : [];
+    if (slotDates.some(d => d !== null && (!isIsoDate(d) || new Date(`${d}T00:00:00Z`).getUTCDay() === 6))) {
+      return res.status(400).json({ error: 'Each slot date must be a valid non-Shabbat ISO date (YYYY-MM-DD).' });
+    }
+    if (!date && slotDates.some(Boolean)) date = slotDates.filter(Boolean).sort()[0];
+    const contact = detectContact(typeof inviteeContact === 'string' ? inviteeContact.slice(0, 200) : '');
     if (!Number.isInteger(Number(duration)) || Number(duration) < 1 || Number(duration) > 1440 || (!date && !day)) {
       return res.status(400).json({ error: 'duration and an ISO date are required.' });
     }
@@ -3771,7 +3862,9 @@ app.post('/api/booking/create-link', async (req, res) => {
       hostTimezone: getRequestTimeZone(req) || resolveLocation(locationId || DEFAULT_LOCATION_ID).timezone,
       slots: isLocked 
         ? [] 
-        : slots.map(s => ({ hour: s.hour, minute: s.minute, booked: false })),
+        : slots.map((s, i) => ({ hour: s.hour, minute: s.minute, ...(slotDates[i] ? { date: slotDates[i] } : {}), booked: false })),
+      inviteeContact: contact.type ? contact.value : null,
+      inviteeContactType: contact.type,
       status: 'active'
     };
     const booking = await Booking.create(bookingData);
@@ -3838,6 +3931,7 @@ app.get('/api/booking/:id', async (req, res) => {
  *   1. Locked time (isLocked=true): uses booking.startTime/endTime directly
  *   2. Multi-slot (isLocked=false): uses slotIndex to pick which slot
  */
+const DAY_NAMES_FOR_BOOKING = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 app.post('/api/booking/:id/confirm', async (req, res) => {
   let claimed = false;
   let persisted = false;
@@ -3850,10 +3944,17 @@ app.post('/api/booking/:id/confirm', async (req, res) => {
     if (typeof guestName !== 'string' || !guestName.trim() || guestName.length > 200) {
       return res.status(400).json({ error: 'guestName is required.' });
     }
-    // Required so Google Calendar can add the guest as an attendee and email
-    // both sides a confirmation — without it there is no way to notify the guest.
-    if (typeof guestEmail !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(guestEmail.trim())) {
-      return res.status(400).json({ error: 'A valid guestEmail is required to send the meeting confirmation.' });
+    // The guest leaves an email or a phone number (at least one). An email
+    // makes Google Calendar add them as an attendee and email both sides an
+    // invite; with only a phone, the confirmation screen gives them an
+    // add-to-calendar link and the host is pinged in the app.
+    const emailOk = typeof guestEmail === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(guestEmail.trim());
+    const phoneOk = typeof guestPhone === 'string' && detectContact(guestPhone).type === 'phone';
+    if (typeof guestEmail === 'string' && guestEmail.trim() && !emailOk) {
+      return res.status(400).json({ error: 'guestEmail is not a valid email address.' });
+    }
+    if (!emailOk && !phoneOk) {
+      return res.status(400).json({ error: 'An email or phone number is required to send the meeting confirmation.' });
     }
     const booking = await Booking.findOne({ bookingId: id }).lean();
     if (!booking) return res.status(404).json({ error: 'Booking not found.' });
@@ -3896,14 +3997,16 @@ app.post('/api/booking/:id/confirm', async (req, res) => {
 
     const host = await User.findById(hostId);
     if (!host) throw Object.assign(new Error('Host account not found.'), { status: 404 });
-    const dayName = bookingData.day;
+    // A slot with its own date (multi-day links) decides the day; older links use the booking's.
+    const chosenDate = (!bookingData.isLocked && bookingData.slots[Number(slotIndex)]?.date) || bookingData.date || null;
+    const dayName = chosenDate ? DAY_NAMES_FOR_BOOKING[new Date(`${chosenDate}T00:00:00Z`).getUTCDay()] : bookingData.day;
     const startMinValue = timeToMinutes(startTimeStr);
     const endMinValue = timeToMinutes(endTimeStr);
     if (startMinValue === null || endMinValue === null || endMinValue <= startMinValue) throw Object.assign(new Error('Invalid booking time.'), { status: 400 });
     const schedule = host.schedule && typeof host.schedule === 'object' ? host.schedule : getDefaultSchedule();
     const observedRevision = Number(host.scheduleRevision || 0);
     const conflicts = (schedule[dayName] || []).filter(event => {
-      if (bookingData.date && event.targetDate && String(event.targetDate).slice(0, 10) !== bookingData.date) return false;
+      if (chosenDate && event.targetDate && String(event.targetDate).slice(0, 10) !== chosenDate) return false;
       const existingStart = timeToMinutes(event.startTime);
       const existingEnd = timeToMinutes(event.endTime);
       return existingStart !== null && existingEnd !== null && startMinValue < existingEnd && endMinValue > existingStart;
@@ -3918,12 +4021,12 @@ app.post('/api/booking/:id/confirm', async (req, res) => {
       recurrence: 'once',
       location: bookingData.locationId || DEFAULT_LOCATION_ID,
       guestName: guestName.trim(),
-      guestEmail: guestEmail || '',
-      guestPhone: guestPhone || '',
-      guestNotes: guestNotes || '',
+      guestEmail: emailOk ? guestEmail.trim() : '',
+      guestPhone: typeof guestPhone === 'string' ? guestPhone.trim().slice(0, 40) : '',
+      guestNotes: typeof guestNotes === 'string' ? guestNotes.slice(0, 1000) : '',
       meetingType: bookingData.meetingType || null,
       bookingId: id,
-      ...(bookingData.date ? { targetDate: bookingData.date } : {})
+      ...(chosenDate ? { targetDate: chosenDate } : {})
     };
     let googleCalendar = { success: false, reason: 'Host has no connected Google Calendar' };
     if (host.googleAccessToken) {
@@ -3957,6 +4060,14 @@ app.post('/api/booking/:id/confirm', async (req, res) => {
     if (dayName === getTodayDayName()) cachedSchedule.Today = [...(cachedSchedule.Today || []), eventToPersist];
     userSchedules.set(hostId, cachedSchedule);
     saveSchedulesNow();
+
+    // Tell the host right away (best-effort; the event is already on their calendar).
+    notifyUser(hostId, {
+      title: `📅 ${guestName.trim()} picked a time`,
+      body: `${bookingData.subject} · ${chosenDate || dayName} ${startTimeStr}–${endTimeStr}`,
+      url: '/',
+      tag: `booking-${id}`
+    });
 
     res.json({
       ok: true,
@@ -4162,7 +4273,10 @@ app.get('/api/locations/:id/slots', (req, res) => {
  * POST /api/payments/webhook
  * Receives payment webhook events from Lemon Squeezy.
  *
- * - Lemon Squeezy: On order_created → credits the user with 100 AI credits.
+ * - order_created (credit pack) → adds 100 AI credits.
+ * - subscription_* → keeps Pro on/off (proExpiresAt).
+ * - subscription_payment_success → tops credits up to the monthly Pro allowance.
+ * See services/subscriptions.js.
  *
  * This route is intentionally NOT protected by auth middleware — the requests
  * come from Lemon Squeezy's servers, not from the client.
@@ -4212,62 +4326,41 @@ app.post('/api/payments/webhook',
       // Signature is valid — parse the JSON payload
       const payload = JSON.parse(rawBody.toString('utf-8'));
 
-      // Only process successful order_created events
-      const eventName = payload?.meta?.event_name;
-      if (eventName !== 'order_created') {
+      const effect = lemonEventEffect(payload);
+      if (effect.kind === 'ignore') {
         return res.status(200).json({ received: true });
       }
 
-      const orderId = payload?.data?.id ? String(payload.data.id) : null;
-      if (!orderId) {
-        console.error('Lemon Squeezy webhook: Missing order ID.');
-        return res.status(400).json({ error: 'Missing order ID.' });
-      }
-      const eventKey = `${eventName}:${orderId}`;
+      // Checkout passes the CalendAI user id as custom data; renewals of an
+      // older subscription can fall back to the stored subscription id.
       const userId = payload?.meta?.custom_data?.user_id || payload?.meta?.custom_data?.userId;
-      if (!userId) {
-        console.warn('Lemon Squeezy webhook: No userId found in custom_data.');
-        return res.status(400).json({ error: 'Missing user ID.' });
-      }
-
-      // Find the user in MongoDB and credit them with 100 AI credits
       let user = null;
-      if (mongoose.Types.ObjectId.isValid(userId)) {
+      if (userId && mongoose.Types.ObjectId.isValid(userId)) {
         user = await User.findById(userId);
       }
-      if (!user) {
+      if (!user && userId) {
         user = await User.findOne({ googleId: userId });
       }
+      if (!user && effect.subscriptionId) {
+        user = await User.findOne({ lemonSubscriptionId: effect.subscriptionId });
+      }
 
       if (!user) {
-        console.warn(`Lemon Squeezy webhook: User ${userId} not found in MongoDB.`);
-        return res.status(404).json({ error: 'User not found.' });
+        console.warn(`Lemon Squeezy webhook: User ${userId || '(none)'} not found for ${payload?.meta?.event_name}.`);
+        return res.status(userId ? 404 : 400).json({ error: 'User not found.' });
       }
 
-      const dbSession = await mongoose.startSession();
-      try {
-        await ProcessedPaymentEvent.init();
-        await dbSession.withTransaction(async () => {
-          await ProcessedPaymentEvent.create([{
-            eventKey,
-            orderId,
-            userId: user._id,
-            credits: 100
-          }], { session: dbSession });
-          const updatedUser = await User.findByIdAndUpdate(
-            user._id,
-            { $inc: { aiCredits: 100 } },
-            { new: true, session: dbSession }
-          );
-          if (!updatedUser) throw new Error('Payment user disappeared during crediting.');
-        });
-      } catch (creditError) {
-        if (creditError?.code === 11000) return res.status(200).json({ received: true, duplicate: true });
-        throw creditError;
-      } finally {
-        await dbSession.endSession();
-      }
-      console.log(`✅ Lemon Squeezy: Credited user ${user._id} for order ${orderId}.`);
+      const result = await applyEntitlement({
+        User,
+        ProcessedPaymentEvent,
+        user,
+        effect,
+        source: effect.kind === 'credits' ? undefined : 'lemonsqueezy',
+        subscriptionId: effect.subscriptionId,
+        customerPortalUrl: effect.customerPortalUrl
+      });
+      if (result.duplicate) return res.status(200).json({ received: true, duplicate: true });
+      console.log(`✅ Lemon Squeezy: ${payload?.meta?.event_name} applied to user ${user._id}.`);
 
       return res.status(200).json({ received: true });
     } catch (err) {
@@ -4427,6 +4520,7 @@ app.use('/api/action-history', actionHistoryRoutes);
 app.use('/api/goals', goalRoutes);
 app.use('/api/routines', routineRoutes);
 app.use('/api/reminders', reminderRoutes);
+app.use('/api/task-status', require('./routes/taskStatusRoutes'));
 
 // ── Social Provider Bookings (public provider directory) ──
 const providerRoutes = require('./routes/providerRoutes');
@@ -4447,6 +4541,18 @@ app.use('/api/invites', inviteRoutes);
 // ── Expected Expenses Routes (personal expense tracking) ──
 const expenseRoutes = require('./routes/expenseRoutes');
 app.use('/api/expenses', expenseRoutes);
+
+// Delete account from inside the app (App Store 5.1.1(v), Google Play account deletion policy)
+const accountRoutes = require('./routes/accountRoutes');
+app.use('/api/account', accountRoutes);
+
+// Owner-only cost view of the owner's own AI requests (OWNER_EMAILS)
+const adminRoutes = require('./routes/adminRoutes');
+app.use('/api/admin', adminRoutes);
+
+// In-app purchases (Apple / Google via RevenueCat) -> AI credits
+const revenuecatRoutes = require('./routes/revenuecatRoutes');
+app.use('/api/payments/revenuecat-webhook', revenuecatRoutes);
 
 // ──────────────────────────────────────────────
 // User Search Endpoint — for GlobalSearch component
