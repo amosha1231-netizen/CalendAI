@@ -11,6 +11,8 @@ const { getRequestTimeZone, buildLocation, DEFAULT_TIMEZONE } = require('../serv
 const schedule = require('../services/reminderSchedule');
 const shabbatService = require('../services/shabbatService');
 const webPush = require('../services/webPush');
+const User = require('../models/User');
+const { nextDigestFire, DEFAULT_TIME: DIGEST_DEFAULT_TIME } = require('../services/eveningDigest');
 
 const JWT_SECRET = require('../config/jwtSecret');
 
@@ -133,6 +135,49 @@ router.get('/', async (req, res) => {
   } catch (err) {
     console.error('List reminders error:', err);
     res.status(500).json({ error: 'שגיאה בטעינת התזכורות.' });
+  }
+});
+
+// GET /api/reminders/evening-digest — the "tomorrow's schedule" evening push settings
+router.get('/evening-digest', async (req, res) => {
+  const userId = requireUser(req, res);
+  if (!userId) return;
+  try {
+    const user = await User.findById(userId, { eveningDigest: 1 }).lean();
+    const d = (user && user.eveningDigest) || {};
+    res.json({ digest: { enabled: d.enabled === true, time: d.time || DIGEST_DEFAULT_TIME, nextFireAt: d.enabled ? d.nextFireAt || null : null } });
+  } catch (err) {
+    console.error('Get evening digest error:', err);
+    res.status(500).json({ error: 'שגיאה בטעינת ההגדרות.' });
+  }
+});
+
+// PUT /api/reminders/evening-digest — { enabled, time: "HH:mm", lang }
+router.put('/evening-digest', async (req, res) => {
+  const userId = requireUser(req, res);
+  if (!userId) return;
+  try {
+    const body = req.body || {};
+    const time = schedule.normalizeTime(body.time || DIGEST_DEFAULT_TIME);
+    if (!time) return res.status(400).json({ error: INVALID_MESSAGES.time, field: 'time' });
+    const enabled = body.enabled === true;
+    const timezone = getRequestTimeZone(req) || DEFAULT_TIMEZONE;
+    const digest = { enabled, time, timezone, lang: body.lang === 'en' ? 'en' : 'he' };
+    digest.nextFireAt = enabled ? nextDigestFire(digest, new Date(), isShabbatAt) : null;
+    const user = await User.findByIdAndUpdate(userId, {
+      $set: {
+        'eveningDigest.enabled': digest.enabled,
+        'eveningDigest.time': digest.time,
+        'eveningDigest.timezone': digest.timezone,
+        'eveningDigest.lang': digest.lang,
+        'eveningDigest.nextFireAt': digest.nextFireAt
+      }
+    }, { new: true, projection: { _id: 1 } });
+    if (!user) return res.status(404).json({ error: 'משתמש לא נמצא.' });
+    res.json({ digest: { enabled, time, nextFireAt: digest.nextFireAt } });
+  } catch (err) {
+    console.error('Save evening digest error:', err);
+    res.status(500).json({ error: 'שגיאה בשמירת ההגדרות.' });
   }
 });
 
