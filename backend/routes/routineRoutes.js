@@ -82,7 +82,13 @@ function parseRoutineInput(body, existing) {
       return step;
     })
     .filter(s => s.title);
-  if (steps.length === 0) return { error: 'הוסף לפחות שלב אחד.' };
+  // Steps are optional: without any, the routine is a single task named after itself.
+  if (steps.length === 0) {
+    const fallback = { title, emoji: cleanText(body.emoji, 16) || '✨' };
+    const prev = existing && existing.steps.length === 1 ? existing.steps[0] : null;
+    if (prev && prev.title === title) fallback._id = prev._id;
+    steps.push(fallback);
+  }
 
   const days = Array.isArray(body.days)
     ? [...new Set(body.days.map(Number).filter(d => Number.isInteger(d) && d >= 0 && d <= 6))].sort()

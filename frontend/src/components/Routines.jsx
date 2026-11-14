@@ -10,7 +10,7 @@ const STRINGS = {
     title: 'רוטינות ואתגרים', tabToday: 'היום', tabProgress: 'איך אני עומד', tabDiscover: 'גלה',
     newRoutine: 'רוטינה חדשה', create: 'צור', save: 'שמור', cancel: 'ביטול', close: 'סגור',
     emptyTitle: 'עוד אין לך רוטינות', emptySub: 'בחר תבנית או בנה רוטינה משלך. כל יום תסמן ✓ על מה שעשית.',
-    startFrom: 'התחל מתבנית', notToday: 'לא מתוכנן להיום', doneToday: 'הושלם היום',
+    startFrom: 'התחל מתבנית', suggestFrom: 'הצעות (לא חובה)', stepsOptional: 'לא חובה. בלי שלבים, הרוטינה תסומן כמשימה אחת.', notToday: 'לא מתוכנן להיום', doneToday: 'הושלם היום',
     steps: 'שלבים', of: 'מתוך', streak: 'רצף', days: 'ימים', day: 'יום', bestStreak: 'שיא',
     allDone: 'כל הכבוד! סיימת את הרוטינה', keepGoing: 'ימים ברצף, תמשיך ככה',
     tapToCheck: 'הקש על עיגול כדי לסמן ✓',
@@ -40,7 +40,7 @@ const STRINGS = {
     title: 'Routines & Challenges', tabToday: 'Today', tabProgress: 'My progress', tabDiscover: 'Discover',
     newRoutine: 'New routine', create: 'Create', save: 'Save', cancel: 'Cancel', close: 'Close',
     emptyTitle: 'No routines yet', emptySub: 'Pick a template or build your own. Every day, tick ✓ what you did.',
-    startFrom: 'Start from a template', notToday: 'Not scheduled today', doneToday: 'Done today',
+    startFrom: 'Start from a template', suggestFrom: 'Suggestions (optional)', stepsOptional: 'Optional. With no steps, the routine is ticked as a single task.', notToday: 'Not scheduled today', doneToday: 'Done today',
     steps: 'steps', of: 'of', streak: 'Streak', days: 'days', day: 'day', bestStreak: 'Best',
     allDone: 'Well done! Routine complete', keepGoing: 'days in a row, keep it up',
     tapToCheck: 'Tap a circle to tick it ✓',
@@ -463,7 +463,7 @@ function RoutineEditor({ initial, s, isRtl, onClose, onSave, saving, error, lang
     const next = current.includes(day) ? current.filter(x => x !== day) : [...current, day].sort();
     return { ...d, days: next.length === 7 || next.length === 0 ? [] : next };
   });
-  const canSave = draft.title.trim() && draft.steps.some(st => st.title.trim());
+  const canSave = !!draft.title.trim();
   const templates = TEMPLATES[lang] || TEMPLATES.en;
 
   return (
@@ -474,7 +474,7 @@ function RoutineEditor({ initial, s, isRtl, onClose, onSave, saving, error, lang
       >
         {!isEdit && (
           <div>
-            <p className="text-sm font-semibold text-slate-600 mb-2">{s.startFrom}</p>
+            <p className="text-sm font-semibold text-slate-600 mb-2">{s.suggestFrom}</p>
             <div className="flex gap-2 overflow-x-auto pb-1 -mx-4 px-4">
               {templates.map(tpl => (
                 <button type="button" key={tpl.title} onClick={() => setDraft({ ...templateToDraft(tpl), isPublic: draft.isPublic })}
@@ -521,6 +521,7 @@ function RoutineEditor({ initial, s, isRtl, onClose, onSave, saving, error, lang
 
         <div>
           <span className="text-sm font-semibold text-slate-600">{s.steps}</span>
+          <p className="text-xs text-slate-500">{s.stepsOptional}</p>
           <div className="mt-1 space-y-2">
             {draft.steps.map((st, i) => (
               <div key={st._id || `new-${i}`} className="flex items-center gap-2">
@@ -1052,9 +1053,11 @@ export default function Routines({ lang = 'he', user, onClose, initialTab = 'tod
   const saveRoutine = async draft => {
     setSaving(true);
     setEditorError('');
+    const steps = draft.steps.filter(st => st.title.trim()).map(st => ({ _id: st._id, title: st.title.trim(), emoji: (st.emoji || '').trim() }));
+    // Steps are optional: a routine without steps is ticked as one task named after it.
     const body = {
       ...draft,
-      steps: draft.steps.filter(st => st.title.trim()).map(st => ({ _id: st._id, title: st.title.trim(), emoji: (st.emoji || '').trim() }))
+      steps: steps.length ? steps : [{ title: draft.title.trim(), emoji: (draft.emoji || '').trim() }]
     };
     try {
       if (draft._id) {

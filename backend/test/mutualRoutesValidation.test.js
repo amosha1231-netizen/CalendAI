@@ -273,7 +273,7 @@ test('POST /sessions/:id/confirm: a non-existent session is a 404', async (t) =>
 test('POST /sessions/:id/confirm: a user who is neither host nor invitee is refused with 403', async (t) => {
   const outsiderId = new mongoose.Types.ObjectId();
   const existing = {
-    sessionId: 'mut_x', duration: 30, locationId: 'jerusalem',
+    sessionId: 'mut_x', inviteeConsent: 'granted', duration: 30, locationId: 'jerusalem',
     hostId: new mongoose.Types.ObjectId(), inviteeId: new mongoose.Types.ObjectId()
   };
   t.mock.method(MutualBooking, 'findOne', async () => existing);
@@ -295,7 +295,7 @@ test('POST /sessions/:id/confirm: a user who is neither host nor invitee is refu
 test('POST /sessions/:id/confirm: a window whose length does not match the session duration is rejected', async (t) => {
   const hostId = new mongoose.Types.ObjectId();
   const existing = {
-    sessionId: 'mut_x', duration: 30, locationId: 'jerusalem',
+    sessionId: 'mut_x', inviteeConsent: 'granted', duration: 30, locationId: 'jerusalem',
     hostId, inviteeId: new mongoose.Types.ObjectId()
   };
   t.mock.method(MutualBooking, 'findOne', async () => existing);
@@ -318,7 +318,7 @@ test('POST /sessions/:id/confirm: a window whose length does not match the sessi
 test('POST /sessions/:id/confirm: already-claimed (active -> processing lost the race) surfaces as 409, not a 500', async (t) => {
   const hostId = new mongoose.Types.ObjectId();
   const existing = {
-    sessionId: 'mut_x', duration: 30, locationId: 'jerusalem',
+    sessionId: 'mut_x', inviteeConsent: 'granted', duration: 30, locationId: 'jerusalem',
     hostId, inviteeId: new mongoose.Types.ObjectId()
   };
   t.mock.method(MutualBooking, 'findOne', async () => existing);
@@ -353,7 +353,7 @@ test('POST /sessions/:id/confirm: already-claimed (active -> processing lost the
 test('POST /sessions/:id/confirm: a fully successful confirmation inserts both calendar events, pushes both schedules, and completes the session', async (t) => {
   const hostId = new mongoose.Types.ObjectId();
   const inviteeId = new mongoose.Types.ObjectId();
-  const existing = { sessionId: 'mut_x', duration: 30, locationId: 'jerusalem', hostId, inviteeId, subject: 'Sync' };
+  const existing = { sessionId: 'mut_x', inviteeConsent: 'granted', duration: 30, locationId: 'jerusalem', hostId, inviteeId, subject: 'Sync' };
   const claimedSession = { ...existing, status: 'processing' };
 
   t.mock.method(MutualBooking, 'findOne', async () => existing);
@@ -409,7 +409,7 @@ test('POST /sessions/:id/confirm: a fully successful confirmation inserts both c
 test('POST /sessions/:id/confirm: a fully successful confirmation also syncs both the host\'s and invitee\'s in-memory schedule cache', async (t) => {
   const hostId = new mongoose.Types.ObjectId();
   const inviteeId = new mongoose.Types.ObjectId();
-  const existing = { sessionId: 'mut_cache', duration: 30, locationId: 'jerusalem', hostId, inviteeId, subject: 'Sync' };
+  const existing = { sessionId: 'mut_cache', inviteeConsent: 'granted', duration: 30, locationId: 'jerusalem', hostId, inviteeId, subject: 'Sync' };
   const claimedSession = { ...existing, status: 'processing' };
 
   t.mock.method(MutualBooking, 'findOne', async () => existing);
@@ -465,7 +465,7 @@ test('POST /sessions/:id/confirm: a fully successful confirmation also syncs bot
 test('POST /sessions/:id/confirm: the server-side race guard finding the slot no longer free surfaces as 409 and releases the claim back to active', async (t) => {
   const hostId = new mongoose.Types.ObjectId();
   const inviteeId = new mongoose.Types.ObjectId();
-  const existing = { sessionId: 'mut_x', duration: 30, locationId: 'jerusalem', hostId, inviteeId };
+  const existing = { sessionId: 'mut_x', inviteeConsent: 'granted', duration: 30, locationId: 'jerusalem', hostId, inviteeId };
   const claimedSession = { ...existing, status: 'processing' };
 
   t.mock.method(MutualBooking, 'findOne', async () => existing);
@@ -505,7 +505,7 @@ test('POST /sessions/:id/confirm: the server-side race guard finding the slot no
 test('POST /sessions/:id/confirm: a Google Calendar insertion failure deletes the already-inserted host event and releases the claim back to active', async (t) => {
   const hostId = new mongoose.Types.ObjectId();
   const inviteeId = new mongoose.Types.ObjectId();
-  const existing = { sessionId: 'mut_x', duration: 30, locationId: 'jerusalem', hostId, inviteeId };
+  const existing = { sessionId: 'mut_x', inviteeConsent: 'granted', duration: 30, locationId: 'jerusalem', hostId, inviteeId };
   const claimedSession = { ...existing, status: 'processing' };
 
   t.mock.method(MutualBooking, 'findOne', async () => existing);
@@ -565,7 +565,7 @@ test('POST /sessions/:id/confirm: a Google Calendar insertion failure deletes th
 test('POST /sessions/:id/confirm: the host schedule push losing its optimistic-concurrency race deletes both calendar events and releases the claim back to active', async (t) => {
   const hostId = new mongoose.Types.ObjectId();
   const inviteeId = new mongoose.Types.ObjectId();
-  const existing = { sessionId: 'mut_x', duration: 30, locationId: 'jerusalem', hostId, inviteeId };
+  const existing = { sessionId: 'mut_x', inviteeConsent: 'granted', duration: 30, locationId: 'jerusalem', hostId, inviteeId };
   const claimedSession = { ...existing, status: 'processing' };
 
   t.mock.method(MutualBooking, 'findOne', async () => existing);
@@ -620,7 +620,7 @@ test('POST /sessions/:id/confirm: the host schedule push losing its optimistic-c
 test('POST /sessions/:id/confirm: the invitee schedule push losing its optimistic-concurrency race (after the host\'s already landed) still rolls everything back', async (t) => {
   const hostId = new mongoose.Types.ObjectId();
   const inviteeId = new mongoose.Types.ObjectId();
-  const existing = { sessionId: 'mut_x', duration: 30, locationId: 'jerusalem', hostId, inviteeId };
+  const existing = { sessionId: 'mut_x', inviteeConsent: 'granted', duration: 30, locationId: 'jerusalem', hostId, inviteeId };
   const claimedSession = { ...existing, status: 'processing' };
 
   t.mock.method(MutualBooking, 'findOne', async () => existing);
@@ -693,7 +693,7 @@ test('POST /sessions/:id/confirm: the invitee schedule push losing its optimisti
 test('POST /sessions/:id/confirm: a concurrent cancel winning the race just before the final completion update rolls back both calendar events and both schedule pushes', async (t) => {
   const hostId = new mongoose.Types.ObjectId();
   const inviteeId = new mongoose.Types.ObjectId();
-  const existing = { sessionId: 'mut_x', duration: 30, locationId: 'jerusalem', hostId, inviteeId };
+  const existing = { sessionId: 'mut_x', inviteeConsent: 'granted', duration: 30, locationId: 'jerusalem', hostId, inviteeId };
   const claimedSession = { ...existing, status: 'processing' };
 
   t.mock.method(MutualBooking, 'findOne', async () => existing);
@@ -839,7 +839,7 @@ test('GET /sessions/:id/availability: a non-existent session is a 404', async (t
 test('GET /sessions/:id/availability: a user who is neither host nor invitee is refused with 403', async (t) => {
   const callerId = new mongoose.Types.ObjectId();
   const session = {
-    sessionId: 'mut_x', status: 'active',
+    sessionId: 'mut_x', inviteeConsent: 'granted', status: 'active',
     hostId: new mongoose.Types.ObjectId(), inviteeId: new mongoose.Types.ObjectId()
   };
   t.mock.method(MutualBooking, 'findOne', async () => session);
@@ -855,7 +855,7 @@ test('GET /sessions/:id/availability: a user who is neither host nor invitee is 
 
 test('GET /sessions/:id/availability: a session still being confirmed (processing) is a 409, not a stale slot list', async (t) => {
   const hostId = new mongoose.Types.ObjectId();
-  const session = { sessionId: 'mut_x', status: 'processing', hostId, inviteeId: new mongoose.Types.ObjectId() };
+  const session = { sessionId: 'mut_x', inviteeConsent: 'granted', status: 'processing', hostId, inviteeId: new mongoose.Types.ObjectId() };
   t.mock.method(MutualBooking, 'findOne', async () => session);
   const { server, base } = startApp(freshMutualRoutes());
   try {
@@ -870,7 +870,7 @@ test('GET /sessions/:id/availability: a session still being confirmed (processin
 
 test('GET /sessions/:id/availability: a completed or cancelled session is a 409', async (t) => {
   const hostId = new mongoose.Types.ObjectId();
-  const session = { sessionId: 'mut_x', status: 'completed', hostId, inviteeId: new mongoose.Types.ObjectId() };
+  const session = { sessionId: 'mut_x', inviteeConsent: 'granted', status: 'completed', hostId, inviteeId: new mongoose.Types.ObjectId() };
   t.mock.method(MutualBooking, 'findOne', async () => session);
   const { server, base } = startApp(freshMutualRoutes());
   try {
@@ -885,7 +885,7 @@ test('GET /sessions/:id/availability: a completed or cancelled session is a 409'
 
 test('GET /sessions/:id/availability: a missing host or invitee account is a 404', async (t) => {
   const hostId = new mongoose.Types.ObjectId();
-  const session = { sessionId: 'mut_x', status: 'active', hostId, inviteeId: new mongoose.Types.ObjectId() };
+  const session = { sessionId: 'mut_x', inviteeConsent: 'granted', status: 'active', hostId, inviteeId: new mongoose.Types.ObjectId() };
   t.mock.method(MutualBooking, 'findOne', async () => session);
   t.mock.method(User, 'findById', async () => null);
   const { server, base } = startApp(freshMutualRoutes());
@@ -900,7 +900,7 @@ test('GET /sessions/:id/availability: a missing host or invitee account is a 404
 test('GET /sessions/:id/availability: either side missing Google Calendar is a 409, never a bare slot list', async (t) => {
   const hostId = new mongoose.Types.ObjectId();
   const inviteeId = new mongoose.Types.ObjectId();
-  const session = { sessionId: 'mut_x', status: 'active', hostId, inviteeId };
+  const session = { sessionId: 'mut_x', inviteeConsent: 'granted', status: 'active', hostId, inviteeId };
   t.mock.method(MutualBooking, 'findOne', async () => session);
   t.mock.method(User, 'findById', async (id) => (
     String(id) === String(hostId) ? { _id: hostId, googleAccessToken: 'tok-host' } : { _id: inviteeId, googleAccessToken: null }
@@ -921,7 +921,7 @@ test('GET /sessions/:id/availability: either side missing Google Calendar is a 4
 test('GET /sessions/:id/availability: a successful lookup returns the computed days, and clamps an out-of-range rangeDays', async (t) => {
   const hostId = new mongoose.Types.ObjectId();
   const inviteeId = new mongoose.Types.ObjectId();
-  const session = { sessionId: 'mut_x', status: 'active', hostId, inviteeId, subject: 'Coffee', duration: 30, locationId: 'jerusalem' };
+  const session = { sessionId: 'mut_x', inviteeConsent: 'granted', status: 'active', hostId, inviteeId, subject: 'Coffee', duration: 30, locationId: 'jerusalem' };
   t.mock.method(MutualBooking, 'findOne', async () => session);
   t.mock.method(User, 'findById', async (id) => (
     String(id) === String(hostId) ? { _id: hostId, googleAccessToken: 'tok-host' } : { _id: inviteeId, googleAccessToken: 'tok-invitee' }
@@ -976,7 +976,7 @@ test('POST /sessions/:id/cancel: a non-existent session is a 404', async (t) => 
 test('POST /sessions/:id/cancel: a user who is neither host nor invitee is refused with 403, and the session is left untouched', async (t) => {
   const callerId = new mongoose.Types.ObjectId();
   const session = {
-    sessionId: 'mut_x', status: 'active',
+    sessionId: 'mut_x', inviteeConsent: 'granted', status: 'active',
     hostId: new mongoose.Types.ObjectId(), inviteeId: new mongoose.Types.ObjectId()
   };
   t.mock.method(MutualBooking, 'findOne', async () => session);
@@ -993,7 +993,7 @@ test('POST /sessions/:id/cancel: a user who is neither host nor invitee is refus
 
 test('POST /sessions/:id/cancel: cancelling an already-cancelled session is idempotent, not an error', async (t) => {
   const hostId = new mongoose.Types.ObjectId();
-  const session = { sessionId: 'mut_x', status: 'cancelled', hostId, inviteeId: new mongoose.Types.ObjectId() };
+  const session = { sessionId: 'mut_x', inviteeConsent: 'granted', status: 'cancelled', hostId, inviteeId: new mongoose.Types.ObjectId() };
   t.mock.method(MutualBooking, 'findOne', async () => session);
   const updateMock = t.mock.method(MutualBooking, 'findOneAndUpdate', () => { throw new Error('must not reach the atomic cancel update again'); });
   const { server, base } = startApp(freshMutualRoutes());
@@ -1011,7 +1011,7 @@ test('POST /sessions/:id/cancel: cancelling an already-cancelled session is idem
 test('POST /sessions/:id/cancel: the invitee (not just the host) is authorized to cancel an active session', async (t) => {
   const hostId = new mongoose.Types.ObjectId();
   const inviteeId = new mongoose.Types.ObjectId();
-  const session = { sessionId: 'mut_x', status: 'active', hostId, inviteeId };
+  const session = { sessionId: 'mut_x', inviteeConsent: 'granted', status: 'active', hostId, inviteeId };
   t.mock.method(MutualBooking, 'findOne', async () => session);
   t.mock.method(MutualBooking, 'findOneAndUpdate', async () => ({ ...session, status: 'cancelled' }));
   const { server, base } = startApp(freshMutualRoutes());
@@ -1042,7 +1042,7 @@ test('POST /sessions/:id/cancel: cancelling a completed session deletes both Goo
   const hostId = new mongoose.Types.ObjectId();
   const inviteeId = new mongoose.Types.ObjectId();
   const session = {
-    sessionId: 'mut_x', status: 'completed', hostId, inviteeId,
+    sessionId: 'mut_x', inviteeConsent: 'granted', status: 'completed', hostId, inviteeId,
     hostEventId: 'h-evt-1', inviteeEventId: 'i-evt-1'
   };
   t.mock.method(MutualBooking, 'findOne', async () => session);
@@ -1121,6 +1121,93 @@ test('POST /sessions/:id/cancel: cancelling a completed session also pulls the m
     assert.deepEqual(cacheByUser[String(hostId)].Today, [otherEvent], 'the cancelled entry must be removed from the host\'s cached Today bucket, leaving unrelated entries intact');
     assert.deepEqual(cacheByUser[String(inviteeId)].Tuesday, [otherEvent], 'the cancelled entry must be removed from the invitee\'s cached Tuesday bucket, leaving unrelated entries intact');
     assert.ok(saveCalls >= 1, 'saveSchedulesNow must be called after syncing the cache');
+  } finally {
+    server.close();
+  }
+});
+
+// ── Consent: comparing calendars needs the invitee's explicit OK ──
+test('GET /sessions/:id/availability: refused with 403 until the invitee approves', async (t) => {
+  const hostId = new mongoose.Types.ObjectId();
+  const session = { sessionId: 'mut_c', status: 'active', inviteeConsent: 'pending', hostId, inviteeId: new mongoose.Types.ObjectId(), duration: 30 };
+  t.mock.method(MutualBooking, 'findOne', async () => session);
+  const freeSlots = t.mock.method(mutualAvailability, 'getMutualFreeSlots', async () => { throw new Error('must not read calendars'); });
+  const { server, base } = startApp(freshMutualRoutes());
+  try {
+    const res = await fetch(`${base}/api/mutual/sessions/mut_c/availability`, { headers: authed(hostId) });
+    const data = await res.json();
+    assert.equal(res.status, 403);
+    assert.equal(data.consent, 'pending');
+    assert.equal(freeSlots.mock.callCount(), 0);
+  } finally {
+    server.close();
+  }
+});
+
+test('POST /sessions/:id/confirm: refused with 403 when the invitee declined', async (t) => {
+  const hostId = new mongoose.Types.ObjectId();
+  const session = { sessionId: 'mut_c', status: 'active', inviteeConsent: 'declined', hostId, inviteeId: new mongoose.Types.ObjectId(), duration: 30 };
+  t.mock.method(MutualBooking, 'findOne', async () => session);
+  t.mock.method(MutualBooking, 'findOneAndUpdate', async () => { throw new Error('must not claim'); });
+  const { server, base } = startApp(freshMutualRoutes());
+  try {
+    const res = await fetch(`${base}/api/mutual/sessions/mut_c/confirm`, {
+      method: 'POST', headers: authed(hostId),
+      body: JSON.stringify({ date: '2099-12-01', startTime: '10:00 AM', endTime: '10:30 AM' })
+    });
+    assert.equal(res.status, 403);
+    assert.equal((await res.json()).consent, 'declined');
+  } finally {
+    server.close();
+  }
+});
+
+test('POST /sessions/:id/consent: only the invitee can answer', async (t) => {
+  const hostId = new mongoose.Types.ObjectId();
+  const session = { sessionId: 'mut_c', status: 'active', inviteeConsent: 'pending', hostId, inviteeId: new mongoose.Types.ObjectId() };
+  t.mock.method(MutualBooking, 'findOne', async () => session);
+  t.mock.method(MutualBooking, 'findOneAndUpdate', async () => { throw new Error('must not update'); });
+  const { server, base } = startApp(freshMutualRoutes());
+  try {
+    const res = await fetch(`${base}/api/mutual/sessions/mut_c/consent`, {
+      method: 'POST', headers: authed(hostId), body: JSON.stringify({ approve: true })
+    });
+    assert.equal(res.status, 403);
+  } finally {
+    server.close();
+  }
+});
+
+test('POST /sessions/:id/consent: the invitee approving flips pending to granted atomically', async (t) => {
+  const hostId = new mongoose.Types.ObjectId();
+  const inviteeId = new mongoose.Types.ObjectId();
+  const session = { sessionId: 'mut_c', status: 'active', inviteeConsent: 'pending', hostId, inviteeId };
+  t.mock.method(MutualBooking, 'findOne', async () => session);
+  const update = t.mock.method(MutualBooking, 'findOneAndUpdate', async () => ({ ...session, inviteeConsent: 'granted' }));
+  t.mock.method(User, 'findById', () => ({ select: () => ({ lean: async () => ({ displayName: 'Dana' }) }) }));
+  const { server, base } = startApp(freshMutualRoutes());
+  try {
+    const res = await fetch(`${base}/api/mutual/sessions/mut_c/consent`, {
+      method: 'POST', headers: authed(inviteeId), body: JSON.stringify({ approve: true })
+    });
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).consent, 'granted');
+    const [filter, change] = update.mock.calls[0].arguments;
+    assert.deepEqual(filter, { sessionId: 'mut_c', status: 'active', inviteeConsent: 'pending' });
+    assert.equal(change.$set.inviteeConsent, 'granted');
+  } finally {
+    server.close();
+  }
+});
+
+test('POST /sessions/:id/consent: approve must be a boolean', async (t) => {
+  t.mock.method(MutualBooking, 'findOne', async () => { throw new Error('must not be reached'); });
+  const { server, base } = startApp(freshMutualRoutes());
+  try {
+    const res = await fetch(`${base}/api/mutual/sessions/mut_c/consent`, {
+      method: 'POST', headers: authed(new mongoose.Types.ObjectId()), body: JSON.stringify({ approve: 'yes' })
+    });
+    assert.equal(res.status, 400);
   } finally {
     server.close();
   }

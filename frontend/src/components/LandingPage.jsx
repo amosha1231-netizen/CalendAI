@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Calendar, LogIn, Mail, ChevronDown, Bot, Link2, Bell, BarChart3, ArrowDown, Check } from "lucide-react";
+import { LogIn, Mail, Bot, Link2, Bell, BarChart3, Check, Mic, Sparkles, ShieldCheck } from "lucide-react";
 import { isShabbatNow } from "../utils/shabbatHelper";
 import ShabbatBanner from "./ShabbatBanner";
 
@@ -8,21 +8,55 @@ import ShabbatBanner from "./ShabbatBanner";
 const stripLeadingEmoji = (str = "") => str.replace(/^[^\p{L}\p{N}]+/u, "").trim();
 
 const FEATURE_ICONS = [Bot, Link2, Bell, BarChart3];
+const FEATURE_TONES = ['bg-brand-soft text-brand', 'bg-[#E3F8EF] text-[#10B981]', 'bg-[#FFF4DC] text-[#F59E0B]', 'bg-[#E4F2FF] text-[#2D9CFF]'];
 
-const StampButton = ({ onClick, children, variant = "solid", onDark = false, className = "" }) => {
-  const base = "inline-flex items-center gap-3 rounded-xl text-lg font-display font-bold px-8 py-3.5 w-full sm:w-auto justify-center transition-transform duration-75 border-2 hover:translate-x-px hover:translate-y-px active:translate-x-[3px] active:translate-y-[3px] active:shadow-none";
-  const palette = onDark
-    ? (variant === "solid"
-        ? "bg-gold-500 text-ink-900 border-paper-50 shadow-stamp-paper hover:shadow-[2px_2px_0_#EEF0E9]"
-        : "bg-transparent text-paper-50 border-line-strong shadow-none hover:bg-ink-700")
-    : (variant === "solid"
-        ? "bg-gold-500 text-ink-900 border-ink-900 shadow-stamp hover:shadow-stamp-sm"
-        : "bg-white text-ink-900 border-ink-900 shadow-stamp hover:shadow-stamp-sm");
-  return (
-    <button onClick={onClick} className={`${base} ${palette} ${className}`}>
-      {children}
-    </button>
-  );
+const AuthButton = ({ onClick, children, className = "" }) => (
+  <button
+    onClick={onClick}
+    className={`w-full h-14 rounded-2xl bg-white border border-[#ECEAF3] text-[#0E1020] text-base font-bold flex items-center justify-center gap-2.5 shadow-[0_6px_18px_-10px_rgba(14,16,32,0.3)] hover:bg-slate-50 active:scale-[0.99] transition ${className}`}
+  >
+    {children}
+  </button>
+);
+
+// Landing-only copy that isn't in i18n.js yet (Hebrew + English).
+const COPY = {
+  he: {
+    badge: 'עוזר לו״ז מבוסס AI',
+    title1: 'היומן שלך,',
+    title2: 'חושב איתך.',
+    subtitle: 'אמרו או כתבו מה צריך, ו-CalendAI ימצא זמן, יתאם פגישות ויעיר אתכם בדיוק בזמן.',
+    google: 'המשך עם Google',
+    outlook: 'המשך עם Outlook',
+    guest: 'או נסו בלי הרשמה',
+    email: 'כניסה או הרשמה עם אימייל',
+    demoPrompt: '״קבע לי זמן להירגע ביום שלישי אחר הצהריים״',
+    demoDone: 'מצאתי חלון פנוי ושמרתי ביומן',
+    demoTitle: 'זמן להירגע 🧘',
+    demoMeta: 'שלישי · 16:30–17:30',
+    demoChip: 'אחרי הפגישה האחרונה',
+    privacyTitle: 'הפרטיות שלכם קודם.',
+    privacyBody: 'אנחנו לא מוכרים מידע, החיבור מוצפן, ואפשר למחוק הכול בלחיצה אחת.',
+    privacyLink: 'מדיניות הפרטיות',
+  },
+  en: {
+    badge: 'AI scheduling assistant',
+    title1: 'Your calendar,',
+    title2: 'thinking with you.',
+    subtitle: 'Say or type what you need. CalendAI finds the time, schedules meetings and wakes you up right on time.',
+    google: 'Continue with Google',
+    outlook: 'Continue with Outlook',
+    guest: 'Or try it without signing up',
+    email: 'Sign in or register with email',
+    demoPrompt: '"Find me time to unwind Tuesday afternoon"',
+    demoDone: 'Found a free slot and saved it',
+    demoTitle: 'Time to unwind 🧘',
+    demoMeta: 'Tue · 4:30–5:30 PM',
+    demoChip: 'After your last meeting',
+    privacyTitle: 'Your privacy comes first.',
+    privacyBody: "We don't sell data, connections are encrypted, and you can delete everything in one tap.",
+    privacyLink: 'Privacy policy',
+  },
 };
 
 const AUTH_ERROR_MESSAGES = {
@@ -75,138 +109,119 @@ export default function LandingPage({ t, lang, onLogin, onMicrosoftLogin, onTryG
   }
   const isRTL = lang === 'he';
 
-  const scrollToFeatures = () => {
-    document.getElementById('features-section')?.scrollIntoView({ behavior: 'smooth' });
-  };
-
-  const demoPrompt = isRTL ? '"קבעי לי קפה עם רונית ביום חמישי ב-10:00"' : '"Grab coffee with Dana Thursday at 10am"';
-  const demoResultTitle = isRTL ? 'קפה עם רונית' : 'Coffee with Dana';
-  const demoResultMeta = isRTL ? 'יום ה׳ · 10:00–10:30' : 'Thu · 10:00–10:30 AM';
+  const c = COPY[lang] || COPY.en;
+  const switchTo = (code) => { if (code !== lang && toggleLanguage) toggleLanguage(); };
 
   return (
-    <div className={`min-h-screen bg-paper-50 text-ink-900 ${isRTL ? 'font-he' : 'font-en'}`} dir={isRTL ? 'rtl' : 'ltr'}>
+    <div className="min-h-screen bg-[#FBFAFF] text-[#0E1020] font-sans overflow-x-hidden" dir={isRTL ? 'rtl' : 'ltr'}>
       {authErrorVisible && (
-        <div role="alert" className="bg-rose-50 border-b border-rose-200 text-rose-700 text-sm">
+        <div role="alert" className="relative z-20 bg-rose-50 border-b border-rose-200 text-rose-700 text-sm">
           <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex items-start gap-3">
             <p className="flex-1">{authErrorMessage(authError, lang)}</p>
             <button onClick={() => setAuthErrorVisible(false)} aria-label={lang === 'he' ? 'סגירה' : 'Close'} className="text-rose-400 hover:text-rose-600 px-2 -mx-2">✕</button>
           </div>
         </div>
       )}
-      {/* ── Navigation Bar ── */}
-      <header className="sticky top-0 z-50 bg-paper-50/90 backdrop-blur-md border-b border-line">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+
+      <section className="relative">
+        {/* Aurora glow */}
+        <div aria-hidden="true" className="absolute inset-x-0 top-0 h-[560px] overflow-hidden">
+          <div className="aurora-blob w-80 h-80 bg-[#9B5CFF] opacity-35 -top-28 -left-24" />
+          <div className="aurora-blob w-64 h-64 bg-[#FF6FA8] opacity-25 top-32 -right-32" />
+          <div className="aurora-blob w-60 h-60 bg-[#5B4BFF] opacity-20 top-4 right-8" />
+        </div>
+
+        {/* ── Top bar ── */}
+        <header className="relative z-10 max-w-6xl mx-auto px-5 sm:px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 bg-ink-900 rounded-lg grid grid-cols-2 gap-0.5 p-1.5 shrink-0">
-              <span className="bg-paper-50 rounded-sm" />
-              <span className="bg-paper-50 rounded-sm" />
-              <span className="bg-paper-50 rounded-sm" />
-              <span className="bg-gold-500 rounded-sm" />
+            <div className="w-10 h-10 rounded-[13px] bg-aurora text-white flex items-center justify-center shadow-glow">
+              <Sparkles className="w-5 h-5" />
             </div>
-            <span className="font-display font-extrabold text-lg tracking-tight">
-              Calend<span className="text-gold-600">AI</span>
+            <span className="font-extrabold text-xl tracking-tight" dir="ltr">
+              Calend<span className="text-aurora">AI</span>
             </span>
           </div>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={toggleLanguage}
-              className="font-mono text-xs tracking-wide px-3 py-1.5 rounded-md border border-line-strong text-muted hover:text-ink-900 hover:bg-paper-100 transition"
-            >
-              {t.languageLabel}
-            </button>
-            <button
-              onClick={onLogin}
-              className="text-sm text-muted hover:text-ink-900 px-3 py-1.5 rounded-lg border border-transparent hover:border-line transition font-medium"
-            >
-              {t.loginShort}
-            </button>
+          <div className="flex p-[3px] gap-[3px] rounded-xl bg-[#ECEAF4]/80" role="radiogroup" aria-label={lang === 'he' ? 'שפה' : 'Language'}>
+            {[['he', 'עב'], ['en', 'EN']].map(([code, label]) => (
+              <button
+                key={code}
+                role="radio"
+                aria-checked={lang === code}
+                onClick={() => switchTo(code)}
+                className={`w-12 h-8 rounded-[9px] text-[13px] font-semibold transition ${lang === code ? 'bg-white text-[#0E1020] shadow-sm' : 'text-[#6E7189]'}`}
+              >
+                {label}
+              </button>
+            ))}
           </div>
-        </div>
-      </header>
+        </header>
 
-      {/* ── Hero Section ── */}
-      <section className="relative overflow-hidden bg-ledger-grid">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-16 sm:py-24 relative">
-          <div className="flex flex-col lg:flex-row items-center gap-12 lg:gap-16">
-            <div className="flex-1 w-full text-center lg:text-start">
-              {/* Eyebrow */}
-              <div className="inline-flex items-center gap-2 font-mono text-xs tracking-wide text-gold-600 mb-6">
-                <span className="w-1.5 h-1.5 rounded-full bg-gold-500" />
-                {stripLeadingEmoji(t.landingHeroBadge)}
-              </div>
+        {/* ── Hero ── */}
+        <div className="relative z-10 max-w-6xl mx-auto px-5 sm:px-6 pt-8 pb-12 sm:pt-16 lg:flex lg:items-center lg:gap-16">
+          <div className="lg:flex-1 text-center lg:text-start">
+            <span className="inline-flex items-center gap-1.5 h-8 px-3.5 rounded-full bg-white/75 border border-[#E3DEFF] text-brand text-[13px] font-semibold">
+              <Sparkles className="w-4 h-4" /> {c.badge}
+            </span>
+            <h1 className="mt-5 text-[40px] sm:text-6xl font-black leading-[1.08] tracking-tight">
+              {c.title1}<br /><span className="text-aurora">{c.title2}</span>
+            </h1>
+            <p className="mt-4 text-[16.5px] sm:text-lg text-[#6E7189] leading-relaxed max-w-xl mx-auto lg:mx-0">{c.subtitle}</p>
 
-              {/* Title */}
-              <h1 className="font-display text-4xl sm:text-5xl lg:text-6xl font-extrabold leading-tight mb-6 tracking-tight">
-                {t.landingHeroTitle}
-              </h1>
-
-              {/* Subtitle */}
-              <p className="text-lg sm:text-xl text-muted leading-relaxed mb-10 max-w-2xl mx-auto lg:mx-0">
-                {t.landingHeroSubtitle}
-              </p>
-
-              {/* CTA Buttons */}
-              <div className="flex flex-col sm:flex-row items-center lg:items-start justify-center lg:justify-start gap-4">
-                <StampButton onClick={onLogin}>
-                  <svg className="w-5 h-5" viewBox="0 0 24 24" aria-hidden="true">
-                    <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-                    <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-                    <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
-                    <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
-                  </svg>
-                  {t.landingQuickLogin || 'התחברות מהירה עם Google'}
-                </StampButton>
-                <StampButton onClick={onMicrosoftLogin} variant="outline">
-                  <svg className="w-5 h-5" viewBox="0 0 21 21" aria-hidden="true">
-                    <rect x="1" y="1" width="9" height="9" fill="#F25022" />
-                    <rect x="11" y="1" width="9" height="9" fill="#7FBA00" />
-                    <rect x="1" y="11" width="9" height="9" fill="#00A4EF" />
-                    <rect x="11" y="11" width="9" height="9" fill="#FFB900" />
-                  </svg>
-                  {t.landingLoginOutlook}
-                </StampButton>
-                <StampButton onClick={onTryGuest} variant="outline">
-                  <Calendar className="w-5 h-5 text-gold-600" />
-                  {t.landingTryGuest}
-                </StampButton>
-              </div>
-
-              {/* Email/password sign-in — alternative to Google/Outlook OAuth */}
+            {/* Sign-in */}
+            <div className="mt-7 flex flex-col gap-2.5 max-w-md mx-auto lg:mx-0">
+              <AuthButton onClick={onLogin}>
+                <svg className="w-5 h-5" viewBox="0 0 24 24" aria-hidden="true">
+                  <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                  <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                  <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
+                  <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
+                </svg>
+                {c.google}
+              </AuthButton>
+              <AuthButton onClick={onMicrosoftLogin}>
+                <svg className="w-[18px] h-[18px]" viewBox="0 0 21 21" aria-hidden="true">
+                  <rect x="1" y="1" width="9" height="9" fill="#F25022" />
+                  <rect x="11" y="1" width="9" height="9" fill="#7FBA00" />
+                  <rect x="1" y="11" width="9" height="9" fill="#00A4EF" />
+                  <rect x="11" y="11" width="9" height="9" fill="#FFB900" />
+                </svg>
+                {c.outlook}
+              </AuthButton>
+              <button onClick={onTryGuest} className="mt-1 h-10 text-[15px] font-semibold text-brand hover:text-brand-600 transition">
+                {c.guest} {isRTL ? '←' : '→'}
+              </button>
               {onEmailLogin && (
-                <button
-                  onClick={onEmailLogin}
-                  className="mt-5 inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink-900 transition"
-                >
-                  <Mail className="w-3.5 h-3.5" />
-                  {lang === 'he' ? 'או התחבר/הירשם עם אימייל וסיסמה' : 'Or sign in / register with email'}
+                <button onClick={onEmailLogin} className="inline-flex items-center justify-center gap-1.5 text-sm text-[#6E7189] hover:text-[#0E1020] transition">
+                  <Mail className="w-3.5 h-3.5" /> {c.email}
                 </button>
               )}
-
-              {/* Scroll indicator */}
-              <button
-                onClick={scrollToFeatures}
-                className="hidden lg:block mt-16 text-line-strong hover:text-muted transition animate-bounce"
-                aria-label="Scroll to features"
-              >
-                <ChevronDown className="w-6 h-6" />
-              </button>
             </div>
 
-            {/* Live demo card — shows the AI parsing a plain-language request */}
-            <div className="flex-1 w-full max-w-sm">
-              <div className="bg-white border border-line rounded-xl p-4 card-fold shadow-sm">
-                <div className="bg-paper-100 border border-line rounded-lg px-3.5 py-2.5 text-sm leading-relaxed mb-3">
-                  {demoPrompt}
-                </div>
-                <div className="flex justify-center text-line-strong mb-3">
-                  <ArrowDown className="w-4 h-4" />
-                </div>
-                <div className="flex items-start gap-2.5 bg-sage-100 border border-sage-500 rounded-lg px-3.5 py-3">
-                  <Check className="w-4 h-4 text-sage-500 mt-0.5 shrink-0" />
+            {/* Privacy, before anyone signs in */}
+            <div className="mt-6 max-w-md mx-auto lg:mx-0 flex items-start gap-2.5 p-3.5 rounded-2xl bg-[#E3F8EF]/80 text-start">
+              <ShieldCheck className="w-5 h-5 text-[#10B981] shrink-0 mt-0.5" />
+              <p className="text-[13px] leading-relaxed text-[#1E5C47]">
+                <b>{c.privacyTitle}</b> {c.privacyBody}{' '}
+                <a href="/privacy" className="underline underline-offset-2 font-medium">{c.privacyLink}</a>
+              </p>
+            </div>
+          </div>
+
+          {/* Live demo: a spoken request turned into an event */}
+          <div className="mt-10 lg:mt-0 lg:flex-1 max-w-sm mx-auto w-full">
+            <div className="relative">
+              <div className="bg-white rounded-[20px] rounded-ee-md p-3.5 flex items-center gap-2.5 shadow-soft ms-10">
+                <span className="w-9 h-9 rounded-full bg-aurora text-white flex items-center justify-center shrink-0"><Mic className="w-[18px] h-[18px]" /></span>
+                <span className="text-[14.5px] font-medium">{c.demoPrompt}</span>
+              </div>
+              <div className="bg-white rounded-[20px] p-4 shadow-soft mt-3 me-8">
+                <div className="flex items-center gap-1.5 text-[13px] font-bold text-[#10B981]"><Check className="w-4 h-4" /> {c.demoDone}</div>
+                <div className="mt-2 flex items-center justify-between gap-2">
                   <div>
-                    <strong className="block text-sm">{demoResultTitle}</strong>
-                    <span className="font-mono text-xs text-muted">{demoResultMeta}</span>
+                    <div className="font-bold">{c.demoTitle}</div>
+                    <div className="text-[13px] text-[#6E7189]">{c.demoMeta}</div>
                   </div>
+                  <span className="text-xs font-semibold text-brand bg-brand-soft rounded-full px-2.5 py-1 shrink-0">{c.demoChip}</span>
                 </div>
               </div>
             </div>
@@ -214,45 +229,38 @@ export default function LandingPage({ t, lang, onLogin, onMicrosoftLogin, onTryG
         </div>
       </section>
 
-      {/* ── How It Works Section ── */}
-      <section className="py-16 sm:py-20">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6">
-          <h2 className="font-display text-3xl sm:text-4xl font-bold text-center mb-12 tracking-tight">
-            {t.landingHowItWorksTitle}
-          </h2>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      {/* ── How it works ── */}
+      <section className="py-14 sm:py-20">
+        <div className="max-w-6xl mx-auto px-5 sm:px-6">
+          <h2 className="text-3xl sm:text-4xl font-extrabold text-center mb-10 tracking-tight">{t.landingHowItWorksTitle}</h2>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {[1, 2, 3].map((n) => (
-              <div key={n} className="bg-white rounded-xl p-6 sm:p-8 border border-line hover:border-line-strong transition">
-                <div className="font-mono text-sm text-gold-600 mb-3">0{n}</div>
-                <h3 className="font-display text-lg font-bold mb-2">{t[`landingHowStep${n}`]}</h3>
-                <p className="text-sm text-muted leading-relaxed">{t[`landingHowStep${n}Desc`]}</p>
+              <div key={n} className="bg-white rounded-3xl p-6 shadow-soft">
+                <div className="w-9 h-9 rounded-xl bg-brand-soft text-brand font-extrabold flex items-center justify-center mb-3">{n}</div>
+                <h3 className="text-lg font-bold mb-1.5">{t[`landingHowStep${n}`]}</h3>
+                <p className="text-sm text-[#6E7189] leading-relaxed">{t[`landingHowStep${n}Desc`]}</p>
               </div>
             ))}
           </div>
         </div>
       </section>
 
-      {/* ── Features Section ── */}
-      <section id="features-section" className="py-16 sm:py-20">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6">
-          <h2 className="font-display text-3xl sm:text-4xl font-bold text-center mb-12 tracking-tight">
-            {t.landingFeaturesTitle}
-          </h2>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+      {/* ── Features ── */}
+      <section id="features-section" className="pb-14 sm:pb-20">
+        <div className="max-w-6xl mx-auto px-5 sm:px-6">
+          <h2 className="text-3xl sm:text-4xl font-extrabold text-center mb-10 tracking-tight">{t.landingFeaturesTitle}</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {[1, 2, 3, 4].map((n) => {
               const Icon = FEATURE_ICONS[n - 1];
+              const tone = FEATURE_TONES[n - 1];
               return (
-                <div key={n} className="bg-white rounded-xl p-6 sm:p-8 border border-line hover:border-line-strong transition">
-                  <div className="flex items-start gap-4">
-                    <div className="w-11 h-11 bg-paper-100 border border-line rounded-lg flex items-center justify-center shrink-0">
-                      <Icon className="w-5 h-5 text-ink-900" />
-                    </div>
-                    <div>
-                      <h3 className="font-display text-lg font-bold mb-2">{stripLeadingEmoji(t[`landingFeature${n}Title`])}</h3>
-                      <p className="text-sm text-muted leading-relaxed">{t[`landingFeature${n}Desc`]}</p>
-                    </div>
+                <div key={n} className="bg-white rounded-3xl p-6 shadow-soft flex items-start gap-4">
+                  <div className={`w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 ${tone}`}>
+                    <Icon className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold mb-1.5">{stripLeadingEmoji(t[`landingFeature${n}Title`])}</h3>
+                    <p className="text-sm text-[#6E7189] leading-relaxed">{t[`landingFeature${n}Desc`]}</p>
                   </div>
                 </div>
               );
@@ -261,34 +269,35 @@ export default function LandingPage({ t, lang, onLogin, onMicrosoftLogin, onTryG
         </div>
       </section>
 
-      {/* ── CTA Section ── */}
-      <section className="py-16 sm:py-20">
-        <div className="max-w-2xl mx-auto px-4 sm:px-6 text-center">
-          <div className="bg-ink-900 rounded-2xl p-8 sm:p-12">
-            <h2 className="font-display text-2xl sm:text-3xl font-bold text-paper-50 mb-4 tracking-tight">
-              {t.landingCtaTitle}
-            </h2>
-            <p className="text-line-strong text-lg mb-8">
-              {t.landingCtaSubtitle}
-            </p>
-            <StampButton onClick={onLogin} onDark>
-              <LogIn className="w-5 h-5" />
-              {t.landingLoginWithGoogle}
-            </StampButton>
+      {/* ── CTA ── */}
+      <section className="pb-14 sm:pb-20">
+        <div className="max-w-2xl mx-auto px-5 sm:px-6">
+          <div className="relative overflow-hidden rounded-[28px] bg-night p-8 sm:p-12 text-center text-white">
+            <div aria-hidden="true" className="aurora-blob w-56 h-56 bg-[#7C5CFF] opacity-80 -top-20 -left-16" />
+            <div aria-hidden="true" className="aurora-blob w-44 h-44 bg-[#FF6FA8] opacity-50 -bottom-24 left-24" />
+            <div className="relative">
+              <h2 className="text-2xl sm:text-3xl font-extrabold mb-3 tracking-tight">{t.landingCtaTitle}</h2>
+              <p className="text-white/70 text-lg mb-7">{t.landingCtaSubtitle}</p>
+              <button onClick={onLogin} className="inline-flex items-center justify-center gap-2 h-14 px-8 rounded-2xl bg-white text-night font-bold text-base hover:bg-slate-50 transition">
+                <LogIn className="w-5 h-5" /> {t.landingLoginWithGoogle}
+              </button>
+            </div>
           </div>
         </div>
       </section>
 
-      {/* ── Footer ── */}
-      <footer className="border-t border-line py-8">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 text-center">
-          <div className="flex items-center justify-center gap-2 mb-2">
-            <Calendar className="w-4 h-4 text-gold-600" />
-            <span className="font-display font-bold">CalendAI</span>
+      <footer className="border-t border-[#ECEAF3] py-8">
+        <div className="max-w-6xl mx-auto px-5 sm:px-6 text-center">
+          <div className="flex items-center justify-center gap-2 mb-2" dir="ltr">
+            <span className="w-6 h-6 rounded-lg bg-aurora text-white flex items-center justify-center"><Sparkles className="w-3.5 h-3.5" /></span>
+            <span className="font-bold">CalendAI</span>
           </div>
-          <p className="text-sm text-muted">
-            {t.landingFooterText}
-          </p>
+          <p className="text-sm text-[#6E7189]">{t.landingFooterText}</p>
+          <div className="mt-2 flex items-center justify-center gap-3 text-xs text-[#A3A6BB]">
+            <a href="/privacy" className="hover:text-[#6E7189]">{lang === 'he' ? 'פרטיות' : 'Privacy'}</a>
+            <span>·</span>
+            <a href="/terms" className="hover:text-[#6E7189]">{lang === 'he' ? 'תנאי שימוש' : 'Terms'}</a>
+          </div>
         </div>
       </footer>
     </div>

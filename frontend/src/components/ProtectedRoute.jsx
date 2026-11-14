@@ -16,7 +16,7 @@ import LuxuryLoader from './LuxuryLoader';
 export default function ProtectedRoute({ loading, isAuthenticated, children }) {
   // ── While auth is still being checked, show a full-screen loader ──
   if (loading) {
-    return <LuxuryLoader statusText="AUTHENTICATING..." />;
+    return <LuxuryLoader />;
   }
 
   // ── Not authenticated → show a prompt to login ──

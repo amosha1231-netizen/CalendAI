@@ -4,19 +4,123 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-    <meta name="theme-color" content="#14181A" />
+    <meta name="theme-color" content="#F6F5FB" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="CalendAI" />
-    <meta name="description" content="CalendAI - פירוש לוח זמנים חכם באמצעות AI" />
-    <title>CalendAI - Smart Schedule Parser</title>
+    <title>CalendAI – יומן חכם עם AI בעברית | תיאום פגישות ולו"ז אוטומטי</title>
+    <meta name="description" content="CalendAI (calendai.org) – עוזר יומן חכם בעברית ובאנגלית: כתבו או אמרו את השבוע שלכם בשפה חופשית וה-AI בונה לו&quot;ז, מסנכרן עם Google Calendar, יוצר קישור לתיאום פגישות לוואטסאפ ומכין שעון מעורר לפי האירוע הראשון." />
+    <meta name="application-name" content="CalendAI" />
+    <meta name="author" content="CalendAI" />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
+    <!-- SEO: canonical, hreflang and per-page title/robots are set by the script below,
+         before any crawler reads the page. Home is the canonical https://www.calendai.org/. -->
+    <link rel="canonical" href="https://www.calendai.org/" />
+    <link rel="alternate" hreflang="he" href="https://www.calendai.org/" />
+    <link rel="alternate" hreflang="en" href="https://www.calendai.org/?lang=en" />
+    <link rel="alternate" hreflang="x-default" href="https://www.calendai.org/" />
+    <!-- Open Graph / social previews (WhatsApp, Facebook, LinkedIn, X) -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="CalendAI" />
+    <meta property="og:url" content="https://www.calendai.org/" />
+    <meta property="og:title" content="CalendAI – יומן חכם עם AI בעברית" />
+    <meta property="og:description" content="כתבו את השבוע שלכם בשפה חופשית, וה-AI בונה לו&quot;ז, מתאם פגישות בקישור אחד ומסנכרן עם Google Calendar." />
+    <meta property="og:image" content="https://www.calendai.org/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="CalendAI" />
+    <meta property="og:locale" content="he_IL" />
+    <meta property="og:locale:alternate" content="en_US" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="CalendAI – יומן חכם עם AI בעברית" />
+    <meta name="twitter:description" content="כתבו את השבוע שלכם בשפה חופשית, וה-AI בונה לו&quot;ז, מתאם פגישות ומסנכרן עם Google Calendar." />
+    <meta name="twitter:image" content="https://www.calendai.org/og-image.png" />
+    <script>
+      // Per-page SEO. The site is one SPA, so every path gets this same HTML;
+      // fix the canonical/title/robots for the path being served. Legal and
+      // utility pages stay reachable (Google OAuth and the stores link to them)
+      // but are kept out of search results so they never outrank the home page.
+      (function () {
+        try {
+          if (typeof window === 'undefined' || typeof document === 'undefined') return;
+          var ORIGIN = 'https://www.calendai.org';
+          var path = (window.location.pathname || '/').replace(/\/+$/, '') || '/';
+          var pages = {
+            '/privacy': { title: 'מדיניות פרטיות | CalendAI', noindex: true },
+            '/terms': { title: 'תנאי שימוש | CalendAI', noindex: true },
+            '/delete-account': { title: 'מחיקת חשבון | CalendAI', noindex: true },
+            '/auth/success': { title: 'CalendAI', noindex: true }
+          };
+          var page = pages[path];
+          if (!page && path !== '/') page = { title: null, noindex: true }; // booking links, etc.
+          var en = /(?:^|[?&])lang=en(?:&|$)/.test(window.location.search || '');
+          if (path === '/' && en) {
+            document.documentElement.setAttribute('lang', 'en');
+            document.documentElement.setAttribute('dir', 'ltr');
+            document.title = 'CalendAI – AI Calendar Assistant & Meeting Scheduler';
+          }
+          var canonical = document.querySelector('link[rel="canonical"]');
+          if (canonical) canonical.setAttribute('href', ORIGIN + (path === '/' ? (en ? '/?lang=en' : '/') : path));
+          if (page) {
+            if (page.title) document.title = page.title;
+            var robots = document.querySelector('meta[name="robots"]');
+            if (robots) robots.setAttribute('content', 'noindex, follow');
+            var alts = document.querySelectorAll('link[rel="alternate"][hreflang]');
+            for (var i = 0; i < alts.length; i++) alts[i].parentNode.removeChild(alts[i]);
+          }
+        } catch (e) { /* SEO tweaks are best-effort */ }
+      })();
+    </script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "Organization",
+            "@id": "https://www.calendai.org/#organization",
+            "name": "CalendAI",
+            "url": "https://www.calendai.org/",
+            "logo": "https://www.calendai.org/icon-512.png"
+          },
+          {
+            "@type": "WebSite",
+            "@id": "https://www.calendai.org/#website",
+            "name": "CalendAI",
+            "alternateName": ["CalendAI Israel", "קלנדאי"],
+            "url": "https://www.calendai.org/",
+            "inLanguage": ["he", "en"],
+            "publisher": { "@id": "https://www.calendai.org/#organization" }
+          },
+          {
+            "@type": "SoftwareApplication",
+            "@id": "https://www.calendai.org/#app",
+            "name": "CalendAI",
+            "url": "https://www.calendai.org/",
+            "applicationCategory": "ProductivityApplication",
+            "operatingSystem": "Web, Android, iOS",
+            "inLanguage": ["he", "en"],
+            "image": "https://www.calendai.org/og-image.png",
+            "description": "AI calendar assistant in Hebrew and English: describe your week in plain language and CalendAI builds the schedule, syncs with Google Calendar, shares a booking link over WhatsApp and sets a smart alarm for the first event of the day.",
+            "featureList": [
+              "Natural-language and voice scheduling in Hebrew and English",
+              "Google Calendar sync",
+              "Personal booking link with WhatsApp and email sharing",
+              "Smart alarm based on tomorrow's first event",
+              "Hebrew calendar, Shabbat and holiday times"
+            ],
+            "offers": { "@type": "Offer", "price": "0", "priceCurrency": "ILS" },
+            "publisher": { "@id": "https://www.calendai.org/#organization" }
+          }
+        ]
+      }
+    </script>
     <link rel="manifest" href="/manifest.json" />
-    <link rel="apple-touch-icon" href="/icon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <!-- Ledger & Index brand type: Rubik (display/he), Work Sans (en body), Noto Sans Hebrew (he body), JetBrains Mono (dates/times/prices) -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rubik:wght@500;600;700;800;900&family=Work+Sans:wght@400;500;600&family=Noto+Sans+Hebrew:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;600;700;800;900&family=Rubik:wght@500;600;700;800;900&family=Work+Sans:wght@400;500;600&family=Noto+Sans+Hebrew:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" />
     <!-- Capacitor-specific: disable zoom on native -->
     <script>
       // Wait for Capacitor to be ready before app starts
@@ -33,6 +137,8 @@
     <style>
       /* ──────────────────────────────────────────── */
       /* LuxuryLoader + boot splash (#app-splash)     */
+      /* Light "aurora" loader: canvas background,    */
+      /* gradient app mark, indeterminate bar.        */
       /* ──────────────────────────────────────────── */
       .luxury-loader-overlay {
         position: fixed;
@@ -42,131 +148,92 @@
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        background: #0a0a0c;
+        background: #F6F5FB;
         overflow: hidden;
+        font-family: 'Heebo', system-ui, -apple-system, 'Segoe UI', sans-serif;
       }
-
       .luxury-loader-overlay.fade-out {
-        animation: luxury-fade-out 0.5s ease-out forwards;
+        animation: luxury-fade-out 0.4s ease-out forwards;
       }
-
       @keyframes luxury-fade-out {
         from { opacity: 1; }
         to { opacity: 0; pointer-events: none; }
       }
-
-      .luxury-loader-bg {
+      .luxury-loader-blob {
         position: absolute;
-        inset: 0;
-        background: radial-gradient(ellipse at 50% 40%, rgba(0, 242, 254, 0.04) 0%, transparent 60%),
-                    radial-gradient(ellipse at 50% 60%, rgba(79, 172, 254, 0.04) 0%, transparent 60%);
-        pointer-events: none;
-      }
-
-      .luxury-loader-glow {
-        position: absolute;
-        width: 280px;
-        height: 280px;
         border-radius: 50%;
-        background: radial-gradient(circle, rgba(0, 242, 254, 0.15) 0%, rgba(79, 172, 254, 0.08) 40%, transparent 70%);
-        animation: luxury-breathe 3s ease-in-out infinite;
-        filter: blur(40px);
+        filter: blur(60px);
         pointer-events: none;
       }
-
-      @keyframes luxury-breathe {
-        0%, 100% {
-          transform: scale(0.85);
-          opacity: 0.6;
-        }
-        50% {
-          transform: scale(1.15);
-          opacity: 1;
-        }
-      }
-
+      .luxury-loader-blob.b1 { width: 260px; height: 260px; top: -60px; right: -80px; background: #9B5CFF; opacity: .22; }
+      .luxury-loader-blob.b2 { width: 240px; height: 240px; bottom: -40px; left: -90px; background: #FF6FA8; opacity: .18; }
       .luxury-loader-core {
         position: relative;
+        z-index: 1;
         display: flex;
         flex-direction: column;
         align-items: center;
-        justify-content: center;
-        z-index: 1;
       }
-
-      .luxury-loader-orb {
-        position: absolute;
-        width: 160px;
-        height: 160px;
-        border-radius: 50%;
-        background: radial-gradient(circle at 30% 30%, rgba(0, 242, 254, 0.1), rgba(79, 172, 254, 0.05) 60%, transparent);
-        animation: luxury-breathe-orb 3s ease-in-out infinite;
-        pointer-events: none;
-      }
-
-      @keyframes luxury-breathe-orb {
-        0%, 100% {
-          transform: scale(0.9);
-          opacity: 0.5;
-        }
-        50% {
-          transform: scale(1.1);
-          opacity: 0.8;
-        }
-      }
-
-      .luxury-loader-title {
-        font-size: 3rem;
-        font-weight: 200;
-        letter-spacing: -0.03em;
-        color: rgba(255, 255, 255, 0.7);
-        font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
-        z-index: 2;
-        text-shadow: 0 0 40px rgba(0, 242, 254, 0.15);
-        animation: luxury-title-pulse 3s ease-in-out infinite;
-      }
-
-      @keyframes luxury-title-pulse {
-        0%, 100% {
-          opacity: 0.7;
-          text-shadow: 0 0 40px rgba(0, 242, 254, 0.15);
-        }
-        50% {
-          opacity: 1;
-          text-shadow: 0 0 60px rgba(0, 242, 254, 0.3), 0 0 80px rgba(79, 172, 254, 0.15);
-        }
-      }
-
-      .luxury-loader-status-wrapper {
-        position: absolute;
-        bottom: 80px;
-        left: 0;
-        right: 0;
+      .luxury-loader-mark {
+        width: 84px;
+        height: 84px;
+        border-radius: 24px;
+        background: linear-gradient(135deg, #5B4BFF 0%, #9B5CFF 55%, #FF6FA8 100%);
         display: flex;
+        align-items: center;
         justify-content: center;
-        z-index: 1;
+        box-shadow: 0 18px 40px -12px rgba(91, 75, 255, .55);
+        animation: luxury-float 2.4s ease-in-out infinite;
       }
-
-      .luxury-loader-status {
+      .luxury-loader-mark svg { width: 52px; height: 52px; }
+      @keyframes luxury-float {
+        0%, 100% { transform: translateY(0) scale(1); }
+        50% { transform: translateY(-4px) scale(1.03); }
+      }
+      .luxury-loader-title {
+        margin: 18px 0 0;
+        font-size: 32px;
+        font-weight: 800;
+        letter-spacing: -0.02em;
         direction: ltr;
-        unicode-bidi: isolate;
-        font-size: 0.65rem;
-        font-weight: 400;
-        letter-spacing: 0.35em;
-        color: rgba(255, 255, 255, 0.25);
-        font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
-        animation: luxury-status-fade 3s ease-in-out infinite;
+        background-image: linear-gradient(135deg, #5B4BFF 0%, #9B5CFF 55%, #FF6FA8 100%);
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
       }
-
-      @keyframes luxury-status-fade {
-        0%, 100% {
-          opacity: 0.25;
-        }
-        50% {
-          opacity: 0.5;
-        }
+      .luxury-loader-track {
+        position: relative;
+        margin-top: 22px;
+        width: 112px;
+        height: 4px;
+        border-radius: 4px;
+        background: #E6E2FA;
+        overflow: hidden;
       }
-
+      .luxury-loader-bar {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: 0;
+        width: 45%;
+        border-radius: 4px;
+        background: linear-gradient(90deg, #5B4BFF, #FF6FA8);
+        animation: luxury-slide 1.3s ease-in-out infinite;
+      }
+      @keyframes luxury-slide {
+        0% { transform: translateX(-100%); }
+        100% { transform: translateX(225%); }
+      }
+      .luxury-loader-status {
+        margin-top: 14px;
+        min-height: 20px;
+        font-size: 14px;
+        color: #7A7896;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .luxury-loader-mark, .luxury-loader-bar { animation: none; }
+        .luxury-loader-bar { left: 27%; }
+      }
       #app-splash {
         z-index: 100000;
       }
@@ -177,17 +244,31 @@
          seamlessly. It sits outside #root and fades out once the first real screen
          has rendered (see src/utils/splash.js). -->
     <div id="app-splash" class="luxury-loader-overlay" aria-hidden="true">
-      <div class="luxury-loader-bg"></div>
-      <div class="luxury-loader-glow"></div>
+      <div class="luxury-loader-blob b1"></div>
+      <div class="luxury-loader-blob b2"></div>
       <div class="luxury-loader-core">
-        <div class="luxury-loader-orb"></div>
-        <h1 class="luxury-loader-title">CalendAI</h1>
-      </div>
-      <div class="luxury-loader-status-wrapper">
-        <span class="luxury-loader-status">OPTIMIZING YOUR SCHEDULE...</span>
+        <div class="luxury-loader-mark"><svg viewBox="0 0 100 100" aria-hidden="true"><rect x="18" y="24" width="64" height="56" rx="10" fill="#fff"/><rect x="29" y="14" width="6" height="16" rx="3" fill="#fff"/><rect x="65" y="14" width="6" height="16" rx="3" fill="#fff"/><rect x="18" y="24" width="64" height="16" rx="8" fill="#E2DCFF"/><rect x="30" y="50" width="12" height="11" rx="3" fill="#5B4BFF"/><rect x="50" y="50" width="12" height="11" rx="3" fill="#C9C2FF"/><rect x="30" y="66" width="12" height="8" rx="3" fill="#C9C2FF"/><rect x="50" y="66" width="12" height="8" rx="3" fill="#FF6FA8"/></svg></div>
+        <div class="luxury-loader-title">CalendAI</div>
+        <div class="luxury-loader-track"><div class="luxury-loader-bar"></div></div>
+        <div class="luxury-loader-status"></div>
       </div>
     </div>
-    <div id="root"></div>
+    <!-- Crawlable summary for search engines and no-JS visitors. React replaces it on mount. -->
+    <div id="root">
+      <main style="max-width:720px;margin:0 auto;padding:24px 16px;font-family:system-ui,sans-serif;line-height:1.6">
+        <h1>CalendAI – יומן חכם עם AI בעברית</h1>
+        <p>CalendAI הוא עוזר יומן ותיאום פגישות מבוסס בינה מלאכותית, בעברית ובאנגלית. כתבו או אמרו את השבוע שלכם בשפה חופשית, וה-AI הופך את זה ללו"ז מסודר.</p>
+        <ul>
+          <li>יצירת אירועים ומשימות בשפה טבעית ובקול</li>
+          <li>סנכרון דו-כיווני עם Google Calendar</li>
+          <li>קישור אישי לתיאום פגישות לשיתוף בוואטסאפ ובמייל</li>
+          <li>שעון מעורר חכם לפי האירוע הראשון של מחר</li>
+          <li>לוח שנה עברי, זמני שבת וחגים</li>
+        </ul>
+        <p lang="en" dir="ltr">CalendAI is an AI calendar assistant for Hebrew and English speakers: natural-language scheduling, Google Calendar sync, shareable booking links and smart alarms.</p>
+        <p><a href="/">התחילו עכשיו</a> · <a href="/?lang=en">English</a> · <a href="/privacy">מדיניות פרטיות</a> · <a href="/terms">תנאי שימוש</a></p>
+      </main>
+    </div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

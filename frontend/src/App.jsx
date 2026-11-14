@@ -2,16 +2,18 @@ import React, { useState, useEffect, useCallback, useRef, Suspense, lazy } from 
 import { motion } from "framer-motion";
 import { BrowserRouter } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
-import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff, Home, Plus, Zap, ChevronDown, ChevronUp, FileText, Layout, Trophy, Image, Upload, Search, CalendarPlus, BookOpen, Users, ListChecks, LayoutGrid, Link2, Briefcase, Settings, AlarmClock, Wallet, BarChart3 } from "lucide-react";
+import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff, Home, Zap, ChevronDown, ChevronUp, FileText, Layout, Trophy, Image, Upload, Search, CalendarPlus, BookOpen, Users, ListChecks, LayoutGrid, Link2, Briefcase, Settings, AlarmClock, Wallet, BarChart3 } from "lucide-react";
 import { staggerContainerVariants, staggerItemVariants } from "./hooks/useStaggeredAnimation";
 import GlobalSearch from "./components/GlobalSearch";
 import MonthlyCalendar from "./components/MonthlyCalendar";
 import DayView from "./components/DayView";
 import ViewNavigation from "./components/ViewNavigation";
+import { HomeGreeting, NextUpCard } from "./components/HomeHeader";
 import LocationSelector from "./components/LocationSelector";
 import Privacy from "./components/Privacy";
 import ErrorBoundary from "./components/ErrorBoundary";
 import SidebarDrawer from "./components/SidebarDrawer";
+import { installOverlayScrollLock } from "./utils/overlayScrollLock";
 import BottomNav, { NavSheet, getNavLabels } from "./components/BottomNav";
 import MeetingWizard from "./components/MeetingWizard";
 import LuxuryLoader from "./components/LuxuryLoader";
@@ -38,10 +40,13 @@ const ProviderProfileEditor = lazy(() => import("./components/ProviderProfileEdi
 const ExpectedExpenses = lazy(() => import("./components/ExpectedExpenses"));
 import PrivacyPolicyPage from "./pages/PrivacyPolicy";
 import DeleteAccountPage from "./pages/DeleteAccount";
+import AdminCostsPage from "./pages/AdminCosts";
 import TermsPage from "./pages/Terms";
 import translations from "./i18n";
 import safeStorage from "./utils/safeStorage";
 import { isNativeApp, startOAuth } from './utils/nativeApp';
+import { isIapAvailable } from './utils/inAppPurchase';
+import InAppCreditsSheet from './components/InAppCreditsSheet';
 import { openCheckout, readCheckoutResponse, consumePaymentSuccessParam, CREDITS_PURCHASED_EVENT, notifyCreditsPurchased } from './utils/lemonCheckout';
 import { isIosWhatsApp, isIosSafari, isIosNonSafari, isStandalone } from "./utils/browserDetection";
 import { normalizeCredits, normalizeUserCredits, formatCredits } from "./utils/credits";
@@ -69,6 +74,16 @@ function isJwtExpired(token) {
 
 // ── Module-level declarations (using var/function to avoid TDZ) ──
 var API_BASE = import.meta.env.VITE_API_URL || "";
+var INPUT_DRAFT_KEY = 'calendai-input-draft';
+
+function hasValidJwt() {
+  try {
+    const token = safeStorage.getItem('token') || safeStorage.getItem('calendai-jwt');
+    return !!token && !isJwtExpired(token);
+  } catch (e) {
+    return false;
+  }
+}
 
 // JWT auth header for raw fetch() calls below — withCredentials cookies alone
 // aren't reliable (e.g. iOS Safari drops third-party session cookies), and the
@@ -150,7 +165,9 @@ function setJwtToken(token) {
 }
 
 // ── Language configuration ──
-const LANGUAGE_CYCLE = ['he', 'en', 'fr', 'es'];
+// Only Hebrew and English are fully translated. French/Spanish were partial and
+// showed a mix of languages, so a saved 'fr'/'es' now falls back to Hebrew.
+const LANGUAGE_CYCLE = ['he', 'en'];
 
 // ── Timezone options ──
 const TIMEZONE_OPTIONS = [
@@ -175,6 +192,15 @@ function AppRoutes() {
   // Language state - load from localStorage or default to 'he'
   const [lang, setLang] = useState(() => {
     try {
+      // ?lang=en / ?lang=he (used by the English search result and hreflang links)
+      // wins over the saved choice, so a shared English link opens in English.
+      const fromUrl = typeof window !== 'undefined'
+        ? new URLSearchParams(window.location.search).get('lang')
+        : null;
+      if (fromUrl && LANGUAGE_CYCLE.includes(fromUrl)) {
+        try { safeStorage.setItem('calendai-lang', fromUrl); } catch { /* storage unavailable */ }
+        return fromUrl;
+      }
       const saved = safeStorage.getItem('calendai-lang');
       if (saved && LANGUAGE_CYCLE.includes(saved)) return saved;
       return 'he';
@@ -186,7 +212,16 @@ function AppRoutes() {
   const [selectedTimezone, setSelectedTimezone] = useState(() => getUserTimeZone());
 
   const [showPrivacy, setShowPrivacy] = useState(false);
-  const [inputText, setInputText] = useState("");
+  // The home request box keeps an unsent request in storage, so it survives a
+  // failed request, a login redirect (Google sign-in reloads the page) or the
+  // app being closed. It is cleared only once the request is actually saved.
+  const [inputText, setInputText] = useState(() => {
+    try { return safeStorage.getItem(INPUT_DRAFT_KEY) || ""; } catch (e) { return ""; }
+  });
+  // Text sent to the AI and not yet saved (the box is emptied while it runs).
+  const pendingInputRef = useRef("");
+  // True when the last request failed for a reason a retry can fix.
+  const [parseRetryable, setParseRetryable] = useState(false);
   // recurrence and eventType are now determined by the AI from natural language text
   // Manual dropdowns have been removed — the AI parses schedules and frequencies intelligently.
   const DEFAULT_RECURRENCE = 'weekly';
@@ -274,6 +309,24 @@ function AppRoutes() {
     return null;
   });
 
+  // While a drawer, sheet or modal is open, only it scrolls, never the page behind it.
+  useEffect(() => {
+    try { return installOverlayScrollLock(); } catch (e) { return undefined; }
+  }, []);
+
+  // ?mutual=1 comes from a tapped "a friend wants to find a time" notification.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('mutual') !== '1') return;
+      params.delete('mutual');
+      const rest = params.toString();
+      window.history.replaceState({}, document.title, window.location.pathname + (rest ? `?${rest}` : ''));
+      setCurrentView('mutual');
+    } catch (e) {}
+  }, [isAuthenticated]);
+
   useEffect(() => {
     // Leave the landing page once signed in, but keep a booking link (?book=true) open.
     if (isAuthenticated) {
@@ -324,7 +377,7 @@ function AppRoutes() {
   const [dayDetailModal, setDayDetailModal] = useState(null);
   const [showAlarmSettings, setShowAlarmSettings] = useState(false);
   
-  // ── Calendar View State (day / weekly / monthly / yearly / 100year) ──
+  // ── Calendar View State (day / weekly / monthly) ──
   const [calendarView, setCalendarView] = useState('day');
   const [dayOffset, setDayOffset] = useState(0); // 0 = today, 1 = tomorrow, -1 = yesterday
 
@@ -347,6 +400,8 @@ function AppRoutes() {
   });
   const [showGuestLimitModal, setShowGuestLimitModal] = useState(false);
   const [showCreditsModal, setShowCreditsModal] = useState(false);
+  // Store apps: Apple / Google in-app purchase sheet. null | 'menu' | 'out'
+  const [iapSheet, setIapSheet] = useState(null);
   const [creditsError, setCreditsError] = useState("");
   const [checkoutLoading, setCheckoutLoading] = useState(false);
 
@@ -358,9 +413,14 @@ function AppRoutes() {
   const [drawerTab, setDrawerTab] = useState('settings');
 
   const handleBuyCredits = useCallback(async () => {
-    // App Store rules: digital purchases inside the iOS app must use Apple's
-    // in-app purchase, so the native app does not open the web checkout.
-    if (isNativeApp()) return;
+    // App Store / Play rules: digital purchases inside the store apps must use
+    // Apple / Google billing, so the apps never open the web checkout.
+    if (isNativeApp()) {
+      if (!isIapAvailable()) return;
+      if (!user) { setShowLoginPrompt(true); return; }
+      setIapSheet('menu');
+      return;
+    }
     if (!user) {
       setShowLoginPrompt(true);
       return;
@@ -375,7 +435,7 @@ function AppRoutes() {
           "Content-Type": "application/json",
           ...(token ? { 'Authorization': `Bearer ${token}` } : {})
         },
-        body: JSON.stringify({ lang }),
+        body: JSON.stringify({ lang, product: 'credits' }),
         credentials: "include"
       });
       const data = await readCheckoutResponse(res, lang);
@@ -395,11 +455,29 @@ function AppRoutes() {
     }
   }, [user, lang, setShowLoginPrompt, setError]);
 
+  // Out of AI credits. The store apps (iOS/Android) must not point to a purchase,
+  // so only the website mentions buying more.
+  const showOutOfCredits = useCallback(() => {
+    if (isIapAvailable() && user) {
+      setIapSheet('out');
+      return;
+    }
+    setCreditsError(isNativeApp()
+      ? (lang === 'he' ? 'נגמרו לך הקרדיטים לפעולות AI.' : 'You have used all your AI credits.')
+      : (lang === 'he' ? 'נגמרו לך הקרדיטים! אנא רכוש חבילת פעולות נוספת כדי להמשיך להשתמש ב-AI.' : 'You ran out of credits! Please purchase an additional action pack to continue using the AI.'));
+    setShowCreditsModal(true);
+  }, [lang, user]);
+
   const [showWizard, setShowWizard] = useState(false);
   const [showSendInvite, setShowSendInvite] = useState(false);
   const [showManualEvent, setShowManualEvent] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [showPublicGoals, setShowPublicGoals] = useState(false);
+  // "Create a challenge" from the search opens the challenges screen on its form.
+  const [publicGoalsCreate, setPublicGoalsCreate] = useState(null); // null | { title }
+  useEffect(() => {
+    if (!showPublicGoals) setPublicGoalsCreate(null);
+  }, [showPublicGoals]);
   const [showChallengeDetail, setShowChallengeDetail] = useState(false);
   const [selectedChallengeId, setSelectedChallengeId] = useState(null);
   const [showProviderDirectory, setShowProviderDirectory] = useState(false);
@@ -511,7 +589,7 @@ function AppRoutes() {
   }, []);
 
   const handleShareApp = useCallback(async () => {
-    const shareUrl = 'https://calendai.org/';
+    const shareUrl = 'https://www.calendai.org/';
     if (navigator.share) {
       try {
         await navigator.share({
@@ -569,7 +647,9 @@ function AppRoutes() {
   const handleParseOriginalRef = useRef(null);
 
   const handleLoginRequired = useCallback((action) => {
-    if (!user) {
+    // A valid saved login counts even while the user profile is still loading
+    // (e.g. right after opening the app); the server has the final say.
+    if (!user && !hasValidJwt()) {
       setPendingAction(action);
       setShowLoginPrompt(true);
       return true;
@@ -664,13 +744,14 @@ function AppRoutes() {
         if (data.user) {
           const normalizedUser = normalizeUserCredits(data.user);
           setUser(normalizedUser);
+          if (setIsPro) setIsPro(data.user?.isPro === true || data.user?.isPro === 'true');
           try { safeStorage.setItem('calendai-user', JSON.stringify(normalizedUser)); } catch (e) {}
         }
       }
     } catch (e) {
       console.warn("Failed to refresh user credits:", e);
     }
-  }, [user, setUser]);
+  }, [user, setUser, setIsPro]);
 
   // ── After a purchase (overlay success event or return from the checkout redirect),
   // refresh credits a few times: the Lemon Squeezy webhook can land a few seconds later.
@@ -1016,6 +1097,10 @@ function AppRoutes() {
         credentials: "include"
       });
       const data = await res.json();
+      if (res.status === 402) {
+        showOutOfCredits();
+        return;
+      }
       if (!res.ok) {
         if (data.error) throw new Error(data.error);
         else throw new Error(t.failedRequest + " " + res.status);
@@ -1064,6 +1149,24 @@ function AppRoutes() {
     setSuccess(data.replyMessage || `${t.successAdded} ${data.events?.length || 0} ${t.successEvents}`);
   };
 
+  // Keep the unsent request in storage (see INPUT_DRAFT_KEY).
+  useEffect(() => {
+    try {
+      const draft = inputText || pendingInputRef.current;
+      if (draft) safeStorage.setItem(INPUT_DRAFT_KEY, draft);
+      else safeStorage.removeItem(INPUT_DRAFT_KEY);
+    } catch (e) {}
+  }, [inputText, loading, parsePreview]);
+
+  useEffect(() => {
+    if (!error) setParseRetryable(false);
+  }, [error]);
+
+  const clearInputDraft = () => {
+    pendingInputRef.current = "";
+    try { safeStorage.removeItem(INPUT_DRAFT_KEY); } catch (e) {}
+  };
+
   const handleParse = async () => {
     if (!inputText.trim()) return;
     if (showShabbatOverlay) {
@@ -1075,9 +1178,15 @@ function AppRoutes() {
     // Clear input immediately and reset button state for responsive UX.
     // Keep the submitted text so a failed request can put it back.
     const submittedText = inputText;
-    const restoreInput = () => setInputText(prev => prev || submittedText);
+    const restoreInput = () => {
+      pendingInputRef.current = "";
+      setInputText(prev => prev || submittedText);
+    };
+    pendingInputRef.current = submittedText;
+    try { safeStorage.setItem(INPUT_DRAFT_KEY, submittedText); } catch (e) {}
     setInputText("");
     setLoading(true);
+    setParseRetryable(false);
     setError("");
     setSuccess("");
     setParsePreview(null);
@@ -1105,18 +1214,25 @@ function AppRoutes() {
           return;
         }
         if (res.status === 402) {
-          setCreditsError(isNativeApp()
-            ? (lang === 'he' ? 'נגמרו לך הקרדיטים לפעולות AI.' : 'You have used all your AI credits.')
-            : (errorData.error || 'נגמרו לך הקרדיטים! אנא רכוש חבילת פעולות נוספת כדי להמשיך להשתמש ב-AI.'));
-          setShowCreditsModal(true);
+          showOutOfCredits();
           return;
         }
-        throw new Error(t.failedRequest + " " + res.status);
+        // Busy AI, server waking up or a gateway error: the text is back in
+        // the box and the same request can simply be sent again.
+        if (errorData.retryable === true || res.status === 429 || res.status >= 500) {
+          setParseRetryable(true);
+          setError(errorData.retryable === true && errorData.error
+            ? errorData.error
+            : (t.requestFailedRetry || `${t.failedRequest} ${res.status}`));
+          return;
+        }
+        throw new Error(errorData.error || `${t.failedRequest} ${res.status}`);
       }
       const data = await res.json();
       applyCreditsFromResponse(data);
       if (!data.preview) {
         // Server without preview support saved directly.
+        clearInputDraft();
         saveScheduleState();
         await applySavedParseResult(data);
         return;
@@ -1131,7 +1247,13 @@ function AppRoutes() {
       setParsePreview({ items, text: submittedText, replyMessage: data.replyMessage, edited: false });
     } catch (err) {
       restoreInput();
-      setError(err.message);
+      if (err instanceof TypeError) {
+        // fetch() itself failed: no connection, or the server is unreachable.
+        setParseRetryable(true);
+        setError(t.requestFailedRetry || err.message);
+      } else {
+        setError(err.message);
+      }
     } finally {
       setLoading(false);
     }
@@ -1158,6 +1280,7 @@ function AppRoutes() {
         throw new Error(errorData.error || `${t.failedRequest} ${res.status}`);
       }
       const data = await res.json();
+      clearInputDraft();
       saveScheduleState();
       setParsePreview(null);
       await applySavedParseResult(data);
@@ -1171,6 +1294,7 @@ function AppRoutes() {
   const handleCancelPreview = () => {
     if (previewSaving) return;
     const text = parsePreview?.text || "";
+    pendingInputRef.current = "";
     setParsePreview(null);
     setInputText(prev => prev || text);
   };
@@ -1262,6 +1386,7 @@ function AppRoutes() {
         method: "POST", headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ reason }), credentials: "include"
       });
+      if (res.status === 402) { setIsRescheduleOpen(false); showOutOfCredits(); return; }
       if (!res.ok) { const e = await res.json(); throw new Error(e.error || "AI failed"); }
       const data = await res.json();
       setReschedulePreview(data);
@@ -1434,6 +1559,10 @@ function AppRoutes() {
     return <DeleteAccountPage />;
   }
 
+  if (typeof window !== 'undefined' && window.location.pathname === '/admin/costs') {
+    return <AdminCostsPage />;
+  }
+
   if (typeof window !== 'undefined' && window.location.pathname === '/terms') {
     return <TermsPage />;
   }
@@ -1447,7 +1576,7 @@ function AppRoutes() {
   // This prevents the landing page from flashing while the OAuth callback
   // token is being saved to storage by AuthContext.
   if (authLoading && !user && !safeStorage.getItem('token') && !safeStorage.getItem('calendai-jwt')) {
-    return <LuxuryLoader statusText={t.parsing || 'AUTHENTICATING...'} />;
+    return <LuxuryLoader />;
   }
 
   if (guestBookingId) {
@@ -1587,14 +1716,14 @@ function AppRoutes() {
     const credits = user ? normalizeCredits(user.aiCredits) : undefined;
     const meetOpen = currentView === 'mutual' || showWizard || showSendInvite || showProviderDirectory || showProviderProfileEditor;
     const toolsOpen = showReminders || showAlarmSettings || showExpenses || showJournal || showPublicGoals || showChallengeDetail || showHistoryModal;
-    const activeNav = isSidebarOpen ? 'me'
-      : navSheet || (routinesView ? 'routines' : meetOpen ? 'meet' : toolsOpen ? 'tools' : 'home');
+    // The account drawer opens from the header avatar; routines live under Tools.
+    const activeNav = navSheet || ((routinesView || toolsOpen) ? 'tools' : meetOpen ? 'meet' : 'home');
     const tabs = [
       { id: 'home', label: nl.home, icon: Home, badge: schedule.Today?.length || 0 },
-      { id: 'routines', label: nl.routines, icon: ListChecks },
+      { id: 'schedule', label: nl.schedule, icon: CalendarDays },
+      { id: 'voice', label: nl.voice, icon: isListening ? MicOff : Mic, orb: true, live: isListening },
       { id: 'meet', label: nl.meet, icon: Users },
       { id: 'tools', label: nl.tools, icon: LayoutGrid },
-      { id: 'me', label: nl.me, icon: User, photo: user?.photo, dot: credits === 0 },
     ];
     // Moving to another tab leaves whatever screen is open, like switching tabs in WhatsApp.
     const closeOpenScreens = () => {
@@ -1620,16 +1749,29 @@ function AppRoutes() {
       if (currentView === 'mutual') setCurrentView('dashboard');
     };
     const selectTab = (id) => {
-      if (id === activeNav && id !== 'home') return;
+      if (id === activeNav && id !== 'home' && id !== 'voice' && id !== 'schedule') return;
       closeOpenScreens();
+      const scrollToId = (elId) => setTimeout(() => {
+        try { document.getElementById(elId)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) {}
+      }, 60);
       if (id === 'home') {
         setDayOffset(0);
         try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (e) {}
+      } else if (id === 'schedule') {
+        setDayOffset(0);
+        setCalendarView('weekly');
+        scrollToId('home-schedule');
+      } else if (id === 'voice') {
+        // Start listening right away (inside the tap, so iOS allows the mic),
+        // then bring the composer into view; without speech support, focus typing instead.
+        if (speechSupported) {
+          handleToggleListening();
+        } else {
+          setTimeout(() => { try { document.getElementById('home-composer-input')?.focus(); } catch (e) {} }, 80);
+        }
+        scrollToId('home-composer');
       } else if (id === 'routines') {
         setRoutinesView('today');
-      } else if (id === 'me') {
-        setDrawerTab('settings');
-        setIsSidebarOpen(true);
       } else {
         setNavSheet(id);
       }
@@ -1644,6 +1786,7 @@ function AppRoutes() {
         ...(user ? [{ id: 'providerProfile', label: nl.providerProfile, sub: nl.providerProfileSub, icon: Settings, tone: 'bg-amber-50 text-amber-600', onClick: run(() => setShowProviderProfileEditor(true)) }] : []),
       ],
       tools: [
+        { id: 'routines', label: nl.routines, sub: nl.routinesSub, icon: ListChecks, tone: 'bg-violet-50 text-violet-600', onClick: run(() => setRoutinesView('today')) },
         { id: 'alarm', label: nl.alarm, sub: nl.alarmSub, icon: AlarmClock, tone: 'bg-amber-50 text-amber-600', onClick: run(() => setShowAlarmSettings(true)) },
         { id: 'reminders', label: nl.reminders, sub: nl.remindersSub, icon: Bell, tone: 'bg-amber-50 text-amber-600', onClick: run(() => setShowReminders(true)) },
         { id: 'expenses', label: nl.expenses, sub: nl.expensesSub, icon: Wallet, tone: 'bg-emerald-50 text-emerald-600', onClick: run(() => setShowExpenses(true)) },
@@ -1683,8 +1826,8 @@ function AppRoutes() {
           lang={lang}
           t={t}
           locationId={selectedLocation}
+          schedule={schedule}
           onClose={() => setCurrentView('dashboard')}
-          onFallbackToShareLink={() => setCurrentView('booking')}
           onMeetingConfirmed={fetchSchedule}
         />
         {renderBottomNav()}
@@ -1733,7 +1876,7 @@ function AppRoutes() {
         </div>
       )}
 
-      <div className={`min-h-screen bg-[#F8FAFC] font-sans pb-[calc(6.5rem+env(safe-area-inset-bottom))]`} dir={isRTL ? 'rtl' : 'ltr'}>
+      <div className={`min-h-screen bg-canvas text-[#0E1020] font-sans pb-[calc(7rem+env(safe-area-inset-bottom))]`} dir={isRTL ? 'rtl' : 'ltr'}>
         {/* iOS In-App Browser Banner */}
         {isIosWhatsApp() && (
           <div className="fixed top-0 left-0 right-0 z-[99999] bg-amber-50 border-b border-amber-200 px-3 py-2 text-xs text-amber-800 flex items-center justify-between gap-2 shadow-sm" dir="rtl">
@@ -1792,11 +1935,15 @@ function AppRoutes() {
         )}
 
         {/* ── Minimal Header ── */}
-        <header className="px-4 py-3 flex flex-wrap items-center gap-2 max-w-6xl mx-auto">
-          {/* Left: Logo (navigation lives in the bottom bar) */}
-          <div className="flex items-center gap-2 shrink-0">
-            <Calendar className="w-6 h-6 text-blue-600" />
-            <h1 className="text-lg font-bold text-slate-900">CalendAI</h1>
+        <header className="px-4 sm:px-5 pt-4 pb-2 flex items-center gap-2 max-w-6xl mx-auto">
+          {/* Start: avatar (opens the account drawer) + greeting and today's date */}
+          <div className="flex-1 sm:flex-none min-w-0">
+            <HomeGreeting
+              user={user}
+              lang={lang}
+              showDot={user ? normalizeCredits(user.aiCredits) === 0 : false}
+              onOpenAccount={() => { setNavSheet(null); setDrawerTab(user ? 'account' : 'settings'); setIsSidebarOpen(true); }}
+            />
           </div>
 
           {/* Center: Global Search (desktop) */}
@@ -1812,11 +1959,12 @@ function AppRoutes() {
                 setShowPublicGoals(true);
               }}
               onOpenPublicGoals={() => setShowPublicGoals(true)}
+              onCreateChallenge={(title) => { setPublicGoalsCreate({ title }); setShowPublicGoals(true); }}
             />
           </div>
 
           {/* Right: Credits, Trophy, Search Icon, Lang, Auth */}
-          <div className="flex items-center gap-1 sm:gap-1.5 shrink-0 ml-auto">
+          <div className="flex items-center gap-2 shrink-0 ms-auto">
             {/* AI Credits Badge */}
             {(() => {
               const credits = user ? normalizeCredits(user.aiCredits) : undefined;
@@ -1824,39 +1972,31 @@ function AppRoutes() {
               return (
                 <button
                   onClick={handleBuyCredits}
-                  disabled={checkoutLoading || isNativeApp()}
-                  className={`flex items-center gap-1 text-xs font-medium px-1.5 sm:px-3 py-1.5 rounded-full border shadow-sm transition ${
+                  disabled={checkoutLoading || (isNativeApp() && !isIapAvailable())}
+                  title={lang === 'he' ? 'קרדיטים ל-AI' : 'AI credits'}
+                  className={`hidden xs:flex items-center gap-1 h-[42px] px-3 rounded-[14px] text-xs font-bold transition ${
                     credits > 0
-                      ? 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'
-                      : 'bg-red-50 text-red-600 border-red-200 hover:bg-red-100 animate-pulse'
+                      ? 'bg-brand-soft text-brand hover:bg-[#E3DEFF]'
+                      : 'bg-red-50 text-red-600 hover:bg-red-100 animate-pulse'
                   }`}
                 >
-                  <Zap className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
-                  <span className="text-[10px] sm:text-xs">{formatCredits(credits)}</span>
+                  <Zap className="w-3.5 h-3.5" />
+                  <span>{formatCredits(credits)}</span>
                 </button>
               );
             })()}
             {/* Mobile Search Icon Toggle */}
             <button
               onClick={() => setShowMobileSearch(true)}
-              className="sm:hidden flex items-center justify-center w-8 h-8 rounded-lg hover:bg-slate-100 transition text-slate-500"
+              className="sm:hidden flex items-center justify-center w-[42px] h-[42px] rounded-[14px] bg-white shadow-[0_4px_14px_-8px_rgba(40,30,120,0.3)] text-[#2A2D45] transition"
               title={lang === "he" ? "חיפוש" : "Search"}
+              aria-label={lang === "he" ? "חיפוש" : "Search"}
             >
-              <Search className="w-4 h-4" />
+              <Search className="w-5 h-5" />
             </button>
-            {/* Auth */}
-            {/* Add event — top-corner "+" like WhatsApp's new-chat button */}
-            <button
-              onClick={() => setShowManualEvent(true)}
-              aria-label={getNavLabels(lang).add}
-              title={getNavLabels(lang).add}
-              className="flex items-center justify-center w-9 h-9 rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 text-white shadow-md shadow-blue-200 hover:shadow-lg transition"
-            >
-              <Plus className="w-5 h-5" />
-            </button>
-            {/* Auth — signed-in users log out from the "You" tab */}
+            {/* Auth — signed-in users log out from the avatar menu */}
             {!user && (
-              <button onClick={() => handleLogin(lang)} className="flex items-center gap-1 text-xs font-medium px-1.5 sm:px-3 py-1.5 rounded-full bg-blue-600 text-white hover:bg-blue-700 transition shadow-sm">
+              <button onClick={() => handleLogin(lang)} className="flex items-center gap-1 h-[42px] text-xs font-bold px-3 rounded-[14px] bg-aurora text-white shadow-glow transition">
                 <LogIn className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline">{t.loginWithGoogle}</span>
               </button>
@@ -1881,11 +2021,26 @@ function AppRoutes() {
                 setShowPublicGoals(true);
                 setShowMobileSearch(false);
               }}
+              onCreateChallenge={(title) => {
+                setPublicGoalsCreate({ title });
+                setShowPublicGoals(true);
+                setShowMobileSearch(false);
+              }}
             />
           </div>
         )}
 
-        <main className="px-4 max-w-6xl mx-auto space-y-5">
+        <main className="px-4 sm:px-5 max-w-6xl mx-auto space-y-4 mt-2">
+          <NextUpCard
+            schedule={schedule}
+            lang={lang}
+            onOpen={(ev) => {
+              for (const key of ['Today', todayName]) {
+                const idx = (schedule[key] || []).indexOf(ev);
+                if (idx >= 0) { handleOpenEditModal(key, idx); return; }
+              }
+            }}
+          />
           {user && (
             <RoutinesTodayCard lang={lang} user={user} refreshKey={routinesRefresh} onOpen={tab => setRoutinesView(tab)} />
           )}
@@ -1893,24 +2048,24 @@ function AppRoutes() {
             <RemindersPinger lang={lang} user={user} refreshKey={remindersRefresh} onReminders={setReminderList} />
           )}
           {/* ── AI Prompt Floating Card ── */}
-          <div className="bg-slate-50 p-3 sm:p-5 rounded-2xl sm:rounded-3xl shadow-sm border border-slate-100">
+          <div id="home-composer" className="scroll-mt-4 bg-white p-3.5 sm:p-5 rounded-[24px] shadow-soft">
             {/* Suggestion Chips */}
             <div className="flex items-center gap-1.5 overflow-x-auto whitespace-nowrap py-1 mb-3" style={{ scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch' }}>
-              <span className="text-xs text-slate-400 shrink-0">{t.tryForExample}</span>
+              <span className="text-xs text-[#A3A6BB] shrink-0">{t.tryForExample}</span>
               {SUGGESTION_CHIPS.map((s, i) => (
                 <button key={i} onClick={() => setInputText(s)}
-                  className="px-3 py-1.5 text-xs rounded-full border transition bg-white text-slate-600 border-slate-200 hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-300 shrink-0 font-medium">{s}</button>
+                  className={`h-8 px-3.5 text-[13px] rounded-full transition shrink-0 font-medium ${i === 0 ? 'bg-brand-soft text-brand hover:bg-[#E3DEFF]' : 'bg-white text-[#2A2D45] border border-[#ECEAF3] hover:bg-[#F6F5FB]'}`}>{s}</button>
               ))}
               <button onClick={() => setInputText(t.suggestionSleep)}
-                className="px-3 py-1.5 text-xs rounded-full border transition bg-indigo-50 text-indigo-600 border-indigo-200 hover:bg-indigo-100 shrink-0 flex items-center gap-1 font-medium">
+                className="h-8 px-3.5 text-[13px] rounded-full border transition bg-white text-[#2A2D45] border-[#ECEAF3] hover:bg-[#F6F5FB] shrink-0 flex items-center gap-1 font-medium">
                 <Moon className="w-3 h-3" /> {t.suggestionSleep}
               </button>
             </div>
 
             {/* Textarea */}
             <div className="relative" style={{ minHeight: '100px' }}>
-              <textarea value={inputText} onChange={e => setInputText(e.target.value)}
-                className={`w-full p-4 rounded-2xl bg-white text-slate-800 placeholder-transparent focus:ring-2 focus:ring-indigo-400 focus:bg-white focus:shadow-lg border border-slate-200 focus:border-indigo-300 transition-all duration-200 resize-none ${isRTL ? 'text-right' : 'text-left'}`}
+              <textarea id="home-composer-input" value={inputText} onChange={e => setInputText(e.target.value)}
+                className={`w-full p-4 ${isRTL ? 'pl-16' : 'pr-16'} rounded-2xl bg-[#F6F5FB] text-[#0E1020] text-base placeholder-transparent focus:ring-2 focus:ring-brand/40 focus:bg-white border border-transparent focus:border-[#E3DEFF] outline-none transition-all duration-200 resize-none ${isRTL ? 'text-right' : 'text-left'}`}
                 rows="3" placeholder=" "
                 onKeyDown={e => { if (e.key === 'Enter' && e.ctrlKey) handleParse(); }}
               />
@@ -1928,14 +2083,15 @@ function AppRoutes() {
                 <button
                   onClick={handleToggleListening}
                   disabled={loading}
-                  className={`absolute bottom-2 ${isRTL ? 'left-2' : 'right-2'} p-2 rounded-full transition shadow-sm z-10 ${
+                  aria-label={isListening ? (lang === 'he' ? 'הפסקת הקלטה' : 'Stop recording') : (lang === 'he' ? 'הקלטה קולית' : 'Voice input')}
+                  className={`absolute bottom-3 ${isRTL ? 'left-2.5' : 'right-2.5'} w-12 h-12 flex items-center justify-center rounded-2xl transition z-10 ${
                     isListening
-                      ? 'bg-red-500 text-white animate-pulse shadow-md ring-2 ring-red-300'
-                      : 'bg-white text-slate-500 border border-slate-300 hover:bg-slate-100 hover:text-blue-600'
+                      ? 'bg-[#FF5C7A] text-white animate-pulse ring-4 ring-[#FF5C7A]/25'
+                      : 'bg-aurora text-white shadow-glow hover:brightness-105'
                   } disabled:opacity-50 disabled:cursor-not-allowed`}
                   title={isListening ? (lang === 'he' ? 'מקשיב... לחץ להפסיק' : 'Listening... Click to stop') : (lang === 'he' ? 'הקלט קול' : 'Voice input')}
                 >
-                  {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                  {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
                 </button>
               )}
             </div>
@@ -1945,13 +2101,13 @@ function AppRoutes() {
               {/* Primary actions get their own full-width row on phones so labels never truncate */}
               <div className="grid grid-cols-2 gap-2 w-full sm:w-auto sm:flex">
               <button onClick={handleParse} disabled={loading}
-                className="flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-3 sm:px-5 py-2.5 min-h-[44px] rounded-full font-semibold transition-all duration-200 shadow-md shadow-blue-200 hover:shadow-lg disabled:from-blue-400 disabled:to-indigo-400 disabled:cursor-not-allowed disabled:shadow-none sm:w-44 min-w-0">
+                className="flex items-center justify-center gap-2 bg-aurora text-white px-3 sm:px-5 h-12 rounded-2xl font-bold transition-all duration-200 shadow-glow hover:brightness-105 disabled:opacity-60 disabled:cursor-not-allowed disabled:shadow-none sm:w-44 min-w-0">
                 {loading ? <><Loader2 className="w-4 h-4 animate-spin" /> <span className="truncate">{t.parsing}</span></> : <><Sparkles className="w-5 h-5 shrink-0" /> <span className="text-sm sm:text-base leading-tight text-center">{t.parseButton}</span></>}
               </button>
               {/* Prominent Schedule Event Button */}
               <button
                 onClick={() => setShowManualEvent(true)}
-                className="flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white px-3 sm:px-5 py-2.5 min-h-[44px] rounded-full font-semibold transition-all duration-200 shadow-md shadow-emerald-200 hover:shadow-lg sm:w-48 min-w-0"
+                className="flex items-center justify-center gap-2 bg-white border border-[#ECEAF3] text-[#0E1020] px-3 sm:px-5 h-12 rounded-2xl font-bold transition-all duration-200 hover:bg-[#F6F5FB] sm:w-48 min-w-0"
                 title={t.manualEventTitle || 'הוספת אירוע ידנית'}
               >
                 <CalendarPlus className="w-5 h-5 shrink-0" />
@@ -2030,7 +2186,22 @@ function AppRoutes() {
             {/* ── Advanced Options have been removed ── */}
             {/* AI now parses recurrence and event type from natural language text intelligently */}
 
-            {error && <div className="flex items-center gap-2 text-red-600 text-sm mt-3 bg-red-50 p-3 rounded-lg border border-red-200"><AlertCircle className="w-4 h-4 shrink-0" /><span>{error}</span></div>}
+            {error && (
+              <div className="flex items-center gap-2 text-red-600 text-sm mt-3 bg-red-50 p-3 rounded-lg border border-red-200">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span className="flex-1">{error}</span>
+                {parseRetryable && inputText.trim() && !loading && (
+                  <button
+                    type="button"
+                    onClick={handleParse}
+                    className="shrink-0 inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white border border-red-200 text-red-700 font-medium hover:bg-red-100 transition"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    {t.retryRequest || 'Retry'}
+                  </button>
+                )}
+              </div>
+            )}
             {success && <div className="flex items-center gap-2 text-green-700 text-sm mt-3 bg-green-50 p-3 rounded-lg border border-green-200"><Sparkles className="w-4 h-4 text-green-600 shrink-0" /><span>{success}</span></div>}
 
             {parsePreview && (
@@ -2072,9 +2243,9 @@ function AppRoutes() {
           </div>
 
           {/* ── Schedule View with Navigation ── */}
-          <div className="bg-white p-3 sm:p-5 rounded-2xl sm:rounded-3xl shadow-sm border border-slate-100">
+          <div id="home-schedule" className="scroll-mt-4 bg-white p-3.5 sm:p-5 rounded-[24px] shadow-soft">
             <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-              <h2 className="text-lg font-bold text-slate-800">{t.weeklyScheduleTitle}</h2>
+              <h2 className="text-[19px] font-extrabold tracking-tight text-[#0E1020]">{t.weeklyScheduleTitle}</h2>
               <div className="flex items-center gap-2">
                 {allLocationsInEvents.length > 0 && (
                   <div className="flex items-center gap-1.5 text-xs">
@@ -2087,7 +2258,7 @@ function AppRoutes() {
                   </div>
                 )}
                 <button onClick={handleOpenReschedule}
-                  className="flex items-center gap-2 bg-gradient-to-r from-indigo-50 to-violet-50 text-indigo-700 px-3 py-1.5 rounded-full hover:from-indigo-100 hover:to-violet-100 transition-all duration-200 text-xs font-medium border border-indigo-200">
+                  className="flex items-center gap-2 bg-brand-soft text-brand h-9 px-3.5 rounded-full hover:bg-[#E3DEFF] transition-all duration-200 text-xs font-bold">
                   <Wand2 className="w-3.5 h-3.5" /> {t.fixSchedule}
                 </button>
               </div>
@@ -2131,6 +2302,7 @@ function AppRoutes() {
                   return remindersOnDate(reminderList, d);
                 })()}
                 onOpenReminders={() => setShowReminders(true)}
+                user={user}
               />
             )}
 
@@ -2229,7 +2401,7 @@ function AppRoutes() {
             )}
 
             {/* Monthly & Yearly */}
-            {(calendarView === 'monthly' || calendarView === 'yearly' || calendarView === '100year') && (
+            {calendarView === 'monthly' && (
               <MonthlyCalendar schedule={schedule} lang={lang} />
             )}
           </div>
@@ -2635,6 +2807,16 @@ function AppRoutes() {
         </div>
       )}
 
+      <InAppCreditsSheet
+        open={!!iapSheet}
+        outOfCredits={iapSheet === 'out'}
+        onClose={() => setIapSheet(null)}
+        lang={lang}
+        user={user}
+        credits={user ? normalizeCredits(user.aiCredits) : undefined}
+        onPurchased={notifyCreditsPurchased}
+      />
+
       {/* AI Credits Exhausted Modal */}
       {showCreditsModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-[9999]" onClick={() => setShowCreditsModal(false)}>
@@ -2644,7 +2826,17 @@ function AppRoutes() {
             </div>
             <h3 className="text-lg font-bold text-slate-800 mb-2">{lang === 'he' ? 'נגמרו לך הקרדיטים!' : 'You are out of credits!'}</h3>
             <p className="text-sm text-slate-500 mb-6">{creditsError || (lang === 'he' ? 'נגמרו לך הקרדיטים! אנא רכוש חבילת פעולות נוספת כדי להמשיך להשתמש ב-AI.' : 'You ran out of credits! Please purchase an additional action pack to continue using the AI.')}</p>
-            <button onClick={() => setShowCreditsModal(false)} className="w-full px-4 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition shadow-lg">{lang === 'he' ? 'הבנתי' : 'Got it'}</button>
+            {!isNativeApp() ? (
+              <button
+                onClick={() => { setShowCreditsModal(false); handleBuyCredits(); }}
+                disabled={checkoutLoading}
+                className="w-full px-4 py-3 bg-gradient-to-r from-amber-400 to-orange-500 text-white rounded-xl font-bold transition shadow-lg flex items-center justify-center gap-2 disabled:opacity-60"
+              >
+                <Zap className="w-4 h-4" /> {lang === 'he' ? 'לרכישת קרדיטים' : 'Get more credits'}
+              </button>
+            ) : (
+              <button onClick={() => setShowCreditsModal(false)} className="w-full px-4 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition shadow-lg">{lang === 'he' ? 'הבנתי' : 'Got it'}</button>
+            )}
             <button onClick={() => setShowCreditsModal(false)} className="w-full mt-3 text-sm text-slate-400 hover:text-slate-600 py-2 transition">{t.cancel}</button>
           </div>
         </div>
@@ -2716,6 +2908,8 @@ function AppRoutes() {
       {/* Sidebar Drawer */}
       <SidebarDrawer
         isOpen={isSidebarOpen}
+        // Slides in from the avatar's side: right in Hebrew, left in English.
+        side={lang === 'he' ? 'right' : 'left'}
         onClose={() => setIsSidebarOpen(false)}
         schedule={schedule}
         lang={lang}
@@ -2726,6 +2920,7 @@ function AppRoutes() {
         t={t}
         user={user}
         isPro={isPro}
+        onOpenNativePaywall={() => setIapSheet('menu')}
         onLogout={handleLogout}
         initialTab={drawerTab}
         title={drawerTab === 'analytics' ? getNavLabels(lang).analytics : getNavLabels(lang).me}
@@ -2755,7 +2950,9 @@ function AppRoutes() {
         <PublicGoals
           lang={lang}
           user={user}
-          onClose={() => setShowPublicGoals(false)}
+          onClose={() => { setShowPublicGoals(false); setPublicGoalsCreate(null); }}
+          startCreating={!!publicGoalsCreate}
+          initialTitle={publicGoalsCreate?.title || ''}
           onJoinChallenge={(goal) => {
             fetchSchedule();
             setSuccess(lang === "he" ? "🎯 הצטרפת לאתגר! האירוע נוסף ליומן." : "🎯 Joined the challenge! Event added to your schedule.");
