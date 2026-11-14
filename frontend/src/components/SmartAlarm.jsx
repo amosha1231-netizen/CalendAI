@@ -19,11 +19,21 @@ import {
   previewAlarmSound
 } from '../utils/alarmEngine';
 import { isShabbatNow } from '../utils/shabbatHelper';
+import {
+  isNativeAlarmPlatform,
+  requestAlarmPermission,
+  checkExactAlarms,
+  openExactAlarmSettings,
+  syncNativeAlarms,
+  listenForNativeAlarms
+} from '../utils/nativeAlarms';
 
 const ESCALATION_OPTIONS = [30, 60, 120, 300];
 const PREP_OPTIONS = [30, 45, 60, 90, 120];
 const SNOOZE_OPTIONS = [0, 5, 10];
 const DIFFICULTIES = ['easy', 'medium', 'hard'];
+const BUNDLE_COUNT_OPTIONS = [0, 2, 3, 5];
+const BUNDLE_INTERVAL_OPTIONS = [3, 5, 10];
 
 function makeTr(t) {
   return (key, vars) => {
@@ -64,13 +74,16 @@ export default function SmartAlarm({ lang, t, schedule, settingsOpen, onCloseSet
 
   // The settings in force are copied into the ringing state, so a reload
   // mid-ring (or a test run with unsaved settings) keeps the same challenge.
-  const startRinging = useCallback((isTest, settings) => {
-    const state = { startedAt: Date.now(), solved: 0, isTest, settings };
+  // `fireAt` is the wake-up this ring belongs to: in the native app the rest
+  // of its bundle stays scheduled with the OS until the challenge is solved.
+  const startRinging = useCallback((isTest, settings, fireAt = null) => {
+    const state = { startedAt: Date.now(), solved: 0, isTest, settings, fireAt };
     saveRinging(state);
     setRinging(state);
   }, []);
 
   // ── Scheduler: checks once a second while the app is open ──
+  const checkRef = useRef(() => {});
   useEffect(() => {
     const check = () => {
       const a = alarmRef.current;
@@ -92,8 +105,9 @@ export default function SmartAlarm({ lang, t, schedule, settingsOpen, onCloseSet
         else { next.enabled = false; next.nextFireAt = null; }
       }
       updateAlarm(next);
-      if (!missed && !shabbat) startRinging(false, a);
+      if (!missed && !shabbat) startRinging(false, a, fireAt);
     };
+    checkRef.current = check;
     check();
     const id = setInterval(check, 1000);
     const onVisible = () => { try { if (document.visibilityState === 'visible') check(); } catch (e) {} };
@@ -104,8 +118,40 @@ export default function SmartAlarm({ lang, t, schedule, settingsOpen, onCloseSet
     };
   }, [updateAlarm, startRinging]);
 
+  // ── Native app: hand every ring to the OS so it rings with the app closed ──
+  const notifTitle = tr('alarmNotifTitle');
+  const notifBody = alarm.mathEnabled
+    ? tr('alarmNotifBodyMath', { n: Math.max(1, alarm.mathCount) })
+    : tr('alarmNotifBody');
+  const wasRingingRef = useRef(!!ringing);
+  useEffect(() => {
+    const clearDelivered = wasRingingRef.current && !ringing;
+    wasRingingRef.current = !!ringing;
+    syncNativeAlarms(alarm, ringing, { title: notifTitle, body: notifBody }, { clearDelivered });
+  }, [alarm, ringing, notifTitle, notifBody]);
+
+  // Tapping an alarm notification (or one firing while the app is open)
+  // opens the ringing screen with the math challenge.
+  useEffect(() => listenForNativeAlarms(({ occurrence, at }) => {
+    try {
+      if (loadRinging()) return;
+      let shabbat = false;
+      try { shabbat = isShabbatNow(); } catch (e) {}
+      if (shabbat) return;
+      const a = alarmRef.current;
+      const now = Date.now();
+      const dueNow = (a.enabled && a.nextFireAt && a.nextFireAt <= now) || (a.snoozeUntil && a.snoozeUntil <= now);
+      if (dueNow) { checkRef.current(); return; }
+      // An extra ring of the bundle: the alarm itself was already consumed.
+      if (!occurrence || a.lastDismissedOccurrence === occurrence) return;
+      if (now - (at || occurrence) > MISSED_ALARM_GRACE_MS) return;
+      startRinging(false, a, occurrence);
+    } catch (e) {}
+  }), [startRinging]);
+
   // ── Keep the screen on while an alarm is pending (bedside mode) ──
-  const armed = (alarm.enabled || !!alarm.snoozeUntil) && alarm.keepScreenAwake;
+  // Not needed in the native app, where the OS rings with the screen off.
+  const armed = (alarm.enabled || !!alarm.snoozeUntil) && alarm.keepScreenAwake && !isNativeAlarmPlatform();
   useEffect(() => {
     if (!armed && !ringing) return undefined;
     let lock = null;
@@ -128,16 +174,23 @@ export default function SmartAlarm({ lang, t, schedule, settingsOpen, onCloseSet
     };
   }, [armed, ringing]);
 
+  // Solving the challenge cancels the whole wake-up bundle.
   const handleDismiss = () => {
+    const fireAt = loadRinging()?.fireAt;
     saveRinging(null);
     setRinging(null);
+    if (fireAt) updateAlarm({ ...alarmRef.current, lastDismissedOccurrence: fireAt });
   };
 
   const handleSnooze = () => {
     const minutes = alarmRef.current.snoozeMinutes;
+    const fireAt = loadRinging()?.fireAt;
     saveRinging(null);
     setRinging(null);
-    if (minutes > 0) updateAlarm({ ...alarmRef.current, snoozeUntil: Date.now() + minutes * 60000 });
+    const next = { ...alarmRef.current };
+    if (fireAt) next.lastDismissedOccurrence = fireAt;
+    if (minutes > 0) next.snoozeUntil = Date.now() + minutes * 60000;
+    updateAlarm(next);
   };
 
   const handleSolved = (solved) => {
@@ -221,6 +274,14 @@ function AlarmSettingsModal({ lang, tr, alarm, schedule, onSave, onTest, onClose
   const firstEvent = findFirstEventTomorrow(schedule);
   const suggested = firstEvent ? minutesToTime(firstEvent.minutes - draft.prepMinutes) : null;
   const [, forceTick] = useState(0);
+  const native = isNativeAlarmPlatform();
+  const [permission, setPermission] = useState('granted');
+  const [exactAlarms, setExactAlarms] = useState('granted');
+
+  useEffect(() => {
+    if (!native) return;
+    checkExactAlarms().then(setExactAlarms).catch(() => {});
+  }, [native]);
 
   useEffect(() => {
     const id = setInterval(() => forceTick(n => n + 1), 30000);
@@ -234,6 +295,10 @@ function AlarmSettingsModal({ lang, tr, alarm, schedule, onSave, onTest, onClose
     const next = { ...draft, enabled: true, nextFireAt, snoozeUntil: null };
     setDraft(next);
     onSave(next);
+    if (native) {
+      requestAlarmPermission().then(setPermission).catch(() => {});
+      checkExactAlarms().then(setExactAlarms).catch(() => {});
+    }
   };
 
   const handleTurnOff = () => {
@@ -366,10 +431,55 @@ function AlarmSettingsModal({ lang, tr, alarm, schedule, onSave, onTest, onClose
             />
           </div>
 
-          <Toggle checked={draft.keepScreenAwake} onChange={v => set({ keepScreenAwake: v })} label={tr('alarmKeepAwake')} />
+          {native && (
+            <div>
+              <p className="text-xs font-semibold text-slate-500 mb-2">{tr('alarmBundleLabel')}</p>
+              <ChoiceRow
+                options={BUNDLE_COUNT_OPTIONS}
+                value={draft.bundleCount}
+                onChange={v => set({ bundleCount: v })}
+                render={n => (n === 0 ? tr('alarmBundleOff') : tr('alarmBundleRings', { n }))}
+              />
+              {draft.bundleCount > 0 && (
+                <div className="mt-2">
+                  <p className="text-xs text-slate-500 mb-1">{tr('alarmBundleEvery')}</p>
+                  <ChoiceRow
+                    options={BUNDLE_INTERVAL_OPTIONS}
+                    value={draft.bundleIntervalMinutes}
+                    onChange={v => set({ bundleIntervalMinutes: v })}
+                    render={m => tr('alarmMinutes', { n: m })}
+                  />
+                </div>
+              )}
+              <p className="text-xs text-slate-400 mt-1">{tr('alarmBundleHint')}</p>
+            </div>
+          )}
+
+          {!native && (
+            <Toggle checked={draft.keepScreenAwake} onChange={v => set({ keepScreenAwake: v })} label={tr('alarmKeepAwake')} />
+          )}
+
+          {native && permission !== 'granted' && (
+            <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-xl p-3 leading-relaxed">
+              ⚠️ {tr('alarmPermissionDenied')}
+            </p>
+          )}
+
+          {native && exactAlarms !== 'granted' && (
+            <div className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-xl p-3 leading-relaxed space-y-2">
+              <p>⚠️ {tr('alarmExactDenied')}</p>
+              <button
+                type="button"
+                onClick={() => openExactAlarmSettings().then(() => checkExactAlarms().then(setExactAlarms))}
+                className="px-3 py-1 rounded-lg bg-amber-500 text-white font-medium"
+              >
+                {tr('alarmExactFix')}
+              </button>
+            </div>
+          )}
 
           <p className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-xl p-3 leading-relaxed">
-            💡 {tr('alarmOpenAppNote')}
+            💡 {native ? tr('alarmNativeNote') : tr('alarmOpenAppNote')}
           </p>
 
           <div className="flex gap-2">
