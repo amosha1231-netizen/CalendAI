@@ -4900,3 +4900,54 @@ unchanged and green.
    this branch).
 3. Should a provider booking's synced Google Calendar event description
    include the guest's phone number/notes (currently name only)?
+
+---
+
+## Round 71 (scheduled run, 2026-11-15)
+
+Fresh clone, `npm install` in both `frontend/` and `backend/`. Baseline
+re-verified: `npm run build` (frontend) clean. `node --test` (backend): a
+first run showed 316/299/17 (one extra failure beyond the documented set);
+re-ran immediately and got the documented 317/301/16, with the single
+flaky file-level failure gone — this matches `AGENTS.md`'s already-recorded
+`accountRoutes.test.js` IPC/reporter flake under concurrency, not a new
+regression. The steady 16 are checked by name: identical to the
+documented `mongodb-memory-server`-blocked set. Items 1-5 unchanged, still
+`[x]`.
+
+Re-checked round 70's new finding for drift: `git fetch origin master`
+initially appeared to show 5 new commits, but that was this run's local
+ref catching up to what round 70 had already fetched, not new activity —
+`git log HEAD..origin/master` is still exactly the same 32 commits round
+70 measured (confirmed by diffing the commit list, including `8c2022d`
+"Owner-only page with the cost of the owner's own AI requests (#49)" and
+`ff46c11` "Meet a friend..."). Branch is still 32 behind / 65 ahead
+`origin/master` (the +1 is round 70's own notes commit). Checked
+`list_pull_requests` on GitHub directly: still no open PR for this branch
+(only unrelated #30 open against `master`). No response yet to any of the
+three open items.
+
+Did not spin up another full adversarial review this round: nothing on
+this branch or its scope files has changed since round 63's last one, and
+round 70's new information (master's divergence/conflict shape) is also
+unchanged since round 70 itself. Re-running the same review against the
+same code would be repetition, not hardening.
+
+**Not sending a push notification this round.** Round 70 already escalated
+the exact information above; nothing has changed since, so a repeat
+notification would just be noise.
+
+**Open items, unchanged, still awaiting a human decision (see round 70 for
+full detail):**
+1. Merge/PR decision for `wip/mutual-provider-booking` (65 commits ahead,
+   32 behind `origin/master`, no open PR) — recommend merging master into
+   this branch now (human or a dedicated reconciliation pass, since the
+   `backend/server.js` conflict touches a `deductAICredit(...)` call site
+   and the `MutualScheduler.jsx` conflict is a real UX decision) or opening
+   a PR for this branch as-is and resolving at review time.
+2. Whether to pause this scheduled task's hardening sweep on this branch —
+   eleven adversarial reviews (56-63) landed seven real fixes; eight
+   consecutive rounds since (64-71) have found nothing new to harden in
+   this branch's own code.
+3. Should a provider booking's synced Google Calendar event description
+   include the guest's phone number/notes (currently name only)?
