@@ -1562,7 +1562,7 @@ function AppRoutes() {
   };
 
   if (typeof window !== 'undefined' && window.location.pathname === '/privacy') {
-    return <PrivacyPolicyPage />;
+    return <PrivacyPolicyPage lang={lang} />;
   }
 
   if (typeof window !== 'undefined' && window.location.pathname === '/delete-account') {
@@ -1574,7 +1574,7 @@ function AppRoutes() {
   }
 
   if (typeof window !== 'undefined' && window.location.pathname === '/terms') {
-    return <TermsPage />;
+    return <TermsPage lang={lang} />;
   }
 
   if (typeof window !== 'undefined' && window.location.pathname === '/auth/success') {
