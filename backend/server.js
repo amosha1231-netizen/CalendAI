@@ -593,6 +593,7 @@ const routineRoutes = require('./routes/routineRoutes');
 const reminderRoutes = require('./routes/reminderRoutes');
 const { createReminders } = reminderRoutes;
 const { reminderSpecsFromEvents } = require('./services/reminderSchedule');
+const { applyTaskIntent, taskPingEvents, scheduleHasTask } = require('./services/taskPings');
 const { createDispatcher } = require('./services/reminderDispatcher');
 
 // Expose schedule helper functions for goal routes to auto-add challenge events to user schedules
@@ -2228,6 +2229,12 @@ async function commitParsedEvents(req, userId, schedule, parsedEvents, { text, t
       createdReminders = await createReminders(userId, reminderSpecs, { timeZone, source: 'ai', sourceText: text });
       if (createdReminders.length) eventsToSchedule = remainingEvents;
     }
+    // ── TASKS: stay in the calendar (for the done mark) and also ping at their start time.
+    const { reminders: taskPingSpecs } = reminderSpecsFromEvents(taskPingEvents(eventsToSchedule), { timeZone, todayName, text: datesFromText ? text : '' });
+    if (taskPingSpecs.length) {
+      const taskPings = await createReminders(userId, taskPingSpecs, { timeZone, source: 'ai', sourceText: text, kind: 'task' });
+      createdReminders = createdReminders.concat(taskPings);
+    }
   }
 
   const locationOptions = locationDayOptions(locationId);
@@ -2426,7 +2433,9 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
       });
     }
 
-    const parsedEvents = Array.isArray(parsedResult.events) ? parsedResult.events : [];
+    // "משימה כל יום ראשון ב-11" must come back as a task (ping + done mark), even
+    // when the AI answered with a plain event or a bare reminder.
+    const parsedEvents = applyTaskIntent(Array.isArray(parsedResult.events) ? parsedResult.events : [], text);
     const { replyMessage } = parsedResult;
     const locationId = location || DEFAULT_LOCATION_ID;
 
@@ -4663,7 +4672,11 @@ mongoReady
       Reminder: require('./models/Reminder'),
       PushSubscription: require('./models/PushSubscription'),
       push: require('./services/webPush'),
-      isShabbatAt: reminderRoutes.isShabbatAt
+      isShabbatAt: reminderRoutes.isShabbatAt,
+      taskExists: async reminder => {
+        const owner = await User.findById(reminder.userId).select('schedule').lean();
+        return !owner || scheduleHasTask(owner.schedule, reminder.title);
+      }
     }).start(30000, () => mongoose.connection.readyState === 1);
     // Evening digest: tomorrow's schedule, pushed the evening before (services/eveningDigest).
     require('./services/eveningDigest').createDigestDispatcher({
