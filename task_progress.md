@@ -4807,3 +4807,96 @@ full detail):**
    on the branch has changed to review.
 3. Should a provider booking's synced Google Calendar event description
    include the guest's phone number/notes (currently name only)?
+
+---
+
+## Round 70 (scheduled run, 2026-11-15)
+
+Fresh clone, `npm install` in both `frontend/` and `backend/`. Baseline
+re-verified: `npm run build` (frontend) clean. `node --test` (backend): 317
+tests, 301 pass, 16 fail — checked by name, identical to the documented
+`mongodb-memory-server`-blocked set (credit-deduction races,
+webhook-idempotency, booking/mutual-session/provider-booking claim races,
+owner-refill tests); not a regression. Items 1-5 unchanged, still `[x]`.
+
+**Material change found — this is not a quiet round.** Re-measuring
+divergence from `origin/master` this time gave 32 behind (not the 22 that
+has held flat since round 63), 64 ahead. Ten new `master` commits landed
+since round 63, and — unlike the earlier "unrelated work" merges rounds 57
+and 64-69 saw go by — one of them lands squarely in this branch's own
+scope: `ff46c11` **"Meet a friend: pick your own times, email-or-phone,
+consent before comparing calendars"** (2026-11-12, authored directly on
+`master`, not through this branch). It edits `backend/models/Booking.js`,
+`backend/models/MutualBooking.js`, `backend/routes/mutualRoutes.js` (+120),
+`backend/server.js` (+59), adds `backend/services/contactDetect.js` +
+`backend/services/userNotify.js`, and rewrites large parts of
+`frontend/src/App.jsx` and `frontend/src/components/MutualScheduler.jsx`.
+It adds an `inviteeConsent` gate on `MutualBooking` (availability/confirm
+now refuse until the invitee explicitly consents to comparing calendars) —
+a real, independent evolution of the same mutual-booking feature this
+branch has been hardening for 56-63 rounds, built without any awareness of
+this branch's fixes (atomic claim races, cancel-route rate limiting,
+cache-sync rollback fix, Google Calendar timeout, etc.).
+
+Ran a local-only test merge (`git merge --no-commit --no-ff origin/master`,
+then `git merge --abort` — nothing committed or pushed) to size the actual
+conflict, since "the branches overlap" was previously just a file-list
+observation, not a measured risk:
+- `backend/routes/mutualRoutes.js`, `backend/services/googleCalendar.js`,
+  `frontend/src/App.jsx`, `backend/test/mutualRoutesValidation.test.js`
+  auto-merge cleanly.
+- `backend/server.js`: 2 conflicts. One is two independent new `require`
+  blocks added at the same spot (trivial — keep both). The other is at the
+  `/api/reschedule` handler: this branch's `preserveLinkedEntries` guard
+  (stops the AI reschedule call from silently dropping/renaming a
+  mutual/provider-linked schedule entry) lands on the same lines as
+  master's unrelated change adding a 5th `requestText` param to
+  `deductAICredit(...)` for the new owner AI-cost-visibility page (`#49`).
+  Not a semantic clash, just adjacent edits — but resolving it means
+  touching a `deductAICredit(...)` call site, which is credit-adjacent code
+  this task is told never to touch unprompted.
+- `frontend/src/components/MutualScheduler.jsx`: 1 conflict, but a large
+  one — roughly 155 contiguous lines (master's consent-gate UI flow vs.
+  this branch's hardened version of the same component). This is a real
+  feature-reconciliation job, not a mechanical conflict.
+
+**Did not resolve or push this merge.** This needs a human call, for two
+reasons: (1) it touches the `deductAICredit` call signature, and this
+task's own rules say payment/credit-formula-adjacent changes are a
+stop-and-ask item even when the resolution looks mechanical; (2) the
+`MutualScheduler.jsx` conflict is a genuine product decision (whose
+consent-gate/booking-flow UX wins, or how to combine them), not something
+to guess at per this task's own "ambiguous UX, two reasonable options"
+rule. Guessing wrong here risks silently breaking the new consent gate
+(`inviteeConsent`) that's presumably already live in production on
+`master`, which is worse than leaving the branches unmerged a while longer.
+
+**Sending a push notification this round** (first since round 64 — this is
+new information, not a repeat of the standing ask): the merge/PR decision
+flagged since round 56 is no longer just "stale and growing"; `master` has
+now shipped real, overlapping functionality on the exact files this
+branch's hardening targets, which raises the cost of waiting further and
+changes the shape of the eventual merge from "mostly mechanical" to
+"needs a deliberate reconciliation pass." No code changes made this round
+beyond this file; items 1-5 and the backend/frontend baseline are
+unchanged and green.
+
+**Open items needing a human decision:**
+1. **(Escalated, changed since round 64)** Merge/PR decision for
+   `wip/mutual-provider-booking`: now 32 behind / 64 ahead `origin/master`,
+   with a real conflict against `master`'s new "Meet a friend" consent-gate
+   feature in `backend/server.js` (credit-deduction call site) and
+   `frontend/src/components/MutualScheduler.jsx` (~155-line UI/flow
+   conflict). Recommend either (a) merging `master` into this branch now
+   with a human or a dedicated follow-up pass doing the reconciliation, or
+   (b) opening a PR for this branch as-is and resolving the conflict at
+   review/merge time with full attention, rather than letting divergence
+   grow further on a schedule that can't safely resolve it unattended.
+2. Whether to pause this scheduled task's hardening sweep on this branch
+   specifically — unchanged from rounds 64-69: eleven adversarial reviews
+   (56-63) landed seven real fixes, then seven consecutive rounds (64-70)
+   found nothing new to harden in this branch's own code (the one new
+   thing round 70 found is external: master's divergence, not a bug in
+   this branch).
+3. Should a provider booking's synced Google Calendar event description
+   include the guest's phone number/notes (currently name only)?
