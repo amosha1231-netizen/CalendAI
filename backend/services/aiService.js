@@ -158,8 +158,8 @@ const RECURRING_REMINDER_RULES = `
 
 /**
  * Token usage of an OpenRouter completion, plus the real cost OpenRouter charged
- * (usage.cost, in USD credits) when it reports one. Billing uses tokens only;
- * the cost is recorded for the owner's cost view.
+ * (usage.cost, in USD) when it reports one. Billing charges that real cost
+ * × markup (config/pricing.js); see services/tokenTracker.js.
  */
 function extractUsage(completion) {
   const u = completion && completion.usage;
