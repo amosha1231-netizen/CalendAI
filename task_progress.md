@@ -5158,3 +5158,60 @@ full detail):**
    this branch's own code.
 3. Should a provider booking's synced Google Calendar event description
    include the guest's phone number/notes (currently name only)?
+
+---
+
+## Round 76 (scheduled run, 2026-11-16)
+
+Fresh clone, `npm install` in both `frontend/` and `backend/`. Baseline
+re-verified: `npm run build` (frontend) clean. `node --test` (backend):
+317 tests, 301 pass, 16 fail, checked by name — identical to the
+documented `mongodb-memory-server`-blocked set (credit-deduction races,
+webhook idempotency, booking/mutual-session/provider-booking claim races,
+owner-refill tests); not a regression. Items 1-5 re-verified directly in
+source (not just trusted from notes): `multer` + `/api/parse-image` route
+in `backend/server.js`, `parseImageWithVision` wiring, `handleParseImage`/
+`handleParse` (with its `setInputText("")` clear) in
+`frontend/src/App.jsx` — all present and correct. Still `[x]`.
+
+Re-checked for drift: `git fetch origin master` — head is still `9b81e19`,
+same commit rounds 71-75 saw, no new commits on master.
+`git rev-list --left-right --count origin/master...HEAD` is `32 70` (32
+behind, same as before modulo this branch's own notes commits). `git log
+--oneline` on the ten in-scope files shows the newest touching commit is
+still `9fbde7b` ("Rate-limit mutual/provider cancel routes...") from the
+rounds 56-63 hardening series — nothing has touched this branch's own
+scope files since. `list_pull_requests` on GitHub: open PRs are #53 (new
+since round 75, "Charge AI points from the real provider cost x3...",
+against `master`, unrelated to this branch's files), #52, #51, #50, #30 —
+still no open PR for `wip/mutual-provider-booking`. No response yet to any
+of the three open items below.
+
+Did not spin up another full file-by-file adversarial review this round —
+the twelve prior ones (rounds 64-75) found nothing new, and `git log`
+confirms none of the ten scope files have changed since the last real fix
+(`9fbde7b`), so a thirteenth full re-read would be pure repetition. Did a
+targeted check instead: grepped all ten scope files for
+`TODO`/`FIXME`/`XXX`/`HACK` markers — none found. Thirteen consecutive
+rounds (64-76) now with nothing new to harden in this branch's own code.
+
+**Not sending a push notification this round.** Nothing has changed since
+round 70's escalation (same ~32 commits behind, same conflict shape, no PR
+opened, no response); PR #53 appeared but is unrelated to this branch's
+scope, so it doesn't change the open items. A repeat notification would be
+noise rather than new information.
+
+**Open items, unchanged, still awaiting a human decision (see round 70 for
+full detail):**
+1. Merge/PR decision for `wip/mutual-provider-booking` (70 commits ahead,
+   32 behind `origin/master`, no open PR) — recommend merging master into
+   this branch now (human or a dedicated reconciliation pass, since the
+   `backend/server.js` conflict touches a `deductAICredit(...)` call site
+   and the `MutualScheduler.jsx` conflict is a real UX decision) or opening
+   a PR for this branch as-is and resolving at review time.
+2. Whether to pause this scheduled task's hardening sweep on this branch —
+   eleven adversarial reviews (56-63) landed seven real fixes; thirteen
+   consecutive rounds since (64-76) have found nothing new to harden in
+   this branch's own code.
+3. Should a provider booking's synced Google Calendar event description
+   include the guest's phone number/notes (currently name only)?
