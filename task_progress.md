@@ -5050,6 +5050,67 @@ full detail):**
 
 ---
 
+## Round 75 (scheduled run, 2026-11-16)
+
+Fresh clone, `npm install` in both `frontend/` and `backend/`. Baseline
+re-verified: `npm run build` (frontend) clean. `node --test` (backend):
+317 tests, 301 pass, 16 fail, checked by name — identical to the
+documented `mongodb-memory-server`-blocked set (credit-deduction races,
+webhook idempotency, booking/mutual-session/provider-booking claim races,
+owner-refill tests); not a regression. Items 1-5 unchanged, still `[x]`
+(image-upload backend/frontend and input-clearing items were already done
+before this branch existed; re-confirmed present in `frontend/src/App.jsx`
+and `backend/server.js`/`aiService.js`).
+
+Re-checked for drift: `git fetch origin master` — head is still
+`9b81e19`, the same commit rounds 71-74 saw, no new commits on master.
+`git rev-list --left-right --count origin/master...HEAD` is `32 69` (32
+behind, same as before modulo this branch's own notes commits).
+`list_pull_requests` on GitHub: still no open PR for this branch (only
+unrelated #52, #51, #50, #30 open against `master`, unchanged from round
+74). No response yet to any of the three open items below.
+
+Ran one more full, careful pass (not a repeat of the same review —
+explicitly looking for gaps the prior eleven "nothing found" rounds might
+have missed, with extra weight on test-coverage per this run's own
+instructions) over all ten in-scope files
+(`backend/models/MutualBooking.js`, `backend/models/ProviderBooking.js`,
+`backend/routes/mutualRoutes.js`, `backend/routes/providerRoutes.js`,
+`backend/services/googleCalendar.js`,
+`backend/services/mutualAvailability.js`,
+`backend/test/mutualBooking.test.js` plus the other mutual/provider test
+files, `frontend/src/components/MutualScheduler.jsx`,
+`ProviderBookingView.jsx`, `ProviderDirectory.jsx`,
+`ProviderProfileEditor.jsx`). No new bugs or test-coverage gaps found;
+every risky path (races, Shabbat/DST/timezone edge cases, regex/NoSQL
+input casting, Google-fetch fail-closed guards, rollback-on-failure,
+stale-response-ordering, disabled-while-in-flight UI) already has
+dedicated coverage from rounds 56-63. Twelve consecutive rounds (64-75)
+now with nothing new to harden in this branch's own code. No code changes
+made this round beyond this file.
+
+**Not sending a push notification this round.** Nothing has changed since
+round 70's escalation (same 32 commits behind, same conflict shape, no PR
+opened, no response), so a repeat notification would be noise rather than
+new information.
+
+**Open items, unchanged, still awaiting a human decision (see round 70 for
+full detail):**
+1. Merge/PR decision for `wip/mutual-provider-booking` (69 commits ahead,
+   32 behind `origin/master`, no open PR) — recommend merging master into
+   this branch now (human or a dedicated reconciliation pass, since the
+   `backend/server.js` conflict touches a `deductAICredit(...)` call site
+   and the `MutualScheduler.jsx` conflict is a real UX decision) or opening
+   a PR for this branch as-is and resolving at review time.
+2. Whether to pause this scheduled task's hardening sweep on this branch —
+   eleven adversarial reviews (56-63) landed seven real fixes; twelve
+   consecutive rounds since (64-75) have found nothing new to harden in
+   this branch's own code.
+3. Should a provider booking's synced Google Calendar event description
+   include the guest's phone number/notes (currently name only)?
+
+---
+
 ## Round 74 (scheduled run, 2026-11-16)
 
 Fresh clone, `npm install` in both `frontend/` and `backend/`. Baseline
