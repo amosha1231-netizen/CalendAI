@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, Suspense, lazy } from 
 import { motion } from "framer-motion";
 import { BrowserRouter } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
-import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff, Home, Zap, ChevronDown, ChevronUp, FileText, Layout, Trophy, Image, Upload, Search, CalendarPlus, BookOpen, Users, ListChecks, LayoutGrid, Link2, Briefcase, Settings, AlarmClock, Wallet, BarChart3 } from "lucide-react";
+import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff, Home, Zap, ChevronDown, ChevronUp, FileText, Layout, Trophy, Image, Upload, Search, CalendarPlus, BookOpen, Users, ListChecks, LayoutGrid, Link2, Briefcase, Settings, AlarmClock, Wallet, BarChart3, CheckSquare } from "lucide-react";
 import { staggerContainerVariants, staggerItemVariants } from "./hooks/useStaggeredAnimation";
 import GlobalSearch from "./components/GlobalSearch";
 import MonthlyCalendar from "./components/MonthlyCalendar";
@@ -2368,6 +2368,7 @@ function AppRoutes() {
                                   <div className="font-semibold text-sm text-slate-800 flex items-center gap-1.5">
                                     {event.isSleep && <Moon className="w-3.5 h-3.5 text-indigo-500 shrink-0" />}
                                     {event.reminderMinutesBefore > 0 && <Bell className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
+                                    {event.isTask && <CheckSquare className="w-3.5 h-3.5 text-emerald-600 shrink-0" />}
                                     <span className="truncate">{event.title}</span>
                                     <Edit3 className="w-3 h-3 text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity mr-auto shrink-0" />
                                   </div>
@@ -2382,7 +2383,13 @@ function AppRoutes() {
                                       <span>{t.reminderColon} {event.reminderMinutesBefore} {t.reminderMinutes}</span>
                                     </div>
                                   )}
-                                  {event.location && (
+                                  {event.isTask && (
+                                    <div className="flex items-center gap-1 text-[10px] text-emerald-700">
+                                      <BellRing className="w-2.5 h-2.5" />
+                                      <span>{(t.taskWithPing || 'Task · ping at {time}').replace('{time}', event.startTime)}</span>
+                                    </div>
+                                  )}
+                                  {event.location && !event.isTask && (
                                     <div className="flex items-center gap-1 text-[10px] text-slate-400">
                                       <MapPin className="w-2.5 h-2.5" />
                                       <span>{LOCATION_LABELS[event.location] || event.location}</span>

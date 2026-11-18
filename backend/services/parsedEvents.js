@@ -61,6 +61,9 @@ function prepareParsedEvent(event, { todayName, recurrence, locationId, eventTyp
     }
   }
 
+  // A task is a calendar event with a done mark; its ping is added separately.
+  if (eventWithRecurrence.isTask === true) eventWithRecurrence.isReminder = false;
+
   return eventWithRecurrence;
 }
 
@@ -90,9 +93,10 @@ function sanitizeConfirmedEvents(events) {
       endTime: (ev.endTime || ev.startTime).trim(),
       recurrence: recurrenceValue,
       isRecurring: recurrenceValue !== 'once',
-      isReminder: ev.isReminder === true,
+      isReminder: ev.isReminder === true && ev.isTask !== true,
       isSleep: ev.isSleep === true
     };
+    if (ev.isTask === true) out.isTask = true;
     if (typeof ev.targetDate === 'string' && /^\d{4}-\d{2}-\d{2}/.test(ev.targetDate)) out.targetDate = ev.targetDate.slice(0, 10);
     if (typeof ev.emoji === 'string') out.emoji = ev.emoji.slice(0, 8);
     if (typeof ev.description === 'string') out.description = ev.description.slice(0, 1000);

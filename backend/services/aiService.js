@@ -135,6 +135,31 @@ const RECURRING_REMINDER_RULES = `
     6. "replyMessage" confirms the reminder and when it pings, in the user's language.
     Weekdays-only ("בימי חול" / "on weekdays") → weekly with Sunday-Thursday in Hebrew requests, Monday-Friday in English ones.
 
+    ─────────────────────────────────────────────
+    TASKS TO MARK DONE (CRITICAL — check this BEFORE deciding it is a reminder)
+    ─────────────────────────────────────────────
+    A TASK is something the user must DO at a set time and then mark as done / not done. It gets a ping at its
+    start time AND a done / not-done mark in the day view. It is neither a meeting nor a bare reminder.
+    It is a TASK when the request says "משימה" / "מטלה" / "task" / "to-do", or asks to mark it done
+    ("לסמן בוצע" / "לסמן אם עשיתי" / "וי" / "mark done" / "check off"), or asks for a ping/reminder AND to mark it.
+    For a TASK:
+    1. Set "isTask": true and "isReminder": false (the server adds the ping itself; a task must NOT become a bare reminder).
+    2. "startTime" = the time it should be done / pinged. "endTime" = startTime + 15 minutes, unless the user gave a duration.
+    3. A repeating task ("כל יום ראשון" / "every Sunday") returns EXACTLY ONE event with a "repeat" object and
+       "recurrence" / "isRecurring", exactly as for recurring reminders above.
+    4. "summary" = the task itself, cleaned (no "משימה", time or frequency words).
+    5. "replyMessage" says it was added as a task, when it pings, and that it can be marked done in the day view.
+
+    Example (Hebrew):
+    User text: "תעשה לי משימה כל יום ראשון ב-11 שניים מקרא ואחד תרגום, שיהיה לי פינג ואסמן אם עשיתי"
+    {
+      "reasoning": "משימה שבועית ביום ראשון ב-11:00 עם פינג וסימון בוצע.",
+      "replyMessage": "הוספתי משימה קבועה: שניים מקרא ואחד תרגום, כל יום ראשון ב-11:00. תקבל פינג, ובמסך היום תוכל לסמן אם ביצעת ✅",
+      "events": [
+        { "summary": "שניים מקרא ואחד תרגום", "day": "Sunday", "startTime": "11:00", "endTime": "11:15", "recurrence": "weekly", "isRecurring": true, "isSleep": false, "hasAdvice": false, "aiAdvice": "", "isReminder": false, "isTask": true, "repeat": { "frequency": "weekly", "daysOfWeek": ["Sunday"] } }
+      ]
+    }
+
     Example (Hebrew):
     User text: "תעשה לי תזכורת לכל יום בשמונה בבוקר לקחת כדור"
     {
@@ -874,7 +899,8 @@ async function parseWithGemini(text, options = {}) {
     - "remind me to buy milk tomorrow at 9 AM"
     - "תזכיר לי בעוד שעה להתקשר לרופא"
 
-    When the user requests a REMINDER (any phrase containing "תזכיר" / "remind" / "תזכורת" / "התראה" / "פינג"):
+    When the user requests a REMINDER (any phrase containing "תזכיר" / "remind" / "תזכורת" / "התראה" / "פינג"),
+    unless it is a TASK to mark done (see TASKS TO MARK DONE below):
     1. Set isReminder: true on the event.
     2. Set reminderTime to the ISO date/time string of when the alert should fire.
     3. The event summary should describe what the reminder is about.

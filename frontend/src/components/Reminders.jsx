@@ -677,7 +677,10 @@ function localDayKey(date) {
   return `${date.getFullYear()}-${m}-${d}`;
 }
 
-/** Active reminders that ping on the given local date, sorted by time. */
+/**
+ * Active reminders that ping on the given local date, sorted by time.
+ * A task's ping is left out: the task itself is already in the calendar.
+ */
 export function remindersOnDate(reminders, date) {
   if (!reminders || !reminders.length || !date || isNaN(date.getTime())) return [];
   const weekday = date.getDay();
@@ -685,7 +688,7 @@ export function remindersOnDate(reminders, date) {
   if (weekday === 6) return [];
   const key = localDayKey(date);
   return reminders.filter(r => {
-    if (!r.active) return false;
+    if (!r.active || r.kind === 'task') return false;
     switch (r.frequency) {
       case 'daily': return true;
       case 'weekly': return (r.daysOfWeek || []).includes(weekday);
