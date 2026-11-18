@@ -56,6 +56,7 @@ import { isIosWhatsApp, isIosSafari, isIosNonSafari, isStandalone } from "./util
 import { normalizeCredits, normalizeUserCredits, formatCredits } from "./utils/credits";
 import { isShabbatNow as isShabbatNowAtUser } from "./utils/shabbatHelper";
 import { getUserTimeZone, setUserTimeZone, presetLocationForTimeZone, formatUtcOffset, PRESET_LOCATIONS } from "./utils/userLocation";
+import { eventsOnDate } from "./utils/eventOccurrence";
 
 // ── JWT Decode helper (client-side expiry check) ──
 function decodeJwtPayload(token) {
@@ -926,10 +927,10 @@ function AppRoutes() {
       const now = new Date();
       const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
       const todayName = dayNames[now.getDay()];
-      const todayEvents = [
+      const todayEvents = eventsOnDate([
         ...(schedule['Today'] || []),
         ...(schedule[todayName] || [])
-      ];
+      ], now);
       for (const event of todayEvents) {
         const reminderMin = event.reminderMinutesBefore;
         if (!reminderMin || reminderMin <= 0) continue;
@@ -1547,8 +1548,10 @@ function AppRoutes() {
     return hours * 60 + minutes;
   };
 
-  const getSortedDayEvents = (dayKey) => {
-    const dayEvents = getFilteredEvents(dayKey);
+  // With a date, only the events that really happen on that date (a one-off
+  // meeting is stored under its weekday but must not show every week).
+  const getSortedDayEvents = (dayKey, date) => {
+    const dayEvents = date ? eventsOnDate(getFilteredEvents(dayKey), date) : getFilteredEvents(dayKey);
     return [...dayEvents].sort((a, b) => {
       const aMin = timeToSortMinutes(a.startTime);
       const bMin = timeToSortMinutes(b.startTime);
@@ -2072,7 +2075,7 @@ function AppRoutes() {
             }}
           />
           {/* Today's tasks as circles (in place of the routines card): tap one to swipe it done / not done / later */}
-          <TasksTodayCard lang={lang} user={user} todayEvents={schedule.Today} onManage={() => setShowTasks(true)} />
+          <TasksTodayCard lang={lang} user={user} todayEvents={eventsOnDate(schedule.Today || [], new Date())} onManage={() => setShowTasks(true)} />
           {user && (
             <RemindersPinger lang={lang} user={user} refreshKey={remindersRefresh} onReminders={setReminderList} />
           )}
@@ -3031,7 +3034,7 @@ function AppRoutes() {
       )}
 
       {showTasks && (
-        <TasksSheet lang={lang} user={user} todayEvents={schedule.Today} onClose={() => setShowTasks(false)} />
+        <TasksSheet lang={lang} user={user} todayEvents={eventsOnDate(schedule.Today || [], new Date())} onClose={() => setShowTasks(false)} />
       )}
       {showPlans && !isNativeApp() && (
         <PlansSheet

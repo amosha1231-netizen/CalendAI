@@ -43,9 +43,9 @@ export default function WeekStrip({ lang = 'he', dayNamesEn, todayName, getDayEv
   }, [dayNamesEn, todayName]);
 
   const [selected, setSelected] = useState(0);
-  const counts = days.map(d => (getDayEvents(d.key) || []).length);
+  const counts = days.map(d => (getDayEvents(d.key, d.date) || []).length);
   const day = days[Math.min(selected, 6)];
-  const events = getDayEvents(day.key) || [];
+  const events = getDayEvents(day.key, day.date) || [];
   const reminders = getDayReminders ? getDayReminders(day.date) || [] : [];
 
   // Week summary: total, busiest day, free days (Shabbat is not counted as "free").

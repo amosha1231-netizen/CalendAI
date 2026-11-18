@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { User, Video, Clock, Menu } from 'lucide-react';
 import { formatTimeString } from '../utils/timeFormat';
+import { eventsOnDate } from '../utils/eventOccurrence';
 
 const DAY_KEYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -86,7 +87,7 @@ export function NextUpCard({ schedule, lang, onOpen }) {
   const isHe = lang === 'he';
   const todayKey = DAY_KEYS[now.getDay()];
   const seen = new Set();
-  const events = [...(schedule?.Today || []), ...(schedule?.[todayKey] || [])].filter(ev => {
+  const events = eventsOnDate([...(schedule?.Today || []), ...(schedule?.[todayKey] || [])], now).filter(ev => {
     const key = `${ev?.title}|${ev?.startTime}`;
     if (seen.has(key)) return false;
     seen.add(key);
