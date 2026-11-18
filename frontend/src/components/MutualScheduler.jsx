@@ -18,6 +18,47 @@ const DAY_START_MIN = 8 * 60;  // first start time offered
 const DAY_END_MIN = 22 * 60;   // meetings must end by then
 const STEP_MIN = 30;
 const MAX_SLOTS = 30;          // matches the server's cap
+const MAX_GROUP = 10;          // friends besides the host (server allows up to 20)
+const LONG_PRESS_MS = 350;     // hold this long, then drag to pick several times
+// Quick picks for a whole part of the day: [label he, label en, from, to] in minutes.
+const DAY_PARTS = [
+  ['בוקר', 'Morning', 8 * 60, 12 * 60],
+  ['צהריים', 'Afternoon', 12 * 60, 16 * 60],
+  ['ערב', 'Evening', 16 * 60, 22 * 60]
+];
+
+// The short message sent on WhatsApp / SMS / email. Lists the times only when
+// there are a few; otherwise sums them up, so the friend opens the link (which
+// also stays up to date when a time is no longer free).
+export function buildShareMessage({ lang, picked, link, title, duration, groupSize = 1 }) {
+  if (!link) return '';
+  const he = lang === 'he';
+  const dayOf = (iso) => {
+    const [y, m, d] = iso.split('-').map(Number);
+    const date = new Date(y, m - 1, d);
+    return he ? `${DAY_NAMES_HE[DAY_KEYS[date.getDay()]]} ${d}.${m}` : `${DAY_SHORT_EN[date.getDay()]} ${d}.${m}`;
+  };
+  const n = picked.length;
+  const dates = [...new Set(picked.map(p => p.date))].sort();
+  let times;
+  if (n <= 3) {
+    times = picked.map(p => `• ${dayOf(p.date)} · ${hhmm(p.start)}`).join('\n');
+  } else if (dates.length === 1) {
+    times = he ? `הצעתי ${n} זמנים ביום ${dayOf(dates[0])}.` : `I offered ${n} times on ${dayOf(dates[0])}.`;
+  } else {
+    times = he
+      ? `הצעתי ${n} זמנים בין ${dayOf(dates[0])} ל${dayOf(dates[dates.length - 1])}.`
+      : `I offered ${n} times between ${dayOf(dates[0])} and ${dayOf(dates[dates.length - 1])}.`;
+  }
+  if (groupSize > 1) {
+    return he
+      ? `היי לכולם! 👋 בואו נקבע ${title} (${duration} דק׳).\n${times}\nכל אחד מסמן מה מתאים לו, ונקבע את הזמן שמתאים לכולם 👇\n${link}`
+      : `Hi all! 👋 Let's set up ${title} (${duration} min).\n${times}\nEveryone marks what works, and we'll book the time that suits all of us 👇\n${link}`;
+  }
+  return he
+    ? `היי! 👋 בוא/י נקבע ${title} (${duration} דק׳).\n${times}\nבחר/י מה שנוח לך 👇\n${link}`
+    : `Hi! 👋 Let's set up ${title} (${duration} min).\n${times}\nPick what suits you 👇\n${link}`;
+}
 
 function authHeaders() {
   let token = null;
@@ -92,6 +133,7 @@ export default function MutualScheduler({ lang, t, locationId, schedule, onClose
   const [contactInput, setContactInput] = useState("");
   const [subject, setSubject] = useState("");
   const [duration, setDuration] = useState(30);
+  const [groupSize, setGroupSize] = useState(1); // friends besides me
   const contact = useMemo(() => detectContact(contactInput), [contactInput]);
 
   // ── Pick-your-times flow ──
@@ -228,6 +270,126 @@ export default function MutualScheduler({ lang, t, locationId, schedule, onClose
     });
   };
 
+  // Set one time on or off (used by drag-select and the quick day-part picks).
+  const setPick = useCallback((date, start, on) => {
+    setPicked(prev => {
+      const has = prev.some(p => p.date === date && p.start === start);
+      if (on === has) return prev;
+      if (!on) return prev.filter(p => !(p.date === date && p.start === start));
+      if (prev.length >= MAX_SLOTS) return prev;
+      return [...prev, { date, start }].sort((a, b) => (a.date === b.date ? a.start - b.start : a.date < b.date ? -1 : 1));
+    });
+  }, []);
+
+  // ── Press-and-drag to pick several times in a row ──
+  // Mouse: press and drag. Touch: hold for a moment, then slide (a quick swipe
+  // still scrolls the page). The first time touched decides add or remove.
+  const gridRef = useRef(null);
+  const dragRef = useRef({ active: false, timer: null, mode: true, seen: new Set(), x: 0, y: 0, suppressClick: false });
+  const slotStateRef = useRef(null);
+  slotStateRef.current = { slotState: (s) => slotState(s), isPicked: (d, s) => isPicked(d, s), day: activeDayIso, setPick };
+
+  const slotFromPoint = (x, y) => {
+    try {
+      const el = document.elementFromPoint(x, y);
+      const btn = el && el.closest ? el.closest('[data-slot-start]') : null;
+      return btn ? Number(btn.getAttribute('data-slot-start')) : null;
+    } catch {
+      return null;
+    }
+  };
+  const dragVisit = (start) => {
+    const drag = dragRef.current;
+    const ctx = slotStateRef.current;
+    if (start === null || drag.seen.has(start) || !ctx) return;
+    drag.seen.add(start);
+    if (ctx.slotState(start).disabled && !ctx.isPicked(ctx.day, start)) return;
+    ctx.setPick(ctx.day, start, drag.mode);
+  };
+  const dragBegin = (start) => {
+    const drag = dragRef.current;
+    const ctx = slotStateRef.current;
+    drag.active = true;
+    drag.seen = new Set();
+    drag.mode = !ctx.isPicked(ctx.day, start);
+    drag.suppressClick = true;
+    dragVisit(start);
+    try { if (navigator.vibrate) navigator.vibrate(10); } catch (e) {}
+  };
+  const dragEnd = () => {
+    const drag = dragRef.current;
+    if (drag.timer) { clearTimeout(drag.timer); drag.timer = null; }
+    drag.active = false;
+  };
+
+  useEffect(() => {
+    const grid = gridRef.current;
+    if (!grid || step !== 'pick') return undefined;
+    const onTouchStart = (e) => {
+      const touch = e.touches && e.touches[0];
+      if (!touch || e.touches.length > 1) return;
+      const start = slotFromPoint(touch.clientX, touch.clientY);
+      if (start === null) return;
+      const drag = dragRef.current;
+      drag.x = touch.clientX;
+      drag.y = touch.clientY;
+      drag.suppressClick = false;
+      if (drag.timer) clearTimeout(drag.timer);
+      drag.timer = setTimeout(() => { drag.timer = null; dragBegin(start); }, LONG_PRESS_MS);
+    };
+    const onTouchMove = (e) => {
+      const touch = e.touches && e.touches[0];
+      const drag = dragRef.current;
+      if (!touch) return;
+      if (drag.active) {
+        e.preventDefault(); // keep the page still while painting times
+        dragVisit(slotFromPoint(touch.clientX, touch.clientY));
+      } else if (drag.timer && (Math.abs(touch.clientX - drag.x) > 10 || Math.abs(touch.clientY - drag.y) > 10)) {
+        clearTimeout(drag.timer); // they're scrolling, not holding
+        drag.timer = null;
+      }
+    };
+    const onContextMenu = (e) => { if (dragRef.current.active || dragRef.current.timer) e.preventDefault(); };
+    grid.addEventListener('touchstart', onTouchStart, { passive: true });
+    grid.addEventListener('touchmove', onTouchMove, { passive: false });
+    grid.addEventListener('touchend', dragEnd);
+    grid.addEventListener('touchcancel', dragEnd);
+    grid.addEventListener('contextmenu', onContextMenu);
+    return () => {
+      dragEnd();
+      grid.removeEventListener('touchstart', onTouchStart);
+      grid.removeEventListener('touchmove', onTouchMove);
+      grid.removeEventListener('touchend', dragEnd);
+      grid.removeEventListener('touchcancel', dragEnd);
+      grid.removeEventListener('contextmenu', onContextMenu);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, activeDayIso]);
+
+  // Mouse drag (desktop).
+  useEffect(() => {
+    const up = () => dragEnd();
+    try { window.addEventListener('mouseup', up); } catch (e) {}
+    return () => { try { window.removeEventListener('mouseup', up); } catch (e) {} };
+  }, []);
+
+  const onSlotClick = (date, start) => {
+    if (dragRef.current.suppressClick) { dragRef.current.suppressClick = false; return; }
+    togglePick(date, start);
+  };
+
+  // Quick picks: all free times in a part of the day (tap again to clear them).
+  const partStarts = (from, to) => startTimes.filter(s => s >= from && s < to && !slotState(s).disabled);
+  const partIsOn = (from, to) => {
+    const list = partStarts(from, to);
+    return list.length > 0 && list.every(s => isPicked(activeDayIso, s));
+  };
+  const togglePart = (from, to) => {
+    setCreateError("");
+    const on = !partIsOn(from, to);
+    partStarts(from, to).forEach(s => setPick(activeDayIso, s, on));
+  };
+
   // Changing the duration can make picked times overlap the host's events; drop those.
   useEffect(() => {
     setPicked(prev => prev.filter(p => {
@@ -241,13 +403,10 @@ export default function MutualScheduler({ lang, t, locationId, schedule, onClose
 
   const meetingTitle = subject.trim() || L('פגישה', 'Meeting');
 
-  const shareMessage = useMemo(() => {
-    if (!shareLink) return '';
-    const lines = picked.map(p => `• ${formatPicked(p)}`).join('\n');
-    return lang === 'he'
-      ? `היי! 👋 בחרתי כמה זמנים שנוחים לי ל${meetingTitle} (${duration} דק׳):\n${lines}\n\nבחר/י את מה שמתאים לך כאן, ושנינו נקבל את פרטי הפגישה:\n${shareLink}`
-      : `Hi! 👋 Here are a few times that work for me for ${meetingTitle} (${duration} min):\n${lines}\n\nPick the one that suits you here and we'll both get the meeting details:\n${shareLink}`;
-  }, [shareLink, picked, formatPicked, lang, meetingTitle, duration]);
+  const shareMessage = useMemo(
+    () => buildShareMessage({ lang, picked, link: shareLink, title: meetingTitle, duration, groupSize }),
+    [shareLink, picked, lang, meetingTitle, duration, groupSize]
+  );
 
   const handleCreateLink = async () => {
     if (!picked.length || creating) return;
@@ -263,6 +422,7 @@ export default function MutualScheduler({ lang, t, locationId, schedule, onClose
           duration,
           slots: picked.map(p => ({ date: p.date, hour: Math.floor(p.start / 60), minute: p.start % 60 })),
           locationId,
+          groupSize,
           inviteeContact: contact.type ? contactInput.trim() : undefined
         })
       });
@@ -544,12 +704,32 @@ export default function MutualScheduler({ lang, t, locationId, schedule, onClose
           </div>
         </div>
 
+        <div className="booking-duration-section">
+          <label className="booking-label">{L('כמה אנשים חוץ ממך?', 'How many people besides you?')}</label>
+          <div className="flex items-center gap-3" dir="ltr">
+            <button type="button" onClick={() => setGroupSize(n => Math.max(1, n - 1))} disabled={groupSize <= 1}
+              aria-label={L('פחות', 'Fewer')}
+              className="w-10 h-10 rounded-full border border-slate-200 bg-white text-xl font-bold text-slate-700 disabled:opacity-40">−</button>
+            <span className="min-w-[2.5rem] text-center text-xl font-bold text-slate-800" aria-live="polite">{groupSize}</span>
+            <button type="button" onClick={() => setGroupSize(n => Math.min(MAX_GROUP, n + 1))} disabled={groupSize >= MAX_GROUP}
+              aria-label={L('יותר', 'More')}
+              className="w-10 h-10 rounded-full border border-slate-200 bg-white text-xl font-bold text-slate-700 disabled:opacity-40">+</button>
+          </div>
+          <p className="text-xs text-slate-500 mt-1.5">
+            {groupSize > 1
+              ? L(`כל אחד מה‑${groupSize} יסמן מה מתאים לו, והפגישה תיקבע בזמן שמתאים לכולם.`, `Each of the ${groupSize} marks what works, and the meeting is set for the time that suits everyone.`)
+              : L('פגישה אחד על אחד.', 'One-on-one.')}
+          </p>
+        </div>
+
         <div className="booking-footer">
           <button onClick={() => setStep('pick')} className="booking-confirm-btn">
             <Calendar className="w-5 h-5" /> {L('בחר זמנים שנוחים לי', 'Pick times that suit me')}
           </button>
           <p className="text-xs text-slate-500 text-center mt-2">
-            {L('החבר יבחר אחד מהם, ושניכם תקבלו את פרטי הפגישה.', 'Your friend picks one and you both get the meeting details.')}
+            {groupSize > 1
+              ? L('כשכולם יענו, נקבע את הזמן שמתאים לכולם ותקבלו את פרטי הפגישה.', 'Once everyone answers, we book the time that suits all and you all get the details.')
+              : L('החבר יבחר אחד מהם, ושניכם תקבלו את פרטי הפגישה.', 'Your friend picks one and you both get the meeting details.')}
           </p>
         </div>
 
@@ -604,13 +784,29 @@ export default function MutualScheduler({ lang, t, locationId, schedule, onClose
             })}
           </div>
 
-          <div className="grid grid-cols-3 gap-2 mt-2 mb-3">
+          <div className="flex gap-2 mt-2 overflow-x-auto pb-1">
+            {DAY_PARTS.map(([he, en, from, to]) => {
+              const available = partStarts(from, to).length > 0;
+              const on = partIsOn(from, to);
+              return (
+                <button key={en} type="button" onClick={() => togglePart(from, to)} disabled={!available} aria-pressed={on}
+                  className={`shrink-0 rounded-full border px-3 py-1 text-xs font-semibold transition disabled:opacity-40 ${on ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-blue-200 text-blue-700'}`}>
+                  {on ? '✓ ' : '+ '}{L(`כל ה${he}`, `All ${en.toLowerCase()}`)}
+                </button>
+              );
+            })}
+          </div>
+
+          <div ref={gridRef} className="grid grid-cols-3 gap-2 mt-2 mb-2 select-none"
+            style={{ WebkitTouchCallout: 'none', WebkitUserSelect: 'none' }}>
             {startTimes.map(s => {
               const iso = activeDayIso;
               const state = slotState(s);
               const on = isPicked(iso, s);
               return (
-                <button key={s} disabled={state.disabled && !on} onClick={() => togglePick(iso, s)}
+                <button key={s} data-slot-start={s} disabled={state.disabled && !on} onClick={() => onSlotClick(iso, s)}
+                  onPointerDown={e => { if (e.pointerType === 'mouse' && e.button === 0) dragBegin(s); }}
+                  onPointerEnter={e => { if (e.pointerType === 'mouse' && dragRef.current.active) dragVisit(s); }}
                   title={state.reason === 'busy' ? state.title : undefined}
                   aria-pressed={on}
                   className={`rounded-lg border py-2 text-sm font-medium transition ${on
@@ -623,6 +819,7 @@ export default function MutualScheduler({ lang, t, locationId, schedule, onClose
               );
             })}
           </div>
+          <p className="text-[11px] text-slate-500 mb-0.5">{L('טיפ: לחיצה ארוכה על שעה וגרירה בוחרת כמה שעות ברצף.', 'Tip: press and hold a time, then drag to pick several in a row.')}</p>
           <p className="text-[11px] text-slate-400 mb-2">{L('שעות מחוקות תפוסות ביומן שלך.', 'Crossed-out times are busy in your calendar.')}</p>
         </div>
 
@@ -700,8 +897,11 @@ export default function MutualScheduler({ lang, t, locationId, schedule, onClose
 
         <div className="mx-4 mb-4 rounded-xl bg-emerald-50 border border-emerald-100 p-3 text-xs text-emerald-800 flex gap-2">
           <Sparkles className="w-4 h-4 shrink-0" />
-          <span>{L('כשהחבר יבחר זמן, הפגישה תיכנס ליומן שלך ותקבל התראה. אם השאיר מייל, Google ישלח לו הזמנה ליומן.',
-            'When your friend picks a time it goes into your calendar and you get a ping. If they leave an email, Google sends them a calendar invite.')}</span>
+          <span>{groupSize > 1
+            ? L(`הקישור מתעדכן לבד: כל מי שעונה מצמצם את הזמנים לאלה שמתאימים לכולם. כשכל ה‑${groupSize} יענו, הפגישה תיכנס ליומן שלך ותקבל התראה.`,
+              `The link updates itself: each answer narrows it to times that suit everyone. When all ${groupSize} answer, it goes into your calendar and you get a ping.`)
+            : L('הקישור מתעדכן לבד: זמן שתתפוס ביומן בינתיים ייעלם ממנו. כשהחבר יבחר, הפגישה תיכנס ליומן שלך ותקבל התראה.',
+              'The link updates itself: a time you fill in the meantime drops off it. When your friend picks, it goes into your calendar and you get a ping.')}</span>
         </div>
 
         <div className="booking-footer">

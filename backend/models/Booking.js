@@ -14,6 +14,16 @@ const bookingSlotSchema = new mongoose.Schema({
   bookedAt: Date
 }, { _id: false });
 
+// Group links: each friend marks every offered time that works for them.
+const bookingResponseSchema = new mongoose.Schema({
+  key: { type: String, required: true },
+  name: { type: String, required: true },
+  email: String,
+  phone: String,
+  slotIndexes: { type: [Number], default: [] },
+  at: { type: Date, default: Date.now }
+}, { _id: false });
+
 const bookingSchema = new mongoose.Schema({
   bookingId: { type: String, required: true, unique: true, index: true },
   hostId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
@@ -33,6 +43,10 @@ const bookingSchema = new mongoose.Schema({
   // Who the host sent the link to (optional): an email or a phone number.
   inviteeContact: String,
   inviteeContactType: { type: String, enum: ['email', 'phone', null], default: null },
+  // How many friends (besides the host) the meeting is for. Above 1, the
+  // link collects everyone's times and books the one that suits all of them.
+  groupSize: { type: Number, default: 1, min: 1, max: 20 },
+  responses: { type: [bookingResponseSchema], default: [] },
   status: { type: String, enum: ['active', 'processing', 'completed'], default: 'active', index: true },
   confirmedBy: String,
   confirmedAt: Date
