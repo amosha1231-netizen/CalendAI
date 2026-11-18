@@ -1515,7 +1515,6 @@ function AppRoutes() {
     Thursday: t.dayThursday, Friday: t.dayFriday, Saturday: t.daySaturday, Today: `${t.dayToday} (${todayNameLocalized})`
   };
 
-  const orderedDayKeys = ['Today', ...dayNamesEn];
 
   const allLocationsInEvents = [...new Set(Object.values(schedule).flat().map(e => e.location).filter(Boolean))];
 
@@ -2324,8 +2323,10 @@ function AppRoutes() {
                 animate="visible"
                 className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"
               >
-                {orderedDayKeys.map(dayKey => {
-                  if (dayKey === "Today" && (!schedule[dayKey] || schedule[dayKey].length === 0)) return null;
+                {/* schedule.Today is a copy of today's weekday list, so the week
+                    shows today once: first, as its weekday, framed and labelled.
+                    The other columns follow as the coming six days. */}
+                {[...dayNamesEn.slice(dayNamesEn.indexOf(todayName)), ...dayNamesEn.slice(0, dayNamesEn.indexOf(todayName))].map(dayKey => {
                   const dayEvents = getFilteredEvents(dayKey);
                   const sortedDayEvents = getSortedDayEvents(dayKey);
                   const isTodayColumn = dayKey === todayName;
@@ -2333,8 +2334,8 @@ function AppRoutes() {
                   const isExpanded = expandedDays[dayKey] || false;
                   const visibleEvents = isExpanded ? sortedDayEvents : sortedDayEvents.slice(0, maxVisible);
                   const hasMoreThanMax = sortedDayEvents.length > maxVisible;
-                  // Weekday columns stand for the coming 7 days; "Today" repeats today's column.
-                  const dayReminders = dayKey === 'Today' ? [] : (() => {
+                  // Weekday columns stand for the coming 7 days.
+                  const dayReminders = (() => {
                     const d = new Date();
                     d.setDate(d.getDate() + ((dayNamesEn.indexOf(dayKey) - d.getDay() + 7) % 7));
                     return remindersOnDate(reminderList, d);
@@ -2345,7 +2346,7 @@ function AppRoutes() {
                         className={`font-bold text-sm text-slate-700 mb-2 pb-1.5 border-b text-center cursor-pointer hover:text-indigo-600 transition ${isTodayColumn ? 'border-blue-200' : 'border-slate-200'}`}
                         onClick={() => { setCalendarView('day'); }}
                       >
-                        {dayTranslations[dayKey]}
+                        {isTodayColumn ? dayTranslations.Today : dayTranslations[dayKey]}
                         {dayEvents.length > 0 && <span className="text-xs text-slate-400 mr-1">({dayEvents.length})</span>}
                       </div>
                       <div className="flex-1 flex flex-col gap-2">
