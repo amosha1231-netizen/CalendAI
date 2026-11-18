@@ -70,6 +70,8 @@ export default function DeleteAccount() {
             <ul className="list-disc list-inside space-y-2 pl-2">
               <li>Your account record (email, display name, profile photo)</li>
               <li>Your saved schedule and events created in CalendAI</li>
+              <li>Your reminders, routines, goals, journal entries, expected expenses, and AI request history</li>
+              <li>Your notification (push) subscriptions</li>
               <li>Stored Google/Microsoft Calendar connection tokens (access to your calendar is also revoked)</li>
               <li>Your provider/booking profile, if you created one</li>
               <li>Mutual scheduling and booking links you created</li>
