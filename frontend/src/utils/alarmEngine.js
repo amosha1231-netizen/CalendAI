@@ -11,6 +11,7 @@
  */
 
 import safeStorage from './safeStorage';
+import { eventsOnDate } from './eventOccurrence';
 
 export const ALARM_STORAGE_KEY = 'calendai-smart-alarm';
 export const ALARM_RINGING_KEY = 'calendai-smart-alarm-ringing';
@@ -113,7 +114,7 @@ const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Frida
  */
 export function findFirstEventOn(schedule, date) {
   if (!schedule || !date) return null;
-  const events = schedule[WEEKDAYS[date.getDay()]] || [];
+  const events = eventsOnDate(schedule[WEEKDAYS[date.getDay()]] || [], date);
   let first = null;
   for (const ev of events) {
     const minutes = parseTimeToMinutes(ev?.startTime);

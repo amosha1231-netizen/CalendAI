@@ -8,6 +8,7 @@ import { getTodayHebrewInfo } from '../utils/hebrewCalendar';
 import { ReminderChip } from './Reminders';
 import TaskStatusCircle, { TaskProgressSummary } from './TaskStatusCircle';
 import { toDateKey, addDaysKey, taskKey, fetchTaskStatuses, saveTaskStatus, summarizeStatuses } from '../utils/taskStatus';
+import { eventsOnDate } from '../utils/eventOccurrence';
 
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
 
@@ -71,7 +72,9 @@ export default function DayView({
     // screen twice, and put today's events on every other day too.
     const sourceKey = dayKey || 'Today';
     const allEvents = [];
-    for (const ev of schedule[sourceKey] || []) {
+    // Each weekday list holds every event on that weekday, including one-off
+    // meetings for a single date: keep only what really happens on `date`.
+    for (const ev of eventsOnDate(schedule[sourceKey] || [], date)) {
       if (!ev._dayKey) ev._dayKey = sourceKey;
       allEvents.push(ev);
     }
@@ -80,7 +83,7 @@ export default function DayView({
       return allEvents.filter(e => e.location === locationFilter);
     }
     return allEvents;
-  }, [schedule, dayKey, locationFilter]);
+  }, [schedule, dayKey, locationFilter, date]);
 
   const timeToMinutes = (timeStr) => {
     if (!timeStr) return -1;
