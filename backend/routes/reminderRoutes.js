@@ -76,7 +76,7 @@ const INVALID_MESSAGES = {
  * Create reminders for a user from already-sanitized-or-raw specs.
  * Used by the routes below and by /api/parse-schedule for AI-created reminders.
  */
-async function createReminders(userId, specs, { timeZone, source = 'manual', sourceText } = {}) {
+async function createReminders(userId, specs, { timeZone, source = 'manual', sourceText, kind = 'reminder' } = {}) {
   const count = await Reminder.countDocuments({ userId });
   const room = Math.max(0, MAX_REMINDERS_PER_USER - count);
   const created = [];
@@ -91,6 +91,7 @@ async function createReminders(userId, specs, { timeZone, source = 'manual', sou
       rrule: schedule.toRRule(value),
       nextFireAt,
       source,
+      kind: kind === 'task' ? 'task' : 'reminder',
       sourceText: sourceText ? String(sourceText).slice(0, 500) : undefined
     });
     created.push(serialize(doc));
@@ -116,6 +117,7 @@ function serialize(doc) {
     nextFireAt: r.nextFireAt || null,
     lastFiredAt: r.lastFiredAt || null,
     source: r.source || 'manual',
+    kind: r.kind === 'task' ? 'task' : 'reminder',
     createdAt: r.createdAt
   };
 }

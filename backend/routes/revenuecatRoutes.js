@@ -30,7 +30,10 @@ const { isRevenueCatSubscriptionEvent, revenueCatEventEffect, applyEntitlement }
  * Everything else is acknowledged and ignored.
  */
 
-const DEFAULT_PACK_CREDITS = 100;
+const pricing = require('../config/pricing');
+
+// Pack size when the product id names no size and IAP_PRODUCT_CREDITS has no entry.
+const DEFAULT_PACK_CREDITS = pricing.creditPackPoints;
 
 function authOk(req) {
   const expected = process.env.REVENUECAT_WEBHOOK_AUTH?.trim();

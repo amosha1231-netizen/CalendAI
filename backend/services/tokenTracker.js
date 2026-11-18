@@ -1,52 +1,24 @@
 // ──────────────────────────────────────────────
 // Token Usage Tracker & Pay-As-You-Go Calculator
 // ──────────────────────────────────────────────
-// Tracks token consumption from OpenRouter responses,
-// calculates cost based on known model pricing,
-// applies a markup multiplier, and converts to credits.
+// Turns one OpenRouter call into the points we charge for it:
+//   points = real provider cost (USD) × markup × points-per-dollar
 //
-// 1 credit = $0.001 (0.1 cent)
-// Markup multiplier: 3x (configurable via OPENROUTER_MARKUP_MULTIPLIER env var)
+// The real cost is OpenRouter's usage.cost for that call. When it is missing,
+// the tokens are priced from OpenRouter's live price list (services/modelPricing.js),
+// or from the fallback table in config/pricing.js.
+// All numbers (markup, points per dollar, fallbacks) live in config/pricing.js.
 // ──────────────────────────────────────────────
+const pricing = require('../config/pricing');
+const { getModelPrice } = require('./modelPricing');
 
-/**
- * Known pricing for models used via OpenRouter (per 1M tokens).
- * Prices in USD.
- * Source: https://openrouter.ai/models/deepseek/deepseek-chat/pricing
- */
-const MODEL_PRICING = {
-  'deepseek/deepseek-chat': {
-    input: 0.14,   // $0.14 per 1M input tokens
-    output: 0.42,  // $0.42 per 1M output tokens
-  },
-  // Fallback pricing for unknown models (conservative estimate)
-  'default': {
-    input: 0.50,
-    output: 1.00,
-  }
-};
+/** Kept for older callers: the fallback price table. */
+const MODEL_PRICING = pricing.fallbackModelPrices;
+const DEFAULT_MARKUP = pricing.DEFAULTS.MARKUP;
+const CREDITS_PER_DOLLAR = pricing.pointsPerDollar;
 
-/**
- * Default markup multiplier applied to raw cost.
- * 3x means the user is charged 3× the raw OpenRouter cost.
- */
-const DEFAULT_MARKUP = 3;
-
-/**
- * Credits per dollar — 1 credit = $0.001
- */
-const CREDITS_PER_DOLLAR = 1000;
-
-/**
- * Get the markup multiplier from environment or default.
- */
 function getMarkupMultiplier() {
-  const envVal = process.env.OPENROUTER_MARKUP_MULTIPLIER;
-  if (envVal) {
-    const parsed = parseFloat(envVal);
-    if (!isNaN(parsed) && parsed > 0) return parsed;
-  }
-  return DEFAULT_MARKUP;
+  return pricing.markup;
 }
 
 /**
@@ -84,22 +56,28 @@ function calculateCost(usage, modelName) {
   }
   const totalTokens = Math.max(reportedTotal, promptTokens + completionTokens);
 
-  // Get pricing for the specific model, or fallback to default
-  const pricing = MODEL_PRICING[modelName] || MODEL_PRICING['default'];
+  // Real cost OpenRouter charged for this call, when it reported one.
+  const reportedCost = usage.cost == null ? NaN : Number(usage.cost);
+  let rawCostUSD;
+  let pricingSource;
+  let pricingUsed = null;
+  if (Number.isFinite(reportedCost) && reportedCost > 0) {
+    rawCostUSD = reportedCost;
+    pricingSource = 'provider-cost';
+  } else {
+    const price = getModelPrice(modelName);
+    pricingUsed = { input: price.input, output: price.output };
+    pricingSource = price.source;
+    rawCostUSD = (promptTokens / 1_000_000) * price.input + (completionTokens / 1_000_000) * price.output;
+  }
 
-  // Calculate raw cost in USD
-  const rawInputCost = (promptTokens / 1_000_000) * pricing.input;
-  const rawOutputCost = (completionTokens / 1_000_000) * pricing.output;
-  const rawCostUSD = rawInputCost + rawOutputCost;
-
-  // Apply markup
   const markupMultiplier = getMarkupMultiplier();
   const costUSD = rawCostUSD * markupMultiplier;
 
-  // Convert to credits (1 credit = $0.001)
-  const costCredits = Math.ceil(costUSD * CREDITS_PER_DOLLAR * 100) / 100; // Round to 2 decimal places
-  // Minimum charge: 1 credit (never charge 0)
-  const finalCredits = Math.max(1, costCredits);
+  // Points, rounded UP to 2 decimals so we never charge less than cost × markup.
+  // toFixed strips float noise (1101.0000000002) so it does not round up a whole 0.01.
+  const costCredits = Math.ceil(Number((costUSD * CREDITS_PER_DOLLAR * 100).toFixed(6))) / 100;
+  const finalCredits = Math.max(pricing.minPointsPerRequest, costCredits);
 
   return {
     rawCostUSD: roundTo6(rawCostUSD),
@@ -110,7 +88,8 @@ function calculateCost(usage, modelName) {
     totalTokens,
     markupMultiplier,
     modelName: modelName || 'unknown',
-    pricingUsed: pricing
+    pricingSource,
+    pricingUsed
   };
 }
 
@@ -131,7 +110,7 @@ function formatCostBreakdown(costInfo) {
     `  Prompt tokens: ${promptTokens.toLocaleString()}`,
     `  Completion tokens: ${completionTokens.toLocaleString()}`,
     `  Total tokens: ${totalTokens.toLocaleString()}`,
-    `  Raw cost: $${rawCostUSD.toFixed(6)}`,
+    `  Raw cost: $${rawCostUSD.toFixed(6)} (${costInfo.pricingSource || 'unknown'})`,
     `  Markup: ${markupMultiplier}x`,
     `  Charged cost: $${costUSD.toFixed(6)}`,
     `  Credits deducted: ${costCredits}`
@@ -143,5 +122,6 @@ module.exports = {
   formatCostBreakdown,
   MODEL_PRICING,
   DEFAULT_MARKUP,
-  CREDITS_PER_DOLLAR
+  CREDITS_PER_DOLLAR,
+  getMarkupMultiplier
 };

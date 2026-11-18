@@ -28,15 +28,15 @@ async function post(body, auth) {
   }
 }
 
-test('creditsForProduct: env map wins, then a number in the id, then 100', () => {
+test('creditsForProduct: env map wins, then a number in the id, then the default pack (1500)', () => {
   const saved = process.env.IAP_PRODUCT_CREDITS;
   try {
     process.env.IAP_PRODUCT_CREDITS = 'big_pack=500, small=50';
     assert.equal(creditsForProduct('big_pack'), 500);
     assert.equal(creditsForProduct('small'), 50);
     assert.equal(creditsForProduct('calendai_credits_300'), 300);
-    assert.equal(creditsForProduct('credits'), 100);
-    assert.equal(creditsForProduct(undefined), 100);
+    assert.equal(creditsForProduct('credits'), 1500);
+    assert.equal(creditsForProduct(undefined), 1500);
   } finally {
     if (saved === undefined) delete process.env.IAP_PRODUCT_CREDITS; else process.env.IAP_PRODUCT_CREDITS = saved;
   }

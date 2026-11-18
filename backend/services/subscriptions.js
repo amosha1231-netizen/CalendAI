@@ -16,16 +16,16 @@
  * database. `applyEntitlement` does the write.
  */
 const mongoose = require('mongoose');
+const pricing = require('../config/pricing');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 // Payment providers retry failed renewals for a few days; keep Pro on meanwhile.
 const RENEWAL_GRACE_MS = 3 * DAY_MS;
 // One-time credit pack (web "buy credits" and store consumables).
-const CREDIT_PACK_SIZE = 100;
+const CREDIT_PACK_SIZE = pricing.creditPackPoints;
 
 function proMonthlyCredits() {
-  const n = Number(process.env.PRO_MONTHLY_CREDITS);
-  return Number.isFinite(n) && n > 0 ? n : 1000;
+  return pricing.proMonthlyPoints;
 }
 
 function toDate(value) {

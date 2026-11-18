@@ -34,7 +34,7 @@ work in the app.
 
 ### 2. Products (one per store, type **Consumable** / **In-app product**)
 Use the same id in both stores, with the number of credits in it, e.g.
-`calendai_credits_100` (100 credits). Price it in the store's price tiers.
+`calendai_credits_1500` (1500 credits; the number in the id is the pack size). Price it in the store's price tiers.
 Apple also needs a review screenshot of the purchase sheet.
 
 In Xcode: App target → Signing & Capabilities → **+ In-App Purchase**.
@@ -64,7 +64,7 @@ In Xcode: App target → Signing & Capabilities → **+ In-App Purchase**.
 TestFlight (iOS) or an internal-testing track (Android) with a sandbox /
 license-tester account: buy a pack, the sheet says "Thank you", the credits
 badge goes up within seconds. Render logs show
-`✅ RevenueCat (...): +100 credits for user …`.
+`✅ RevenueCat (...): +1500 credits for user …`.
 
 ## Rules for the apps
 - Never mention the website's price, that the website is cheaper, or that

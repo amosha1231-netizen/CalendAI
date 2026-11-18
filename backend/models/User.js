@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const pricing = require('../config/pricing');
 
 const providerServiceSchema = new mongoose.Schema({
   name: { type: String, required: true },
@@ -31,7 +32,7 @@ const userSchema = new mongoose.Schema({
   lemonSubscriptionId: { type: String, index: true, sparse: true },
   lemonCustomerPortalUrl: { type: String },
   stripeCustomerId: { type: String },
-  aiCredits: { type: Number, default: 100 }, // Freemium: 100 free AI credits for new users (token-based PAYG)
+  aiCredits: { type: Number, default: () => pricing.signupPoints }, // Signup gift (config/pricing.js); token-based PAYG
   aiCreditsLedger: { type: Array, default: [] }, // Array of { timestamp, action, promptTokens, completionTokens, totalTokens, costCredits, rawCostUSD, costUSD, modelName }
   schedule: {
     type: mongoose.Schema.Types.Mixed,

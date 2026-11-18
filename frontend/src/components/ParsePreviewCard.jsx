@@ -1,5 +1,5 @@
 import React from "react";
-import { Bell, Check, Loader2, Trash2, AlertTriangle, X } from "lucide-react";
+import { Bell, Check, CheckSquare, Loader2, Trash2, AlertTriangle, X } from "lucide-react";
 
 const DAY_KEYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
 const RECURRENCES = ['once', 'daily', 'weekly', 'monthly', 'yearly'];
@@ -73,6 +73,7 @@ export default function ParsePreviewCard({ preview, onChange, onConfirm, onCance
           <div key={item.key} className="bg-white rounded-xl border border-slate-200 p-3">
             <div className="flex items-center gap-2">
               {item.isReminder && <Bell className="w-4 h-4 text-amber-500 shrink-0" aria-label={t.previewReminder || 'Reminder'} />}
+              {item.isTask && <CheckSquare className="w-4 h-4 text-emerald-600 shrink-0" aria-label={t.previewTask || 'Task'} />}
               <input value={item.title} onChange={e => updateItem(index, { title: e.target.value })}
                 className={`${inputClass} flex-1 min-w-0 font-medium`} aria-label={t.previewEventTitle || 'Title'} />
               <button onClick={() => removeItem(index)} disabled={saving} aria-label={t.previewRemove || 'Remove'}
@@ -96,6 +97,12 @@ export default function ParsePreviewCard({ preview, onChange, onConfirm, onCance
                 {RECURRENCES.map(r => <option key={r} value={r}>{t[RECURRENCE_LABEL_KEYS[r]] || r}</option>)}
               </select>
             </div>
+            {item.isTask && (
+              <div className="flex items-center gap-1.5 mt-2 text-xs text-emerald-700">
+                <Bell className="w-3.5 h-3.5 shrink-0" />
+                <span>{(t.taskWithPing || 'Task · ping at {time}').replace('{time}', item.startTime)}</span>
+              </div>
+            )}
             {item.conflicts.length > 0 && (
               <div className="flex items-start gap-1.5 mt-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2">
                 <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />

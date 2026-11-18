@@ -244,7 +244,13 @@ export default function DayView({
                               <span>{t.reminderColon} {event.reminderMinutesBefore} {t.reminderMinutes}</span>
                             </div>
                           )}
-                          {event.location && (
+                          {event.isTask && (
+                            <div className="flex items-center gap-1 text-[10px] text-emerald-700">
+                              <BellRing className="w-2.5 h-2.5" />
+                              <span>{(t.taskWithPing || 'Task · ping at {time}').replace('{time}', formatTimeString(event.startTime, lang))}</span>
+                            </div>
+                          )}
+                          {event.location && !event.isTask && (
                             <div className="flex items-center gap-1 text-[10px] text-slate-400">
                               <MapPin className="w-2.5 h-2.5" />
                               <span>{LOCATION_LABELS?.[event.location] || event.location}</span>

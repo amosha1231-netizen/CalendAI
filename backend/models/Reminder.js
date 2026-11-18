@@ -21,6 +21,8 @@ const reminderSchema = new mongoose.Schema({
   nextFireAt: { type: Date },
   lastFiredAt: { type: Date },
   source: { type: String, enum: ['ai', 'manual'], default: 'manual' },
+  // 'task': the ping of a calendar task, which the user then marks done in the day view.
+  kind: { type: String, enum: ['reminder', 'task'], default: 'reminder' },
   sourceText: { type: String, maxlength: 500 }
 }, { timestamps: true });
 

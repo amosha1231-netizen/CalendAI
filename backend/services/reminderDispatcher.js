@@ -16,7 +16,7 @@ const { computeNextFire } = require('./reminderSchedule');
 const STALE_MS = 15 * 60 * 1000;
 const BATCH = 200;
 
-function createDispatcher({ Reminder, PushSubscription, push, isShabbatAt, now = () => new Date(), logger = console }) {
+function createDispatcher({ Reminder, PushSubscription, push, isShabbatAt, taskExists, now = () => new Date(), logger = console }) {
   function nextFor(reminder, after) {
     // The app is closed on Shabbat, so no reminder ever pings then
     // (whatever an older reminder's skipShabbat flag says).
@@ -36,7 +36,8 @@ function createDispatcher({ Reminder, PushSubscription, push, isShabbatAt, now =
       body: reminder.time,
       fireAt: fireAt.toISOString(),
       tag: `reminder-${reminder._id}-${fireAt.getTime()}`,
-      url: '/?reminders=1'
+      // A task's ping opens the app on today, where the task is marked done or not.
+      url: reminder.kind === 'task' ? '/' : '/?reminders=1'
     };
     let sent = 0;
     for (const sub of subs) {
@@ -68,6 +69,16 @@ function createDispatcher({ Reminder, PushSubscription, push, isShabbatAt, now =
         { new: true }
       );
       if (!claimed) continue; // another instance took it, or the user just edited it
+      // The task was deleted from the calendar: stop its ping for good.
+      if (reminder.kind === 'task' && typeof taskExists === 'function') {
+        let exists = true;
+        try { exists = await taskExists(reminder); } catch (err) { logger.warn('[Reminders] task check failed:', err.message); }
+        if (!exists) {
+          await Reminder.updateOne({ _id: reminder._id }, { $set: { active: false } }).catch(() => {});
+          skipped++;
+          continue;
+        }
+      }
       if (current.getTime() - fireAt.getTime() > STALE_MS) { skipped++; continue; }
       // A ping scheduled before this rule (or before Shabbat times shifted) is not sent on Shabbat.
       if (typeof isShabbatAt === 'function' && isShabbatAt(current, reminder.timezone)) { skipped++; continue; }

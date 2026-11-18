@@ -593,6 +593,7 @@ const routineRoutes = require('./routes/routineRoutes');
 const reminderRoutes = require('./routes/reminderRoutes');
 const { createReminders } = reminderRoutes;
 const { reminderSpecsFromEvents } = require('./services/reminderSchedule');
+const { applyTaskIntent, taskPingEvents, scheduleHasTask } = require('./services/taskPings');
 const { createDispatcher } = require('./services/reminderDispatcher');
 
 // Expose schedule helper functions for goal routes to auto-add challenge events to user schedules
@@ -613,6 +614,7 @@ app.set('DEFAULT_LOCATION_ID', DEFAULT_LOCATION_ID);
 
 // ── Token Usage Tracker (Pay-As-You-Go billing)
 const { calculateCost, formatCostBreakdown } = require('./services/tokenTracker');
+const { startModelPriceRefresh } = require('./services/modelPricing');
 const { refillOwnerCredits, isOwnerAccount } = require('./services/ownerCredits');
 const { isProActive, lemonEventEffect, applyEntitlement } = require('./services/subscriptions');
 
@@ -705,32 +707,61 @@ async function deductAICredit(userId, usage = null, modelName = 'deepseek/deepse
   }
   if (Number.isFinite(usage.cost)) ownerExtras.providerCostUSD = usage.cost;
 
+  const ledgerEntry = (charged) => ({
+    timestamp: new Date().toISOString(),
+    action,
+    promptTokens: costInfo.promptTokens,
+    completionTokens: costInfo.completionTokens,
+    totalTokens: costInfo.totalTokens,
+    costCredits: charged,
+    rawCostUSD: costInfo.rawCostUSD,
+    costUSD: costInfo.costUSD,
+    modelName: costInfo.modelName,
+    markupMultiplier: costInfo.markupMultiplier,
+    pricingSource: costInfo.pricingSource,
+    ...(charged < costInfo.costCredits ? { fullCostCredits: costInfo.costCredits } : {}),
+    ...ownerExtras
+  });
+
   try {
-    const updated = await User.findOneAndUpdate(
+    let updated = await User.findOneAndUpdate(
       { _id: userId, aiCredits: { $gte: costInfo.costCredits } },
       {
         $inc: { aiCredits: -costInfo.costCredits },
-        $push: {
-          aiCreditsLedger: {
-            $each: [{
-              timestamp: new Date().toISOString(),
-              action,
-              promptTokens: costInfo.promptTokens,
-              completionTokens: costInfo.completionTokens,
-              totalTokens: costInfo.totalTokens,
-              costCredits: costInfo.costCredits,
-              rawCostUSD: costInfo.rawCostUSD,
-              costUSD: costInfo.costUSD,
-              modelName: costInfo.modelName,
-              markupMultiplier: costInfo.markupMultiplier,
-              ...ownerExtras
-            }],
-            $position: 0 // newest first
-          }
-        }
+        $push: { aiCreditsLedger: { $each: [ledgerEntry(costInfo.costCredits)], $position: 0 } } // newest first
       },
       { new: true }
     );
+    // The AI call already happened and was paid for. If the balance is smaller than
+    // its price, take what is left (down to 0) and still deliver the answer, rather
+    // than throwing away a request we paid for. The next request is then refused
+    // by checkAICredits. At most one request's price (~₪0.05) is ever written off.
+    for (let attempt = 0; !updated && attempt < 3; attempt++) {
+      const current = await User.findById(userId).select('aiCredits').lean();
+      if (!current) break;
+      const balance = Number(current.aiCredits);
+      if (!Number.isFinite(balance) || balance <= 0) break;
+      if (balance >= costInfo.costCredits) {
+        // A concurrent top-up landed; retry the full charge.
+        updated = await User.findOneAndUpdate(
+          { _id: userId, aiCredits: { $gte: costInfo.costCredits } },
+          {
+            $inc: { aiCredits: -costInfo.costCredits },
+            $push: { aiCreditsLedger: { $each: [ledgerEntry(costInfo.costCredits)], $position: 0 } }
+          },
+          { new: true }
+        );
+      } else {
+        updated = await User.findOneAndUpdate(
+          { _id: userId, aiCredits: current.aiCredits },
+          {
+            $set: { aiCredits: 0 },
+            $push: { aiCreditsLedger: { $each: [ledgerEntry(balance)], $position: 0 } }
+          },
+          { new: true }
+        );
+      }
+    }
     if (!updated) {
       const existing = await User.exists({ _id: userId });
       const error = new Error(existing ? 'Insufficient AI credits.' : 'User account not found.');
@@ -2228,6 +2259,12 @@ async function commitParsedEvents(req, userId, schedule, parsedEvents, { text, t
       createdReminders = await createReminders(userId, reminderSpecs, { timeZone, source: 'ai', sourceText: text });
       if (createdReminders.length) eventsToSchedule = remainingEvents;
     }
+    // ── TASKS: stay in the calendar (for the done mark) and also ping at their start time.
+    const { reminders: taskPingSpecs } = reminderSpecsFromEvents(taskPingEvents(eventsToSchedule), { timeZone, todayName, text: datesFromText ? text : '' });
+    if (taskPingSpecs.length) {
+      const taskPings = await createReminders(userId, taskPingSpecs, { timeZone, source: 'ai', sourceText: text, kind: 'task' });
+      createdReminders = createdReminders.concat(taskPings);
+    }
   }
 
   const locationOptions = locationDayOptions(locationId);
@@ -2426,7 +2463,9 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
       });
     }
 
-    const parsedEvents = Array.isArray(parsedResult.events) ? parsedResult.events : [];
+    // "משימה כל יום ראשון ב-11" must come back as a task (ping + done mark), even
+    // when the AI answered with a plain event or a bare reminder.
+    const parsedEvents = applyTaskIntent(Array.isArray(parsedResult.events) ? parsedResult.events : [], text);
     const { replyMessage } = parsedResult;
     const locationId = location || DEFAULT_LOCATION_ID;
 
@@ -4663,7 +4702,11 @@ mongoReady
       Reminder: require('./models/Reminder'),
       PushSubscription: require('./models/PushSubscription'),
       push: require('./services/webPush'),
-      isShabbatAt: reminderRoutes.isShabbatAt
+      isShabbatAt: reminderRoutes.isShabbatAt,
+      taskExists: async reminder => {
+        const owner = await User.findById(reminder.userId).select('schedule').lean();
+        return !owner || scheduleHasTask(owner.schedule, reminder.title);
+      }
     }).start(30000, () => mongoose.connection.readyState === 1);
     // Evening digest: tomorrow's schedule, pushed the evening before (services/eveningDigest).
     require('./services/eveningDigest').createDigestDispatcher({
@@ -4675,6 +4718,7 @@ mongoReady
     }).start(60000, () => mongoose.connection.readyState === 1);
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`Backend running at http://localhost:${PORT}`);
+      startModelPriceRefresh(); // live AI prices, used when a response reports no cost
     });
   })
   .catch(err => {
