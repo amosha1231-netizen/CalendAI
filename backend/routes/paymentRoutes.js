@@ -24,6 +24,22 @@ function userIdFromBearer(req) {
 }
 
 /**
+ * GET /api/payments/plans
+ * The paid options with their real price (read from Lemon Squeezy) and
+ * what each gives, for the packages screen. Public; no prices are shown
+ * inside the native apps (the client hides the screen there).
+ */
+router.get('/plans', async (req, res) => {
+  try {
+    res.set('Cache-Control', 'public, max-age=300');
+    res.json(await require('../services/planPrices').getPlans());
+  } catch (err) {
+    console.error('[plans]', err.message);
+    res.status(500).json({ error: 'Failed to load plans.' });
+  }
+});
+
+/**
  * POST /api/payments/create-checkout
  * Creates a Lemon Squeezy checkout session.
  * Body: { lang, product: 'pro' | 'credits' }. 'pro' is the monthly

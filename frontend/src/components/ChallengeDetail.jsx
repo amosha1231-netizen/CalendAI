@@ -265,7 +265,7 @@ export default function ChallengeDetail({ goalId, lang, user, onClose, onJoinCha
             <div className="min-w-0">
               <h2 className="text-lg font-bold text-gray-900 dark:text-white truncate">{goal.title}</h2>
               <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                <span>👤 {goal.creatorId?.displayName || "Unknown"}</span>
+                <span>{goal.featuredKey ? "✨ CalendAI" : `👤 ${goal.creatorId?.displayName || "Unknown"}`}</span>
                 <span>👥 {goal.participantCount || 0} {t.participants}</span>
                 {goal.completedCount > 0 && (
                   <span className="text-green-600">✅ {goal.completedCount} {t.completed}</span>

@@ -6,6 +6,7 @@ const mongoose = require('mongoose');
 const participantSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   status: { type: String, enum: ['joined', 'completed'], default: 'joined' },
+  joinedAt: { type: Date, default: Date.now },
   completedAt: { type: Date },
   currentStreak: { type: Number, default: 0 },
   longestStreak: { type: Number, default: 0 },
@@ -21,7 +22,16 @@ const messageSchema = new mongoose.Schema({
 
 const goalSchema = new mongoose.Schema({
   title: { type: String, required: true },
-  creatorId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+  titleEn: { type: String, default: '' },
+  description: { type: String, default: '' },
+  descriptionEn: { type: String, default: '' },
+  emoji: { type: String, default: '' },
+  durationDays: { type: Number, default: null }, // e.g. a 21-day challenge; null = open-ended
+  // 'challenge' = public and joinable; 'task' = a private daily task of one user.
+  kind: { type: String, enum: ['challenge', 'task'], default: 'challenge' },
+  // Built-in challenges (config/featuredChallenges.js) have a key and no creator.
+  featuredKey: { type: String, default: undefined },
+  creatorId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: function () { return !this.featuredKey; }, index: true },
   scheduleTime: { type: String }, // e.g., "05:00 AM" or "23:00"
   day: { type: String }, // Sunday, Monday, etc.
   isPublic: { type: Boolean, default: true },
@@ -33,6 +43,7 @@ const goalSchema = new mongoose.Schema({
 
 // Text index for keyword search
 goalSchema.index({ title: 'text', category: 'text' });
+goalSchema.index({ featuredKey: 1 }, { unique: true, sparse: true });
 // Index for fetching public goals sorted by newest
 goalSchema.index({ isPublic: 1, createdAt: -1 });
 

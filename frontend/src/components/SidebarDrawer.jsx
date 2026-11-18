@@ -137,7 +137,7 @@ function isDesktopDevice() {
   }
 }
 
-export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangChange, t, user, isPro, onUpgradeToPro, onOpenNativePaywall, onLogout, onOpenShareModal, selectedLocation, onLocationChange, selectedTimezone, onTimezoneChange, timezoneOptions, initialTab = 'settings', title, side = 'right' }) {
+export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangChange, t, user, isPro, onUpgradeToPro, onOpenNativePaywall, onOpenPlans, onLogout, onOpenShareModal, selectedLocation, onLocationChange, selectedTimezone, onTimezoneChange, timezoneOptions, initialTab = 'settings', title, side = 'right' }) {
   const [activeTab, setActiveTab] = useState(initialTab);
   const [settingsData, setSettingsData] = useState({
     lang: lang,
@@ -629,6 +629,13 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangC
                   className="w-full max-w-full box-border flex items-center justify-center gap-2 px-6 py-3 bg-gradient-to-r from-amber-400 to-orange-500 text-white rounded-xl font-bold text-sm shadow-lg hover:shadow-xl transition"
                 >
                   <Zap className="w-5 h-5" /> {lang === 'he' ? 'שדרג ל-Pro' : 'Upgrade to Pro'}
+                </button>
+              ) : onOpenPlans ? (
+                <button
+                  onClick={onOpenPlans}
+                  className="w-full max-w-full box-border flex items-center justify-center gap-2 px-6 py-3 bg-gradient-to-r from-amber-400 to-orange-500 text-white rounded-xl font-bold text-sm shadow-lg hover:shadow-xl transition"
+                >
+                  <Zap className="w-5 h-5" /> {lang === 'he' ? 'חבילות ומנוי Pro' : 'Packages and Pro'}
                 </button>
               ) : (
                 <div>
