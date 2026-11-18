@@ -614,6 +614,7 @@ app.set('DEFAULT_LOCATION_ID', DEFAULT_LOCATION_ID);
 
 // ── Token Usage Tracker (Pay-As-You-Go billing)
 const { calculateCost, formatCostBreakdown } = require('./services/tokenTracker');
+const { startModelPriceRefresh } = require('./services/modelPricing');
 const { refillOwnerCredits, isOwnerAccount } = require('./services/ownerCredits');
 const { isProActive, lemonEventEffect, applyEntitlement } = require('./services/subscriptions');
 
@@ -706,32 +707,61 @@ async function deductAICredit(userId, usage = null, modelName = 'deepseek/deepse
   }
   if (Number.isFinite(usage.cost)) ownerExtras.providerCostUSD = usage.cost;
 
+  const ledgerEntry = (charged) => ({
+    timestamp: new Date().toISOString(),
+    action,
+    promptTokens: costInfo.promptTokens,
+    completionTokens: costInfo.completionTokens,
+    totalTokens: costInfo.totalTokens,
+    costCredits: charged,
+    rawCostUSD: costInfo.rawCostUSD,
+    costUSD: costInfo.costUSD,
+    modelName: costInfo.modelName,
+    markupMultiplier: costInfo.markupMultiplier,
+    pricingSource: costInfo.pricingSource,
+    ...(charged < costInfo.costCredits ? { fullCostCredits: costInfo.costCredits } : {}),
+    ...ownerExtras
+  });
+
   try {
-    const updated = await User.findOneAndUpdate(
+    let updated = await User.findOneAndUpdate(
       { _id: userId, aiCredits: { $gte: costInfo.costCredits } },
       {
         $inc: { aiCredits: -costInfo.costCredits },
-        $push: {
-          aiCreditsLedger: {
-            $each: [{
-              timestamp: new Date().toISOString(),
-              action,
-              promptTokens: costInfo.promptTokens,
-              completionTokens: costInfo.completionTokens,
-              totalTokens: costInfo.totalTokens,
-              costCredits: costInfo.costCredits,
-              rawCostUSD: costInfo.rawCostUSD,
-              costUSD: costInfo.costUSD,
-              modelName: costInfo.modelName,
-              markupMultiplier: costInfo.markupMultiplier,
-              ...ownerExtras
-            }],
-            $position: 0 // newest first
-          }
-        }
+        $push: { aiCreditsLedger: { $each: [ledgerEntry(costInfo.costCredits)], $position: 0 } } // newest first
       },
       { new: true }
     );
+    // The AI call already happened and was paid for. If the balance is smaller than
+    // its price, take what is left (down to 0) and still deliver the answer, rather
+    // than throwing away a request we paid for. The next request is then refused
+    // by checkAICredits. At most one request's price (~₪0.05) is ever written off.
+    for (let attempt = 0; !updated && attempt < 3; attempt++) {
+      const current = await User.findById(userId).select('aiCredits').lean();
+      if (!current) break;
+      const balance = Number(current.aiCredits);
+      if (!Number.isFinite(balance) || balance <= 0) break;
+      if (balance >= costInfo.costCredits) {
+        // A concurrent top-up landed; retry the full charge.
+        updated = await User.findOneAndUpdate(
+          { _id: userId, aiCredits: { $gte: costInfo.costCredits } },
+          {
+            $inc: { aiCredits: -costInfo.costCredits },
+            $push: { aiCreditsLedger: { $each: [ledgerEntry(costInfo.costCredits)], $position: 0 } }
+          },
+          { new: true }
+        );
+      } else {
+        updated = await User.findOneAndUpdate(
+          { _id: userId, aiCredits: current.aiCredits },
+          {
+            $set: { aiCredits: 0 },
+            $push: { aiCreditsLedger: { $each: [ledgerEntry(balance)], $position: 0 } }
+          },
+          { new: true }
+        );
+      }
+    }
     if (!updated) {
       const existing = await User.exists({ _id: userId });
       const error = new Error(existing ? 'Insufficient AI credits.' : 'User account not found.');
@@ -4688,6 +4718,7 @@ mongoReady
     }).start(60000, () => mongoose.connection.readyState === 1);
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`Backend running at http://localhost:${PORT}`);
+      startModelPriceRefresh(); // live AI prices, used when a response reports no cost
     });
   })
   .catch(err => {

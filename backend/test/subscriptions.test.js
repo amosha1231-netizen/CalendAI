@@ -28,7 +28,7 @@ test('isProActive follows proExpiresAt', () => {
 
 test('credit-pack order adds credits, Pro subscription order is skipped', () => {
   const pack = lemonEventEffect({ meta: { event_name: 'order_created' }, data: { id: 55, attributes: { status: 'paid', first_order_item: { variant_id: 2035157 } } } });
-  assert.deepEqual(pack, { kind: 'credits', eventKey: 'order_created:55', orderId: '55', credits: 100 });
+  assert.deepEqual(pack, { kind: 'credits', eventKey: 'order_created:55', orderId: '55', credits: 1500 });
 
   const sub = lemonEventEffect({ meta: { event_name: 'order_created' }, data: { id: 56, attributes: { status: 'paid', first_order_item: { variant_id: 9001 } } } });
   assert.equal(sub.kind, 'ignore');

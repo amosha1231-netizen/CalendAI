@@ -11,7 +11,9 @@
 // request body or header.
 // ──────────────────────────────────────────────
 
-const OWNER_CREDIT_FLOOR = 100;
+const pricing = require('../config/pricing');
+
+const OWNER_CREDIT_FLOOR = pricing.ownerPointsFloor;
 
 function getOwnerEmails() {
   return String(process.env.OWNER_EMAILS || '')
