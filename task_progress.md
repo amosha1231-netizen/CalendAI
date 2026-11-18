@@ -5276,3 +5276,72 @@ for full detail):**
    harden in this branch's own code.
 3. Should a provider booking's synced Google Calendar event description
    include the guest's phone number/notes (currently name only)?
+
+---
+
+## Round 78 (scheduled run, 2026-11-18)
+
+Fresh clone, `npm install` in both `frontend/` and `backend/`. Baseline
+re-verified: `npm run build` (frontend) clean. `node --test` (backend):
+317 tests, 301 pass, 16 fail — failing test names checked individually
+by name and are identical to the documented `mongodb-memory-server`-
+blocked set (credit-deduction races, webhook idempotency, booking/
+mutual-session/provider-booking claim races, owner-refill tests); not a
+regression. Items 1-5 re-verified: `multer` + `/api/parse-image` route,
+`parseImageWithVision` wiring, and `handleParse`'s immediate
+`setInputText("")` clear are all still present and wired in
+`backend/server.js` / `backend/services/aiService.js` /
+`frontend/src/App.jsx`. Still `[x]`.
+
+Re-checked for drift: `git fetch origin master` — head is still
+`9b81e19`, same commit rounds 70-77 saw. `git rev-list --left-right
+--count origin/master...HEAD` is `32 72` (32 behind, same as before
+modulo this branch's own notes commits). `git log --oneline -1` on the
+ten in-scope files confirms the newest touching commit is still
+`9fbde7b` from the rounds 56-63 hardening series — nothing has touched
+this branch's own scope files since.
+
+`list_pull_requests`: open PRs are #54 (new since round 77, "Weekly
+strip, task circles with swipe, built-in challenges, packages screen"),
+#53, #52, #51, #50, #30 — still no PR against
+`wip/mutual-provider-booking`. Checked #54's file list specifically
+since it's new: it touches `backend/server.js` and
+`backend/services/aiService.js` (both files this branch also has
+changes in, for route registration and `parseImageWithVision`
+respectively) plus goal/reminder/pricing/subscription files unrelated to
+this branch's scope — no overlap with the ten mutual/provider scope
+files themselves, but it adds one more source of eventual merge friction
+on the two shared files, reinforcing (not changing) open item 1. No
+response to any of the three open items below.
+
+Did not spin up a fifteenth full file-by-file adversarial review this
+round — rounds 64-77 (fourteen rounds) found nothing new, and `git log`
+confirms none of the ten scope files have changed since the last real
+fix (`9fbde7b`), so repeating that review again would be pure repetition
+with no new input to react to. Fifteen consecutive rounds (64-78) now
+with nothing new to harden in this branch's own code.
+
+**Not sending a push notification this round.** Nothing actionable
+changed since round 70's escalation (same ~32 commits behind, same
+conflict shape, no PR opened, no response to any of the three open
+items); PR #54 is new but doesn't change the shape of the merge
+decision, just adds one more data point to it. A repeat notification
+would be noise rather than new information.
+
+**Open items, unchanged, still awaiting a human decision (see round 70
+for full detail):**
+1. Merge/PR decision for `wip/mutual-provider-booking` (72 commits
+   ahead, 32 behind `origin/master`, no open PR) — recommend merging
+   master into this branch now (human or a dedicated reconciliation
+   pass, since the `backend/server.js` conflict touches a
+   `deductAICredit(...)` call site and the `MutualScheduler.jsx`
+   conflict is a real UX decision) or opening a PR for this branch
+   as-is and resolving at review time. New PR #54 on master also now
+   touches `backend/server.js` and `backend/services/aiService.js`,
+   adding a third source of conflict on those two shared files.
+2. Whether to pause this scheduled task's hardening sweep on this
+   branch — eleven adversarial reviews (56-63) landed seven real fixes;
+   fifteen consecutive rounds since (64-78) have found nothing new to
+   harden in this branch's own code.
+3. Should a provider booking's synced Google Calendar event description
+   include the guest's phone number/notes (currently name only)?
