@@ -39,6 +39,7 @@ const { getRequestLocation, getRequestTimeZone, isValidTimeZone } = require('./s
 const { getScheduleEventsForDate, isZeroDurationEvent } = require('./services/scheduleOccurrence');
 const { detectContact } = require('./services/contactDetect');
 const { notifyUser } = require('./services/userNotify');
+const { normalizeGroupSize, openSlots, groupStatus, responderKey } = require('./services/groupBooking');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }); // 10MB max
 
 dotenv.config({ path: path.join(__dirname, '.env') });
@@ -3110,7 +3111,10 @@ async function syncEventToGoogleCalendar(userId, event, locationId, timeZoneOver
     // (organizer) and the guest a calendar invite/confirmation automatically —
     // no separate email service needed.
     const guestEmail = typeof event.guestEmail === 'string' ? event.guestEmail.trim() : '';
-    const attendees = guestEmail ? [{ email: guestEmail }] : [];
+    const guestEmails = [guestEmail, ...(Array.isArray(event.guestEmails) ? event.guestEmails : [])]
+      .filter(e => typeof e === 'string' && e.trim())
+      .map(e => e.trim());
+    const attendees = [...new Set(guestEmails)].map(email => ({ email }));
 
     const requestBody = buildGcalEventBody({
       title: event.title,
@@ -3838,7 +3842,7 @@ app.post('/api/booking/ai-find-slot', aiLimiter, async (req, res) => {
  */
 app.post('/api/booking/create-link', async (req, res) => {
   try {
-    const { subject, duration, slots, day, hostName, startTime, endTime, meetingType, guestTimezone, locationId, inviteeContact } = req.body;
+    const { subject, duration, slots, day, hostName, startTime, endTime, meetingType, guestTimezone, locationId, inviteeContact, groupSize } = req.body;
     let { date } = req.body;
     
     // Determine if this is a locked (single exact time) or multi-slot booking
@@ -3904,6 +3908,8 @@ app.post('/api/booking/create-link', async (req, res) => {
         : slots.map((s, i) => ({ hour: s.hour, minute: s.minute, ...(slotDates[i] ? { date: slotDates[i] } : {}), booked: false })),
       inviteeContact: contact.type ? contact.value : null,
       inviteeContactType: contact.type,
+      // A locked (single exact time) link has nothing for a group to choose between.
+      groupSize: isLocked ? 1 : normalizeGroupSize(groupSize),
       status: 'active'
     };
     const booking = await Booking.create(bookingData);
@@ -3935,8 +3941,14 @@ app.get('/api/booking/:id', async (req, res) => {
       return res.status(410).json({ error: booking.status === 'processing' ? 'This booking is being confirmed.' : 'This booking link has expired.' });
     }
 
-    // Return available slots only (not booked) for multi-slot mode
-    const availableSlots = booking.slots.filter(s => !s.booked);
+    // Only times still open: not past, not clashing with something the host
+    // added since, and (group links) still possible for everyone who answered.
+    // Each keeps its index into booking.slots, which confirm/respond take.
+    const host = booking.isLocked ? null : await User.findById(booking.hostId).select('schedule').lean().catch(() => null);
+    const availableSlots = booking.isLocked ? [] : openSlots(booking, { schedule: host && host.schedule });
+    const group = normalizeGroupSize(booking.groupSize) > 1
+      ? { ...groupStatus(booking, { schedule: host && host.schedule }), names: (booking.responses || []).map(r => r.name) }
+      : null;
 
     res.json({
       ok: true,
@@ -3954,8 +3966,10 @@ app.get('/api/booking/:id', async (req, res) => {
         guestTimezone: booking.guestTimezone || null,
         locationId: booking.locationId || DEFAULT_LOCATION_ID,
         hostTimezone: booking.hostTimezone || resolveLocation(booking.locationId || DEFAULT_LOCATION_ID).timezone,
-        createdAt: booking.createdAt
+        createdAt: booking.createdAt,
+        groupSize: normalizeGroupSize(booking.groupSize)
       },
+      group,
       slots: availableSlots
     });
   } catch (err) {
@@ -3971,32 +3985,170 @@ app.get('/api/booking/:id', async (req, res) => {
  *   2. Multi-slot (isLocked=false): uses slotIndex to pick which slot
  */
 const DAY_NAMES_FOR_BOOKING = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+const formatTime12 = (h, m) => {
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const h12 = h % 12 || 12;
+  return `${String(h12).padStart(2, '0')}:${String(m).padStart(2, '0')} ${ampm}`;
+};
+
+/**
+ * Puts a claimed booking (status 'processing') on the host's calendar and
+ * marks it completed. `guest` is { name, email, phone, notes } for a single
+ * guest; group links pass every member's email in `attendeeEmails`.
+ * `state` collects what was written so the caller can roll it back.
+ */
+async function finalizeClaimedBooking(id, bookingData, slotIndex, guest, state) {
+  const hostId = bookingData.hostId.toString();
+  state.hostId = hostId;
+  let startTimeStr, endTimeStr;
+  if (bookingData.isLocked) {
+    startTimeStr = bookingData.startTime;
+    endTimeStr = bookingData.endTime;
+  } else {
+    const slot = bookingData.slots[Number(slotIndex)];
+    if (!slot || slot.booked) throw Object.assign(new Error('This slot is already booked.'), { status: 409 });
+    const endMinTotal = slot.hour * 60 + slot.minute + bookingData.duration;
+    if (endMinTotal > 1440) throw Object.assign(new Error('Booking must end on the same day.'), { status: 400 });
+    startTimeStr = formatTime12(slot.hour, slot.minute);
+    endTimeStr = formatTime12(Math.floor(endMinTotal / 60), endMinTotal % 60);
+  }
+
+  const host = await User.findById(hostId);
+  if (!host) throw Object.assign(new Error('Host account not found.'), { status: 404 });
+  // A slot with its own date (multi-day links) decides the day; older links use the booking's.
+  const chosenDate = (!bookingData.isLocked && bookingData.slots[Number(slotIndex)]?.date) || bookingData.date || null;
+  const dayName = chosenDate ? DAY_NAMES_FOR_BOOKING[new Date(`${chosenDate}T00:00:00Z`).getUTCDay()] : bookingData.day;
+  const startMinValue = timeToMinutes(startTimeStr);
+  const endMinValue = timeToMinutes(endTimeStr);
+  if (startMinValue === null || endMinValue === null || endMinValue <= startMinValue) throw Object.assign(new Error('Invalid booking time.'), { status: 400 });
+  const schedule = host.schedule && typeof host.schedule === 'object' ? host.schedule : getDefaultSchedule();
+  const observedRevision = Number(host.scheduleRevision || 0);
+  const conflicts = (schedule[dayName] || []).filter(event => {
+    if (chosenDate && event.targetDate && String(event.targetDate).slice(0, 10) !== chosenDate) return false;
+    const existingStart = timeToMinutes(event.startTime);
+    const existingEnd = timeToMinutes(event.endTime);
+    return existingStart !== null && existingEnd !== null && startMinValue < existingEnd && endMinValue > existingStart;
+  });
+  if (conflicts.length) throw Object.assign(new Error('This time is no longer available.'), { status: 409 });
+
+  const eventToPersist = {
+    title: `${bookingData.subject} - ${guest.name}`,
+    day: dayName,
+    startTime: startTimeStr,
+    endTime: endTimeStr,
+    recurrence: 'once',
+    location: bookingData.locationId || DEFAULT_LOCATION_ID,
+    guestName: guest.name,
+    guestEmail: guest.email || '',
+    ...(guest.attendeeEmails && guest.attendeeEmails.length ? { guestEmails: guest.attendeeEmails } : {}),
+    guestPhone: guest.phone || '',
+    guestNotes: guest.notes || '',
+    meetingType: bookingData.meetingType || null,
+    bookingId: id,
+    ...(chosenDate ? { targetDate: chosenDate } : {})
+  };
+  state.eventToPersist = eventToPersist;
+  let googleCalendar = { success: false, reason: 'Host has no connected Google Calendar' };
+  if (host.googleAccessToken) {
+    const syncResult = await syncEventToGoogleCalendar(hostId, eventToPersist, bookingData.locationId || DEFAULT_LOCATION_ID, bookingData.hostTimezone || resolveLocation(bookingData.locationId || DEFAULT_LOCATION_ID).timezone, { addMeet: true });
+    if (!syncResult.success) throw Object.assign(new Error(`Google Calendar insertion failed: ${syncResult.error || 'unknown error'}`), { status: 502 });
+    state.syncedEventId = syncResult.eventId;
+    googleCalendar = { success: true, eventId: syncResult.eventId, meetLink: syncResult.meetLink || null };
+  }
+
+  const schedulePath = `schedule.${dayName}`;
+  const update = { $push: { [schedulePath]: eventToPersist } };
+  if (dayName === getTodayDayName()) update.$push['schedule.Today'] = eventToPersist;
+  const saveResult = await User.updateOne({
+    _id: hostId,
+    $or: [
+      { scheduleRevision: observedRevision },
+      ...(observedRevision === 0 ? [{ scheduleRevision: { $exists: false } }] : [])
+    ]
+  }, { ...update, $inc: { scheduleRevision: 1 } });
+  if (!saveResult.matchedCount) throw Object.assign(new Error('The host schedule changed during confirmation. Please try again.'), { status: 409 });
+  state.persisted = true;
+  const completed = await Booking.findOneAndUpdate(
+    { bookingId: id, status: 'processing' },
+    { $set: { status: 'completed', confirmedBy: guest.name, confirmedAt: new Date() } },
+    { new: true }
+  ).lean();
+  if (!completed) throw Object.assign(new Error('Could not finalize this booking.'), { status: 503 });
+
+  const cachedSchedule = JSON.parse(JSON.stringify(schedule));
+  cachedSchedule[dayName] = [...(cachedSchedule[dayName] || []), eventToPersist];
+  if (dayName === getTodayDayName()) cachedSchedule.Today = [...(cachedSchedule.Today || []), eventToPersist];
+  userSchedules.set(hostId, cachedSchedule);
+  saveSchedulesNow();
+
+  // Tell the host right away (best-effort; the event is already on their calendar).
+  notifyUser(hostId, {
+    title: `📅 ${guest.name} picked a time`,
+    body: `${bookingData.subject} · ${chosenDate || dayName} ${startTimeStr}–${endTimeStr}`,
+    url: '/',
+    tag: `booking-${id}`
+  });
+
+  return { event: eventToPersist, googleCalendar, booking: completed };
+}
+
+// Undo whatever finalizeClaimedBooking wrote, and free the link again.
+async function rollbackClaimedBooking(id, state, claimed) {
+  const { persisted, hostId, eventToPersist, syncedEventId } = state;
+  if (persisted && hostId && eventToPersist) {
+    const pull = { [`schedule.${eventToPersist.day}`]: { bookingId: id } };
+    if (eventToPersist.day === getTodayDayName()) pull['schedule.Today'] = { bookingId: id };
+    await User.updateOne({ _id: hostId }, { $pull: pull }).catch(() => {});
+  }
+  if (syncedEventId && hostId) {
+    try {
+      const host = await User.findById(hostId);
+      if (host) {
+        const oauth = await createOAuth2ClientWithRefresh(host);
+        await google.calendar({ version: 'v3', auth: oauth }).events.delete({ calendarId: 'primary', eventId: syncedEventId });
+      }
+    } catch (cleanupError) { console.error('Failed to roll back Google Calendar event:', cleanupError.message); }
+  }
+  if (claimed) await Booking.updateOne({ bookingId: id, status: 'processing' }, { $set: { status: 'active' } }).catch(() => {});
+}
+
+// Email / phone the guest left: at least one, both validated.
+function readGuestContact(body) {
+  const { guestName, guestEmail, guestPhone } = body || {};
+  if (typeof guestName !== 'string' || !guestName.trim() || guestName.length > 200) {
+    return { error: 'guestName is required.' };
+  }
+  const emailOk = typeof guestEmail === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(guestEmail.trim());
+  const phoneOk = typeof guestPhone === 'string' && detectContact(guestPhone).type === 'phone';
+  if (typeof guestEmail === 'string' && guestEmail.trim() && !emailOk) {
+    return { error: 'guestEmail is not a valid email address.' };
+  }
+  if (!emailOk && !phoneOk) {
+    return { error: 'An email or phone number is required to send the meeting confirmation.' };
+  }
+  return {
+    name: guestName.trim(),
+    email: emailOk ? guestEmail.trim() : '',
+    phone: typeof guestPhone === 'string' ? guestPhone.trim().slice(0, 40) : ''
+  };
+}
+
 app.post('/api/booking/:id/confirm', async (req, res) => {
   let claimed = false;
-  let persisted = false;
-  let syncedEventId = null;
-  let hostId = null;
-  let eventToPersist = null;
+  const state = {};
   try {
     const { id } = req.params;
-    const { slotIndex, guestName, guestEmail, guestPhone, guestNotes } = req.body;
-    if (typeof guestName !== 'string' || !guestName.trim() || guestName.length > 200) {
-      return res.status(400).json({ error: 'guestName is required.' });
-    }
+    const { slotIndex, guestNotes } = req.body;
     // The guest leaves an email or a phone number (at least one). An email
     // makes Google Calendar add them as an attendee and email both sides an
     // invite; with only a phone, the confirmation screen gives them an
     // add-to-calendar link and the host is pinged in the app.
-    const emailOk = typeof guestEmail === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(guestEmail.trim());
-    const phoneOk = typeof guestPhone === 'string' && detectContact(guestPhone).type === 'phone';
-    if (typeof guestEmail === 'string' && guestEmail.trim() && !emailOk) {
-      return res.status(400).json({ error: 'guestEmail is not a valid email address.' });
-    }
-    if (!emailOk && !phoneOk) {
-      return res.status(400).json({ error: 'An email or phone number is required to send the meeting confirmation.' });
-    }
+    const guest = readGuestContact(req.body);
+    if (guest.error) return res.status(400).json({ error: guest.error });
     const booking = await Booking.findOne({ bookingId: id }).lean();
     if (!booking) return res.status(404).json({ error: 'Booking not found.' });
+    if (normalizeGroupSize(booking.groupSize) > 1) return res.status(400).json({ error: 'This is a group link: answer with your times instead.' });
     if (booking.status !== 'active') return res.status(409).json({ error: booking.status === 'processing' ? 'This booking is being confirmed.' : 'This booking link has already been used.' });
     if (!booking.isLocked && (!Number.isInteger(Number(slotIndex)) || Number(slotIndex) < 0 || Number(slotIndex) >= booking.slots.length)) {
       return res.status(400).json({ error: 'A valid slotIndex is required.' });
@@ -4008,131 +4160,102 @@ app.post('/api/booking/:id/confirm', async (req, res) => {
     ).lean();
     if (!claimedBooking) return res.status(409).json({ error: 'This booking has already been claimed.' });
     claimed = true;
-    hostId = claimedBooking.hostId.toString();
-    const bookingData = claimedBooking;
-    let startTimeStr, endTimeStr;
-    const formatTime12 = (h, m) => {
-      const ampm = h >= 12 ? 'PM' : 'AM';
-      const h12 = h % 12 || 12;
-      return `${String(h12).padStart(2, '0')}:${String(m).padStart(2, '0')} ${ampm}`;
-    };
+    const result = await finalizeClaimedBooking(id, claimedBooking, slotIndex, {
+      ...guest,
+      notes: typeof guestNotes === 'string' ? guestNotes.slice(0, 1000) : ''
+    }, state);
 
-    if (bookingData.isLocked) {
-      startTimeStr = bookingData.startTime;
-      endTimeStr = bookingData.endTime;
-    } else {
-      const slot = bookingData.slots[Number(slotIndex)];
-      if (slot.booked) throw Object.assign(new Error('This slot is already booked.'), { status: 409 });
-      const startHour = slot.hour;
-      const startMin = slot.minute;
-      const endMinTotal = startHour * 60 + startMin + bookingData.duration;
-      if (endMinTotal > 1440) throw Object.assign(new Error('Booking must end on the same day.'), { status: 400 });
-      const endHour = Math.floor(endMinTotal / 60);
-      const endMin = endMinTotal % 60;
-
-      startTimeStr = formatTime12(startHour, startMin);
-      endTimeStr = formatTime12(endHour, endMin);
-    }
-
-    const host = await User.findById(hostId);
-    if (!host) throw Object.assign(new Error('Host account not found.'), { status: 404 });
-    // A slot with its own date (multi-day links) decides the day; older links use the booking's.
-    const chosenDate = (!bookingData.isLocked && bookingData.slots[Number(slotIndex)]?.date) || bookingData.date || null;
-    const dayName = chosenDate ? DAY_NAMES_FOR_BOOKING[new Date(`${chosenDate}T00:00:00Z`).getUTCDay()] : bookingData.day;
-    const startMinValue = timeToMinutes(startTimeStr);
-    const endMinValue = timeToMinutes(endTimeStr);
-    if (startMinValue === null || endMinValue === null || endMinValue <= startMinValue) throw Object.assign(new Error('Invalid booking time.'), { status: 400 });
-    const schedule = host.schedule && typeof host.schedule === 'object' ? host.schedule : getDefaultSchedule();
-    const observedRevision = Number(host.scheduleRevision || 0);
-    const conflicts = (schedule[dayName] || []).filter(event => {
-      if (chosenDate && event.targetDate && String(event.targetDate).slice(0, 10) !== chosenDate) return false;
-      const existingStart = timeToMinutes(event.startTime);
-      const existingEnd = timeToMinutes(event.endTime);
-      return existingStart !== null && existingEnd !== null && startMinValue < existingEnd && endMinValue > existingStart;
-    });
-    if (conflicts.length) throw Object.assign(new Error('This time is no longer available.'), { status: 409 });
-
-    eventToPersist = {
-      title: `${bookingData.subject} - ${guestName.trim()}`,
-      day: dayName,
-      startTime: startTimeStr,
-      endTime: endTimeStr,
-      recurrence: 'once',
-      location: bookingData.locationId || DEFAULT_LOCATION_ID,
-      guestName: guestName.trim(),
-      guestEmail: emailOk ? guestEmail.trim() : '',
-      guestPhone: typeof guestPhone === 'string' ? guestPhone.trim().slice(0, 40) : '',
-      guestNotes: typeof guestNotes === 'string' ? guestNotes.slice(0, 1000) : '',
-      meetingType: bookingData.meetingType || null,
-      bookingId: id,
-      ...(chosenDate ? { targetDate: chosenDate } : {})
-    };
-    let googleCalendar = { success: false, reason: 'Host has no connected Google Calendar' };
-    if (host.googleAccessToken) {
-      const syncResult = await syncEventToGoogleCalendar(hostId, eventToPersist, bookingData.locationId || DEFAULT_LOCATION_ID, bookingData.hostTimezone || resolveLocation(bookingData.locationId || DEFAULT_LOCATION_ID).timezone, { addMeet: true });
-      if (!syncResult.success) throw Object.assign(new Error(`Google Calendar insertion failed: ${syncResult.error || 'unknown error'}`), { status: 502 });
-      syncedEventId = syncResult.eventId;
-      googleCalendar = { success: true, eventId: syncedEventId, meetLink: syncResult.meetLink || null };
-    }
-
-    const schedulePath = `schedule.${dayName}`;
-    const update = { $push: { [schedulePath]: eventToPersist } };
-    if (dayName === getTodayDayName()) update.$push['schedule.Today'] = eventToPersist;
-    const saveResult = await User.updateOne({
-      _id: hostId,
-      $or: [
-        { scheduleRevision: observedRevision },
-        ...(observedRevision === 0 ? [{ scheduleRevision: { $exists: false } }] : [])
-      ]
-    }, { ...update, $inc: { scheduleRevision: 1 } });
-    if (!saveResult.matchedCount) throw Object.assign(new Error('The host schedule changed during confirmation. Please try again.'), { status: 409 });
-    persisted = true;
-    const completed = await Booking.findOneAndUpdate(
-      { bookingId: id, status: 'processing' },
-      { $set: { status: 'completed', confirmedBy: guestName.trim(), confirmedAt: new Date() } },
-      { new: true }
-    ).lean();
-    if (!completed) throw Object.assign(new Error('Could not finalize this booking.'), { status: 503 });
-
-    const cachedSchedule = JSON.parse(JSON.stringify(schedule));
-    cachedSchedule[dayName] = [...(cachedSchedule[dayName] || []), eventToPersist];
-    if (dayName === getTodayDayName()) cachedSchedule.Today = [...(cachedSchedule.Today || []), eventToPersist];
-    userSchedules.set(hostId, cachedSchedule);
-    saveSchedulesNow();
-
-    // Tell the host right away (best-effort; the event is already on their calendar).
-    notifyUser(hostId, {
-      title: `📅 ${guestName.trim()} picked a time`,
-      body: `${bookingData.subject} · ${chosenDate || dayName} ${startTimeStr}–${endTimeStr}`,
-      url: '/',
-      tag: `booking-${id}`
-    });
-
-    res.json({
-      ok: true,
-      message: 'Booking confirmed successfully!',
-      event: eventToPersist,
-      googleCalendar,
-      booking: completed
-    });
+    res.json({ ok: true, message: 'Booking confirmed successfully!', ...result });
   } catch (err) {
     console.error('Confirm booking error:', err);
-    if (persisted && hostId && eventToPersist) {
-      const pull = { [`schedule.${eventToPersist.day}`]: { bookingId: req.params.id } };
-      if (eventToPersist.day === getTodayDayName()) pull['schedule.Today'] = { bookingId: req.params.id };
-      await User.updateOne({ _id: hostId }, { $pull: pull }).catch(() => {});
-    }
-    if (syncedEventId && hostId) {
-      try {
-        const host = await User.findById(hostId);
-        if (host) {
-          const oauth = await createOAuth2ClientWithRefresh(host);
-          await google.calendar({ version: 'v3', auth: oauth }).events.delete({ calendarId: 'primary', eventId: syncedEventId });
-        }
-      } catch (cleanupError) { console.error('Failed to roll back Google Calendar event:', cleanupError.message); }
-    }
-    if (claimed) await Booking.updateOne({ bookingId: req.params.id, status: 'processing' }, { $set: { status: 'active' } }).catch(() => {});
+    await rollbackClaimedBooking(req.params.id, state, claimed);
     res.status(err.status || 500).json({ error: err.message || 'Failed to confirm booking.' });
+  }
+});
+
+/**
+ * POST /api/booking/:id/respond
+ * Group links: one friend marks every offered time that works for them.
+ * Times nobody-in-common drop off the link for the next friend; once the
+ * whole group answered, the earliest time that suits everyone is booked.
+ */
+app.post('/api/booking/:id/respond', async (req, res) => {
+  let claimed = false;
+  const state = {};
+  try {
+    const { id } = req.params;
+    const guest = readGuestContact(req.body);
+    if (guest.error) return res.status(400).json({ error: guest.error });
+    const rawIndexes = Array.isArray(req.body.slotIndexes) ? req.body.slotIndexes : [];
+    const booking = await Booking.findOne({ bookingId: id }).lean();
+    if (!booking) return res.status(404).json({ error: 'Booking not found.' });
+    if (normalizeGroupSize(booking.groupSize) <= 1) return res.status(400).json({ error: 'This link books one time: use confirm.' });
+    if (booking.status !== 'active') return res.status(409).json({ error: 'This meeting is already set.' });
+    const slotIndexes = [...new Set(rawIndexes.map(Number))]
+      .filter(i => Number.isInteger(i) && i >= 0 && i < booking.slots.length);
+    if (!slotIndexes.length) return res.status(400).json({ error: 'Pick at least one time.' });
+
+    const key = responderKey(guest);
+    const response = { key, name: guest.name, email: guest.email, phone: guest.phone, slotIndexes, at: new Date() };
+    const already = (booking.responses || []).some(r => r.key === key);
+    const groupSize = normalizeGroupSize(booking.groupSize);
+    const saved = already
+      ? await Booking.findOneAndUpdate(
+          { bookingId: id, status: 'active', 'responses.key': key },
+          { $set: { 'responses.$': response } },
+          { new: true }
+        ).lean()
+      : await Booking.findOneAndUpdate(
+          // Don't take more answers than the group has room for.
+          { bookingId: id, status: 'active', 'responses.key': { $ne: key }, [`responses.${groupSize - 1}`]: { $exists: false } },
+          { $push: { responses: response } },
+          { new: true }
+        ).lean();
+    if (!saved) return res.status(409).json({ error: 'Everyone in the group already answered.' });
+
+    const host = await User.findById(saved.hostId).select('schedule').lean();
+    const status = groupStatus(saved, { schedule: host && host.schedule });
+
+    if (!status.complete) {
+      notifyUser(saved.hostId.toString(), {
+        title: `🙌 ${guest.name} answered (${status.responded}/${status.groupSize})`,
+        body: status.noCommonTime ? `${saved.subject}: no time suits everyone so far` : `${saved.subject}: waiting for the rest of the group`,
+        url: '/',
+        tag: `booking-${id}`
+      });
+      return res.json({ ok: true, state: status.noCommonTime ? 'no-common' : 'waiting', ...status });
+    }
+    if (status.winnerIndex === null) {
+      notifyUser(saved.hostId.toString(), {
+        title: `😕 ${saved.subject}: no time suits everyone`,
+        body: 'Everyone answered, but none of the times works for all. Send new times.',
+        url: '/',
+        tag: `booking-${id}`
+      });
+      return res.json({ ok: true, state: 'no-common', ...status });
+    }
+
+    const claimedBooking = await Booking.findOneAndUpdate(
+      { bookingId: id, status: 'active' },
+      { $set: { status: 'processing' } },
+      { new: true }
+    ).lean();
+    if (!claimedBooking) return res.json({ ok: true, state: 'waiting', ...status });
+    claimed = true;
+    const members = claimedBooking.responses || [];
+    const result = await finalizeClaimedBooking(id, claimedBooking, status.winnerIndex, {
+      name: members.map(m => m.name).join(', ').slice(0, 300),
+      email: '',
+      attendeeEmails: members.map(m => m.email).filter(Boolean),
+      phone: members.map(m => m.phone).filter(Boolean).join(', ').slice(0, 200),
+      notes: ''
+    }, state);
+    const slot = claimedBooking.slots[status.winnerIndex];
+    res.json({ ok: true, state: 'booked', ...status, slot: { ...slot, index: status.winnerIndex }, googleCalendar: result.googleCalendar });
+  } catch (err) {
+    console.error('Group booking response error:', err);
+    await rollbackClaimedBooking(req.params.id, state, claimed);
+    res.status(err.status || 500).json({ error: err.message || 'Failed to save your answer.' });
   }
 });
 

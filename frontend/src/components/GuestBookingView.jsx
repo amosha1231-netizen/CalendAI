@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Calendar, Clock, Loader2, Check, X, Sparkles, ExternalLink, Mail, Phone, MessageSquare } from "lucide-react";
+import { Calendar, Clock, Loader2, Check, X, Sparkles, ExternalLink, Mail, Phone, MessageSquare, Users } from "lucide-react";
 import ShabbatGate from "./ShabbatGate";
 import { getUserTimeZone, isValidTimeZone, zonedTimeToDate, formatUtcOffset } from "../utils/userLocation";
 import { detectContact } from "../utils/contactDetect";
@@ -37,6 +37,10 @@ function GuestBookingViewScreen({ bookingId, lang, t, onClose }) {
   const [confirmed, setConfirmed] = useState(false);
   const [confirmError, setConfirmError] = useState("");
   const [calendarSyncWarning, setCalendarSyncWarning] = useState("");
+  // Group links: everyone marks all the times that work for them.
+  const [group, setGroup] = useState(null);
+  const [groupPicks, setGroupPicks] = useState([]); // positions in `slots`
+  const [groupResult, setGroupResult] = useState(null);
 
   const isRTL = lang === 'he';
   const dayNames = lang === 'he' ? DAY_NAMES_HE : DAY_NAMES_EN;
@@ -49,7 +53,8 @@ function GuestBookingViewScreen({ bookingId, lang, t, onClose }) {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Booking not found");
         setBooking(data.booking);
-        setSlots(data.slots);
+        setSlots(Array.isArray(data.slots) ? data.slots : []);
+        setGroup(data.group || null);
       } catch (err) {
         setError(err.message);
       } finally {
@@ -218,7 +223,8 @@ function GuestBookingViewScreen({ bookingId, lang, t, onClose }) {
         body: JSON.stringify({
           // For locked bookings, slotIndex is ignored by backend (it uses booking.startTime/endTime)
           // For multi-slot, we need slotIndex
-          slotIndex: isLocked ? 0 : (selectedSlotIndex !== null ? selectedSlotIndex : undefined),
+          // Each slot carries its index into the link's full list (some may have dropped off).
+          slotIndex: isLocked ? 0 : (selectedSlotIndex !== null ? (slots[selectedSlotIndex]?.index ?? selectedSlotIndex) : undefined),
           guestName: guestName.trim(),
           ...(isLocked
             ? { guestEmail: guestEmail.trim(), guestPhone: guestPhone.trim() }
@@ -237,6 +243,32 @@ function GuestBookingViewScreen({ bookingId, lang, t, onClose }) {
           : 'The meeting was saved in CalendAI, but Google Calendar sync failed. Check the calendar connection and sync again.');
       }
       setConfirmed(true);
+    } catch (err) {
+      setConfirmError(err.message);
+    } finally {
+      setConfirming(false);
+    }
+  };
+
+  const handleGroupRespond = async () => {
+    if (!guestName.trim() || !groupPicks.length) return;
+    setConfirming(true);
+    setConfirmError("");
+    const kind = detectContact(guestContact).type;
+    try {
+      const res = await fetch(`${API_BASE}/api/booking/${bookingId}/respond`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          guestName: guestName.trim(),
+          guestEmail: kind === 'email' ? guestContact.trim() : '',
+          guestPhone: kind === 'phone' ? guestContact.trim() : '',
+          slotIndexes: groupPicks.map(i => slots[i]?.index ?? i)
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Could not save your answer");
+      setGroupResult(data);
     } catch (err) {
       setConfirmError(err.message);
     } finally {
@@ -492,6 +524,142 @@ function GuestBookingViewScreen({ bookingId, lang, t, onClose }) {
           </div>
         </div>
       </div>
+    );
+  }
+
+  // ── GROUP LINK: mark every time that works ──
+  if (booking && group) {
+    const host = booking.hostName || (isRTL ? 'המארח' : 'The host');
+    const shell = (children) => (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center p-4" dir={isRTL ? 'rtl' : 'ltr'}>
+        <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg">{children}</div>
+      </div>
+    );
+
+    if (groupResult) {
+      const booked = groupResult.state === 'booked';
+      const noCommon = groupResult.state === 'no-common';
+      const slot = groupResult.slot;
+      const left = Math.max(0, (groupResult.groupSize || 0) - (groupResult.responded || 0));
+      return shell(
+        <div className="p-8 text-center">
+          <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 ${noCommon ? 'bg-amber-100' : 'bg-green-100'}`}>
+            {noCommon ? <Users className="w-8 h-8 text-amber-600" /> : <Check className="w-8 h-8 text-green-600" />}
+          </div>
+          <h3 className="text-xl font-bold text-slate-800 mb-2">
+            {booked
+              ? (isRTL ? 'נקבע! 🎉' : 'It’s set! 🎉')
+              : noCommon
+                ? (isRTL ? 'אין זמן שמתאים לכולם' : 'No time suits everyone')
+                : (isRTL ? 'מעולה שאישרת! 🙌' : 'Thanks for answering! 🙌')}
+          </h3>
+          <p className="text-sm text-slate-600 mb-6">
+            {booked
+              ? (isRTL
+                  ? `כולם ענו, והפגישה נקבעה ל${slot ? `${slotGroups.find(g => g.key === (slot.date || booking.date))?.label || ''} ${formatTimeDisplay(slot.hour, slot.minute, slot.date)}` : 'זמן שמתאים לכולם'}. ${detectContact(guestContact).type === 'email' ? 'הזמנה ליומן בדרך למייל שלך.' : ''}`
+                  : `Everyone answered. It’s booked for ${slot ? `${slotGroups.find(g => g.key === (slot.date || booking.date))?.label || ''} ${formatTimeDisplay(slot.hour, slot.minute, slot.date)}` : 'a time that suits all'}. ${detectContact(guestContact).type === 'email' ? 'A calendar invite is on its way to your email.' : ''}`)
+              : noCommon
+                ? (isRTL ? `${host} קיבל/ה הודעה ויציע/תציע זמנים חדשים.` : `${host} has been told and will suggest new times.`)
+                : (isRTL
+                    ? `נחכה לאישור של שאר חברי הקבוצה (עוד ${left}). כשכולם יענו, נקבע את הזמן שמתאים לכולם${detectContact(guestContact).type === 'email' ? ' ותקבל/י הזמנה ליומן במייל' : ''}.`
+                    : `We’ll wait for the rest of the group (${left} more). Once everyone answers we’ll book the time that suits all${detectContact(guestContact).type === 'email' ? ' and email you a calendar invite' : ''}.`)}
+          </p>
+          <button onClick={onClose} className="text-sm text-slate-500 hover:text-slate-700 font-medium">{t.bookingClose || 'Close'}</button>
+        </div>
+      );
+    }
+
+    const togglePick = (i) => setGroupPicks(prev => (prev.includes(i) ? prev.filter(x => x !== i) : [...prev, i]));
+    const answered = group.responded || 0;
+    return shell(
+      <>
+        <div className="p-6 border-b">
+          <div className="flex items-center gap-3 mb-1">
+            <Users className="w-6 h-6 text-blue-600" />
+            <h2 className="text-xl font-bold text-slate-800">{booking.subject}</h2>
+          </div>
+          <p className="text-sm text-slate-500 mt-1">
+            {isRTL ? `${host} מתאם/ת פגישה קבוצתית · ${booking.duration} דק׳` : `${host} is planning a group meeting · ${booking.duration} min`}
+          </p>
+          <div className="mt-3">
+            <div className="flex justify-between text-xs text-slate-500 mb-1">
+              <span>{isRTL ? `${answered} מתוך ${group.groupSize} כבר ענו` : `${answered} of ${group.groupSize} answered`}</span>
+              {group.names && group.names.length > 0 && <span className="truncate max-w-[60%]">{group.names.join(', ')}</span>}
+            </div>
+            <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden">
+              <div className="h-full bg-blue-600 rounded-full" style={{ width: `${Math.min(100, (answered / group.groupSize) * 100)}%` }} />
+            </div>
+          </div>
+          {timeZoneNote && <p className="mt-2 text-xs text-blue-700 bg-blue-50 rounded-lg px-3 py-2">{timeZoneNote}</p>}
+        </div>
+
+        <div className="p-6 space-y-5">
+          {slots.length === 0 ? (
+            <p className="text-center text-sm text-slate-500 py-6">
+              {group.noCommonTime
+                ? (isRTL ? `לא נשאר זמן שמתאים לכולם. ${host} יציע/תציע זמנים חדשים.` : `No time suits everyone any more. ${host} will suggest new times.`)
+                : (t.wizardNoSlotsAvailable || 'No available slots')}
+            </p>
+          ) : (
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-1">{isRTL ? 'סמנו את כל הזמנים שמתאימים לכם' : 'Mark every time that works for you'}</label>
+              {answered > 0 && (
+                <p className="text-xs text-slate-500 mb-3">{isRTL ? 'מוצגים רק זמנים שמתאימים לכל מי שכבר ענה.' : 'Only times that suit everyone who answered are shown.'}</p>
+              )}
+              {slotGroups.map(g => (
+                <div key={g.key} className="mb-3">
+                  {g.label && <p className="text-xs font-bold text-slate-500 mb-2">{g.label}</p>}
+                  <div className="grid grid-cols-3 gap-2">
+                    {g.items.map(({ slot, index }) => {
+                      const on = groupPicks.includes(index);
+                      return (
+                        <button key={index} onClick={() => togglePick(index)} aria-pressed={on}
+                          className={`flex items-center justify-center gap-1 px-2 py-3 rounded-xl text-sm font-medium border-2 transition ${on ? 'bg-blue-600 text-white border-blue-600 shadow-md' : 'bg-white text-slate-700 border-slate-200 hover:border-blue-400'}`}>
+                          {on && <Check className="w-3.5 h-3.5" />}{formatTimeDisplay(slot.hour, slot.minute, slot.date)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {groupPicks.length > 0 && (
+            <div className="space-y-4 border-t pt-4">
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-2">{t.guestViewName || 'Your Name'} *</label>
+                <input type="text" value={guestName} onChange={e => setGuestName(e.target.value)}
+                  placeholder={t.guestViewNamePlaceholder || 'Enter your name'}
+                  className="w-full px-4 py-2.5 border border-slate-300 rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  dir={isRTL ? 'rtl' : 'ltr'} />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-2">{isRTL ? 'מייל או טלפון' : 'Email or phone'} *</label>
+                <input type="text" inputMode="email" autoComplete="email" value={guestContact} onChange={e => setGuestContact(e.target.value)}
+                  placeholder={isRTL ? '050-1234567 או name@mail.com' : 'name@mail.com or phone'}
+                  className="w-full px-4 py-2.5 border border-slate-300 rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  dir="ltr" />
+                <p className="text-xs text-slate-400 mt-1">{isRTL ? 'כדי שתקבל/י את הזמן הסופי' : 'So you get the final time'}</p>
+              </div>
+            </div>
+          )}
+
+          {confirmError && (
+            <div className="text-sm text-red-600 bg-red-50 p-3 rounded-lg border border-red-200">{confirmError}</div>
+          )}
+
+          <button onClick={handleGroupRespond}
+            disabled={!groupPicks.length || !guestName.trim() || !detectContact(guestContact).type || confirming}
+            className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-semibold transition disabled:bg-blue-400 disabled:cursor-not-allowed shadow-lg">
+            {confirming
+              ? <><Loader2 className="w-4 h-4 animate-spin" /> {t.guestViewConfirming || 'Saving...'}</>
+              : <><Check className="w-5 h-5" /> {groupPicks.length
+                  ? (isRTL ? `אישור (${groupPicks.length} זמנים)` : `Confirm (${groupPicks.length} times)`)
+                  : (isRTL ? 'בחרו לפחות זמן אחד' : 'Pick at least one time')}</>}
+          </button>
+        </div>
+      </>
     );
   }
 
