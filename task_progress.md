@@ -5345,3 +5345,74 @@ for full detail):**
    harden in this branch's own code.
 3. Should a provider booking's synced Google Calendar event description
    include the guest's phone number/notes (currently name only)?
+
+---
+
+## Round 79 (scheduled run, 2026-11-18)
+
+Fresh clone, `npm install` in both `frontend/` and `backend/`. Baseline
+re-verified: `npm run build` (frontend) clean. `node --test` (backend):
+317 tests, 301 pass, 16 fail — failing test names checked individually
+by name and are identical to the documented `mongodb-memory-server`-
+blocked set (credit-deduction races, webhook idempotency, booking/
+mutual-session/provider-booking claim races, owner-refill tests); not a
+regression. Items 1-5 re-verified directly in source: `multer` +
+`/api/parse-image` route, `parseImageWithVision` wiring, and
+`handleParse`'s immediate `setInputText("")` clear all still present
+and wired. Still `[x]`. Grepped the ten scope files again for
+`TODO`/`FIXME`/`XXX`/`HACK` — none found.
+
+**Material change this round — escalating.** `git fetch origin master`:
+head moved from `9b81e19` to `c1d1069`; `git rev-list --left-right
+--count origin/master...HEAD` is now `46 73` (46 behind, up from 32 —
+PRs #50, #51, #52, #53, #54 all merged into master since round 78).
+`git log --oneline -1` on the ten in-scope files: still `9fbde7b`
+unchanged — nothing in this branch's own commit history has moved, so
+no new hardening work was found or needed (fifteen-round streak holds,
+now sixteen).
+
+`list_pull_requests` (open): #56 "Meet a friend: group meetings, drag
+to pick times, shorter WhatsApp message", #55 "Show one-off meetings
+only on their date, not every week", and #30 (unrelated, Sign in with
+Apple). **PR #56 directly modifies `frontend/src/components/
+MutualScheduler.jsx`** (+212/-12 against current master), one of this
+branch's ten scope files — on top of a *different* `Booking` model
+feature (new `backend/services/groupBooking.js`, `POST /api/booking/:id/
+respond`, `groupSize`/`responses` fields on `Booking`), not this
+branch's `MutualBooking`/`ProviderBooking` models. It is open (not yet
+merged into master), `mergeable_state: "clean"` against master, created
+2026-11-18. This is new since round 78: the prior PRs seen (#50-#54)
+either didn't touch scope files or only touched the already-known
+`backend/server.js`/`aiService.js` shared files; #56 is the first open
+PR to touch a scope file this branch has spent 70+ commits hardening,
+and it does so with a substantial, divergent rewrite of the same
+component (group "meet a friend" links vs. this branch's 1:1 mutual-
+availability + provider booking UI). If #56 merges before this branch
+is reconciled with master, the `MutualScheduler.jsx` merge conflict
+described in open item 1 becomes materially larger and is now also a
+product-direction question (two different evolutions of "mutual
+scheduling" in the same file), not just a mechanical rebase. #55 does
+not touch any of the ten scope files (it's a one-off-event-occurrence
+fix in `App.jsx`/`DayView.jsx`/etc.) — no action needed there.
+
+**Sending a push notification this round** — PR #56's direct overlap
+with `MutualScheduler.jsx`, plus master now being 46 commits ahead (up
+from 32), is new, decision-relevant information that changes the shape
+of open item 1 and wasn't true as of round 78.
+
+**Open items, updated:**
+1. Merge/PR decision for `wip/mutual-provider-booking` (73 commits
+   ahead, 46 behind `origin/master`, no open PR for this branch) — the
+   recommendation to merge master into this branch now, or open a PR
+   for this branch as-is, is more urgent: open PR #56 rewrites
+   `MutualScheduler.jsx` for a different "meet a friend" group-booking
+   feature and would make reconciliation significantly harder if it
+   merges first. Recommend a human decide (a) whether PR #56 and this
+   branch's mutual/provider feature are meant to coexist or converge,
+   and (b) get this branch reconciled/PR'd before #56 lands.
+2. Whether to pause this scheduled task's hardening sweep on this
+   branch — eleven adversarial reviews (56-63) landed seven real fixes;
+   sixteen consecutive rounds since (64-79) have found nothing new to
+   harden in this branch's own code.
+3. Should a provider booking's synced Google Calendar event description
+   include the guest's phone number/notes (currently name only)?
