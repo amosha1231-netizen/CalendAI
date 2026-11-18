@@ -25,7 +25,11 @@ import PublicGoals from "./components/PublicGoals";
 import ChallengeDetail from "./components/ChallengeDetail";
 import DailyJournal from "./components/DailyJournal";
 import SmartAlarm from "./components/SmartAlarm";
-import Routines, { RoutinesTodayCard, consumeSharedRoutineParam, clearSharedRoutineParam } from "./components/Routines";
+import Routines, { consumeSharedRoutineParam, clearSharedRoutineParam } from "./components/Routines";
+import WeekStrip from "./components/WeekStrip";
+import { formatTimeString } from "./utils/timeFormat";
+import { TasksTodayCard, TasksSheet, notifyTasksChanged } from "./components/TasksToday";
+import PlansSheet from "./components/PlansSheet";
 import Reminders, { RemindersPinger, ReminderChip, remindersOnDate, consumeRemindersParam } from "./components/Reminders";
 
 // ── Lazy-loaded page chunks ──
@@ -412,7 +416,11 @@ function AppRoutes() {
   const [navSheet, setNavSheet] = useState(null); // null | 'meet' | 'tools'
   const [drawerTab, setDrawerTab] = useState('settings');
 
-  const handleBuyCredits = useCallback(async () => {
+  // Tasks sheet (write a task, ideas, join challenges) and the packages screen.
+  const [showTasks, setShowTasks] = useState(false);
+  const [showPlans, setShowPlans] = useState(false);
+
+  const handleBuyCredits = useCallback(() => {
     // App Store / Play rules: digital purchases inside the store apps must use
     // Apple / Google billing, so the apps never open the web checkout.
     if (isNativeApp()) {
@@ -421,7 +429,14 @@ function AppRoutes() {
       setIapSheet('menu');
       return;
     }
+    // The website first shows the packages and what each one gives.
+    setShowPlans(true);
+  }, [user, setShowLoginPrompt]);
+
+  const startWebCheckout = useCallback(async (product = 'credits') => {
+    if (isNativeApp()) return;
     if (!user) {
+      setShowPlans(false);
       setShowLoginPrompt(true);
       return;
     }
@@ -435,7 +450,7 @@ function AppRoutes() {
           "Content-Type": "application/json",
           ...(token ? { 'Authorization': `Bearer ${token}` } : {})
         },
-        body: JSON.stringify({ lang, product: 'credits' }),
+        body: JSON.stringify({ lang, product: product === 'pro' ? 'pro' : 'credits' }),
         credentials: "include"
       });
       const data = await readCheckoutResponse(res, lang);
@@ -443,6 +458,7 @@ function AppRoutes() {
         throw new Error(data.error || (lang === 'he' ? 'שגיאה ביצירת דף התשלום.' : 'Failed to create checkout session.'));
       }
       if (data.url) {
+        setShowPlans(false);
         await openCheckout(data.url, { onSuccess: notifyCreditsPurchased });
         setCheckoutLoading(false);
       } else {
@@ -450,6 +466,7 @@ function AppRoutes() {
       }
     } catch (err) {
       console.error('Checkout error:', err);
+      setShowPlans(false);
       setError(err.message);
       setCheckoutLoading(false);
     }
@@ -1724,7 +1741,7 @@ function AppRoutes() {
     const nl = getNavLabels(lang);
     const credits = user ? normalizeCredits(user.aiCredits) : undefined;
     const meetOpen = currentView === 'mutual' || showWizard || showSendInvite || showProviderDirectory || showProviderProfileEditor;
-    const toolsOpen = showReminders || showAlarmSettings || showExpenses || showJournal || showPublicGoals || showChallengeDetail || showHistoryModal;
+    const toolsOpen = showTasks || showReminders || showAlarmSettings || showExpenses || showJournal || showPublicGoals || showChallengeDetail || showHistoryModal;
     // The account drawer opens from the header avatar; routines live under Tools.
     const activeNav = navSheet || ((routinesView || toolsOpen) ? 'tools' : meetOpen ? 'meet' : 'home');
     const tabs = [
@@ -1739,6 +1756,7 @@ function AppRoutes() {
       setNavSheet(null);
       setIsSidebarOpen(false);
       setRoutinesView(null);
+      setShowTasks(false);
       setShowReminders(false);
       setShowWizard(false);
       setShowSendInvite(false);
@@ -1795,12 +1813,13 @@ function AppRoutes() {
         ...(user ? [{ id: 'providerProfile', label: nl.providerProfile, sub: nl.providerProfileSub, icon: Settings, tone: 'bg-amber-50 text-amber-600', onClick: run(() => setShowProviderProfileEditor(true)) }] : []),
       ],
       tools: [
+        { id: 'tasks', label: lang === 'he' ? 'משימות ואתגרים' : 'Tasks and challenges', sub: lang === 'he' ? 'עיגול לכל משימה, מחליקים כשמסיימים' : 'A circle per task, swipe when done', icon: CheckSquare, tone: 'bg-emerald-50 text-emerald-600', onClick: run(() => setShowTasks(true)) },
         { id: 'routines', label: nl.routines, sub: nl.routinesSub, icon: ListChecks, tone: 'bg-violet-50 text-violet-600', onClick: run(() => setRoutinesView('today')) },
         { id: 'alarm', label: nl.alarm, sub: nl.alarmSub, icon: AlarmClock, tone: 'bg-amber-50 text-amber-600', onClick: run(() => setShowAlarmSettings(true)) },
         { id: 'reminders', label: nl.reminders, sub: nl.remindersSub, icon: Bell, tone: 'bg-amber-50 text-amber-600', onClick: run(() => setShowReminders(true)) },
         { id: 'expenses', label: nl.expenses, sub: nl.expensesSub, icon: Wallet, tone: 'bg-emerald-50 text-emerald-600', onClick: run(() => setShowExpenses(true)) },
         { id: 'journal', label: nl.journal, sub: nl.journalSub, icon: BookOpen, tone: 'bg-indigo-50 text-indigo-600', onClick: run(() => setShowJournal(true)) },
-        { id: 'challenges', label: nl.challenges, sub: nl.challengesSub, icon: Trophy, tone: 'bg-orange-50 text-orange-600', onClick: run(() => setRoutinesView('discover')) },
+        { id: 'challenges', label: nl.challenges, sub: nl.challengesSub, icon: Trophy, tone: 'bg-orange-50 text-orange-600', onClick: run(() => setShowTasks(true)) },
         { id: 'history', label: nl.history, sub: nl.historySub, icon: Clock, tone: 'bg-slate-100 text-slate-600', onClick: run(() => setShowHistoryModal(true)) },
         { id: 'analytics', label: nl.analytics, sub: nl.analyticsSub, icon: BarChart3, tone: 'bg-sky-50 text-sky-600', onClick: run(() => { setDrawerTab('analytics'); setIsSidebarOpen(true); }) },
       ],
@@ -1962,7 +1981,8 @@ function AppRoutes() {
               user={user}
               onJoinChallenge={(goal) => {
                 fetchSchedule();
-                setSuccess(lang === "he" ? "🎯 הצטרפת לאתגר! האירוע נוסף ליומן." : "🎯 Joined the challenge! Event added to your schedule.");
+                notifyTasksChanged();
+                setSuccess(lang === "he" ? "🎯 הצטרפת לאתגר! הוא מופיע עכשיו במשימות של היום." : "🎯 Joined the challenge! It now shows in today's tasks.");
               }}
               onViewProfile={(profileUser) => {
                 setShowPublicGoals(true);
@@ -2023,7 +2043,8 @@ function AppRoutes() {
               onClose={closeMobileSearch}
               onJoinChallenge={(goal) => {
                 fetchSchedule();
-                setSuccess(lang === "he" ? "🎯 הצטרפת לאתגר! האירוע נוסף ליומן." : "🎯 Joined the challenge! Event added to your schedule.");
+                notifyTasksChanged();
+                setSuccess(lang === "he" ? "🎯 הצטרפת לאתגר! הוא מופיע עכשיו במשימות של היום." : "🎯 Joined the challenge! It now shows in today's tasks.");
               }}
               onViewProfile={(profileUser) => setShowPublicGoals(true)}
               onOpenPublicGoals={() => {
@@ -2050,9 +2071,8 @@ function AppRoutes() {
               }
             }}
           />
-          {user && (
-            <RoutinesTodayCard lang={lang} user={user} refreshKey={routinesRefresh} onOpen={tab => setRoutinesView(tab)} />
-          )}
+          {/* Today's tasks as circles (in place of the routines card): tap one to swipe it done / not done / later */}
+          <TasksTodayCard lang={lang} user={user} todayEvents={schedule.Today} onManage={() => setShowTasks(true)} />
           {user && (
             <RemindersPinger lang={lang} user={user} refreshKey={remindersRefresh} onReminders={setReminderList} />
           )}
@@ -2315,107 +2335,61 @@ function AppRoutes() {
               />
             )}
 
-            {/* Weekly View (compact grid, original style) */}
+            {/* Weekly View: seven-day strip, tap a day to see it (components/WeekStrip) */}
             {calendarView === 'weekly' && (
-              <motion.div
-                variants={staggerContainerVariants}
-                initial="hidden"
-                animate="visible"
-                className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"
-              >
-                {/* schedule.Today is a copy of today's weekday list, so the week
-                    shows today once: first, as its weekday, framed and labelled.
-                    The other columns follow as the coming six days. */}
-                {[...dayNamesEn.slice(dayNamesEn.indexOf(todayName)), ...dayNamesEn.slice(0, dayNamesEn.indexOf(todayName))].map(dayKey => {
-                  const dayEvents = getFilteredEvents(dayKey);
-                  const sortedDayEvents = getSortedDayEvents(dayKey);
-                  const isTodayColumn = dayKey === todayName;
-                  const maxVisible = 3;
-                  const isExpanded = expandedDays[dayKey] || false;
-                  const visibleEvents = isExpanded ? sortedDayEvents : sortedDayEvents.slice(0, maxVisible);
-                  const hasMoreThanMax = sortedDayEvents.length > maxVisible;
-                  // Weekday columns stand for the coming 7 days.
-                  const dayReminders = (() => {
-                    const d = new Date();
-                    d.setDate(d.getDate() + ((dayNamesEn.indexOf(dayKey) - d.getDay() + 7) % 7));
-                    return remindersOnDate(reminderList, d);
-                  })();
+              <WeekStrip
+                lang={lang}
+                dayNamesEn={dayNamesEn}
+                todayName={todayName}
+                getDayEvents={getSortedDayEvents}
+                getDayReminders={date => remindersOnDate(reminderList, date)}
+                renderReminder={r => <ReminderChip key={r.id} reminder={r} lang={lang} onClick={() => setShowReminders(true)} />}
+                onAddForDay={() => setShowManualEvent(true)}
+                renderEvent={(dayKey, event, index) => {
+                  const actualIndex = schedule[dayKey]?.findIndex(e => e === event);
                   return (
-                    <div key={dayKey} className={`rounded-xl p-3 flex flex-col min-h-[120px] ${isTodayColumn ? 'bg-blue-50 border border-blue-300' : 'bg-slate-50 border border-slate-200'}`}>
-                      <div
-                        className={`font-bold text-sm text-slate-700 mb-2 pb-1.5 border-b text-center cursor-pointer hover:text-indigo-600 transition ${isTodayColumn ? 'border-blue-200' : 'border-slate-200'}`}
-                        onClick={() => { setCalendarView('day'); }}
-                      >
-                        {isTodayColumn ? dayTranslations.Today : dayTranslations[dayKey]}
-                        {dayEvents.length > 0 && <span className="text-xs text-slate-400 mr-1">({dayEvents.length})</span>}
-                      </div>
-                      <div className="flex-1 flex flex-col gap-2">
-                        {dayReminders.map(r => (
-                          <ReminderChip key={r.id} reminder={r} lang={lang} onClick={() => setShowReminders(true)} />
-                        ))}
-                        {dayEvents.length > 0 ? (
-                          <>
-                            {visibleEvents.map((event, index) => {
-                              const actualIndex = schedule[dayKey]?.findIndex(e => e === event);
-                              return (
-                                <div key={index}
-                                  className={`group relative p-3 rounded-xl border-r-[3px] flex flex-col gap-1 hover:shadow-md transition cursor-pointer ${getEventAccent(event)}`}
-                                  onClick={() => actualIndex >= 0 && handleOpenEditModal(dayKey, actualIndex)}>
-                                  <button onClick={e => { e.stopPropagation(); if (actualIndex >= 0) handleRemoveEvent(dayKey, actualIndex); }}
-                                    className="absolute -top-1.5 -left-1.5 opacity-0 group-hover:opacity-100 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center transition shadow-sm z-10">
-                                    <Trash2 className="w-3 h-3" />
-                                  </button>
-                                  <div className="font-semibold text-sm text-slate-800 flex items-center gap-1.5">
-                                    {event.isSleep && <Moon className="w-3.5 h-3.5 text-indigo-500 shrink-0" />}
-                                    {event.reminderMinutesBefore > 0 && <Bell className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
-                                    {event.isTask && <CheckSquare className="w-3.5 h-3.5 text-emerald-600 shrink-0" />}
-                                    <span className="truncate">{event.title}</span>
-                                    <Edit3 className="w-3 h-3 text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity mr-auto shrink-0" />
-                                  </div>
-                                  <div className="flex items-center gap-1 text-xs text-slate-500">
-                                    <Clock className="w-3 h-3 text-slate-400 shrink-0" />
-                                    <span dir="ltr">{event.startTime} - {event.endTime}</span>
-                                    {event.isSleep && <span className="text-[10px] text-indigo-500 mr-1">{t.sleepLabel}</span>}
-                                  </div>
-                                  {event.reminderMinutesBefore > 0 && (
-                                    <div className="flex items-center gap-1 text-[10px] text-amber-600">
-                                      <BellRing className="w-2.5 h-2.5" />
-                                      <span>{t.reminderColon} {event.reminderMinutesBefore} {t.reminderMinutes}</span>
-                                    </div>
-                                  )}
-                                  {event.isTask && (
-                                    <div className="flex items-center gap-1 text-[10px] text-emerald-700">
-                                      <BellRing className="w-2.5 h-2.5" />
-                                      <span>{(t.taskWithPing || 'Task · ping at {time}').replace('{time}', event.startTime)}</span>
-                                    </div>
-                                  )}
-                                  {event.location && !event.isTask && (
-                                    <div className="flex items-center gap-1 text-[10px] text-slate-400">
-                                      <MapPin className="w-2.5 h-2.5" />
-                                      <span>{LOCATION_LABELS[event.location] || event.location}</span>
-                                    </div>
-                                  )}
-                                  {event.recurrence && <span className="text-[10px] text-blue-500 font-medium">{recurrenceLabels[event.recurrence] || event.recurrence}</span>}
-                                </div>
-                              );
-                            })}
-                            {hasMoreThanMax && (
-                              <button onClick={() => toggleDayExpanded(dayKey)}
-                                className="w-full text-center px-3 py-1.5 text-xs rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition font-medium">
-                                {t.showAllEvents.replace('{count}', sortedDayEvents.length)}
-                              </button>
-                            )}
-                          </>
-                        ) : (
-                          dayKey !== 'Saturday' && dayReminders.length === 0 && (
-                            <p className="text-xs text-slate-300 text-center my-auto font-light">{t.noEvents}</p>
-                          )
-                        )}
-                      </div>
+                <div key={index}
+                  className={`group relative p-3.5 rounded-2xl border-r-[3px] bg-white shadow-sm flex flex-col gap-1 hover:shadow-md transition cursor-pointer ${getEventAccent(event)}`}
+                  onClick={() => actualIndex >= 0 && handleOpenEditModal(dayKey, actualIndex)}>
+                  <button onClick={e => { e.stopPropagation(); if (actualIndex >= 0) handleRemoveEvent(dayKey, actualIndex); }}
+                    className="absolute -top-1.5 -left-1.5 opacity-0 group-hover:opacity-100 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center transition shadow-sm z-10">
+                    <Trash2 className="w-3 h-3" />
+                  </button>
+                  <div className="font-semibold text-sm text-slate-800 flex items-center gap-1.5">
+                    {event.isSleep && <Moon className="w-3.5 h-3.5 text-indigo-500 shrink-0" />}
+                    {event.reminderMinutesBefore > 0 && <Bell className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
+                    {event.isTask && <CheckSquare className="w-3.5 h-3.5 text-emerald-600 shrink-0" />}
+                    <span className="truncate">{event.title}</span>
+                    <Edit3 className="w-3 h-3 text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity mr-auto shrink-0" />
+                  </div>
+                  <div className="flex items-center gap-1 text-xs text-slate-500">
+                    <Clock className="w-3 h-3 text-slate-400 shrink-0" />
+                    <span dir="ltr">{formatTimeString(event.startTime, lang)} - {formatTimeString(event.endTime, lang)}</span>
+                    {event.isSleep && <span className="text-[10px] text-indigo-500 mr-1">{t.sleepLabel}</span>}
+                  </div>
+                  {event.reminderMinutesBefore > 0 && (
+                    <div className="flex items-center gap-1 text-[10px] text-amber-600">
+                      <BellRing className="w-2.5 h-2.5" />
+                      <span>{t.reminderColon} {event.reminderMinutesBefore} {t.reminderMinutes}</span>
                     </div>
+                  )}
+                  {event.isTask && (
+                    <div className="flex items-center gap-1 text-[10px] text-emerald-700">
+                      <BellRing className="w-2.5 h-2.5" />
+                      <span>{(t.taskWithPing || 'Task · ping at {time}').replace('{time}', formatTimeString(event.startTime, lang))}</span>
+                    </div>
+                  )}
+                  {event.location && !event.isTask && (
+                    <div className="flex items-center gap-1 text-[10px] text-slate-400">
+                      <MapPin className="w-2.5 h-2.5" />
+                      <span>{LOCATION_LABELS[event.location] || event.location}</span>
+                    </div>
+                  )}
+                  {event.recurrence && <span className="text-[10px] text-blue-500 font-medium">{recurrenceLabels[event.recurrence] || event.recurrence}</span>}
+                </div>
                   );
-                })}
-              </motion.div>
+                }}
+              />
             )}
 
             {/* Monthly & Yearly */}
@@ -2939,6 +2913,7 @@ function AppRoutes() {
         user={user}
         isPro={isPro}
         onOpenNativePaywall={() => setIapSheet('menu')}
+        onOpenPlans={() => { setIsSidebarOpen(false); setShowPlans(true); }}
         onLogout={handleLogout}
         initialTab={drawerTab}
         title={drawerTab === 'analytics' ? getNavLabels(lang).analytics : getNavLabels(lang).me}
@@ -2973,7 +2948,8 @@ function AppRoutes() {
           initialTitle={publicGoalsCreate?.title || ''}
           onJoinChallenge={(goal) => {
             fetchSchedule();
-            setSuccess(lang === "he" ? "🎯 הצטרפת לאתגר! האירוע נוסף ליומן." : "🎯 Joined the challenge! Event added to your schedule.");
+            notifyTasksChanged();
+            setSuccess(lang === "he" ? "🎯 הצטרפת לאתגר! הוא מופיע עכשיו במשימות של היום." : "🎯 Joined the challenge! It now shows in today's tasks.");
           }}
           onViewChallenge={(goalId) => {
             setSelectedChallengeId(goalId);
@@ -2994,7 +2970,8 @@ function AppRoutes() {
           }}
           onJoinChallenge={(goal) => {
             fetchSchedule();
-            setSuccess(lang === "he" ? "🎯 הצטרפת לאתגר! האירוע נוסף ליומן." : "🎯 Joined the challenge! Event added to your schedule.");
+            notifyTasksChanged();
+            setSuccess(lang === "he" ? "🎯 הצטרפת לאתגר! הוא מופיע עכשיו במשימות של היום." : "🎯 Joined the challenge! It now shows in today's tasks.");
           }}
         />
       )}
@@ -3050,6 +3027,20 @@ function AppRoutes() {
           onClose={() => { setShowReminders(false); setRemindersRefresh(n => n + 1); }}
           onChanged={() => setRemindersRefresh(n => n + 1)}
           onRequireLogin={() => { setShowReminders(false); handleLogin(lang); }}
+        />
+      )}
+
+      {showTasks && (
+        <TasksSheet lang={lang} user={user} todayEvents={schedule.Today} onClose={() => setShowTasks(false)} />
+      )}
+      {showPlans && !isNativeApp() && (
+        <PlansSheet
+          lang={lang}
+          user={user}
+          credits={user ? normalizeCredits(user.aiCredits) : undefined}
+          busy={checkoutLoading}
+          onBuy={product => startWebCheckout(product)}
+          onClose={() => setShowPlans(false)}
         />
       )}
 

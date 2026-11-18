@@ -443,7 +443,7 @@ export default function PublicGoals({ lang, user, onClose, onJoinChallenge, onVi
                             <h4 className="font-semibold text-gray-900 dark:text-white truncate">{goal.title}</h4>
                           </div>
                           <div className="flex items-center gap-3 mt-1 text-xs text-gray-500 dark:text-gray-400">
-                            <span>👤 {goal.creatorId?.displayName || "Unknown"}</span>
+                            <span>{goal.featuredKey ? "✨ CalendAI" : `👤 ${goal.creatorId?.displayName || "Unknown"}`}</span>
                             <span>📅 {formatSchedule(goal)}</span>
                             <span>👥 {goal.participantCount || 0}</span>
                           </div>
@@ -518,7 +518,7 @@ export default function PublicGoals({ lang, user, onClose, onJoinChallenge, onVi
                               <h4 className="font-semibold text-gray-900 dark:text-white truncate">{goal.title}</h4>
                             </div>
                             <div className="flex items-center gap-3 mt-1 text-xs text-gray-500 dark:text-gray-400 flex-wrap">
-                              <span>👤 {goal.creatorId?.displayName || "Unknown"}</span>
+                              <span>{goal.featuredKey ? "✨ CalendAI" : `👤 ${goal.creatorId?.displayName || "Unknown"}`}</span>
                               {goal.scheduleTime && goal.day && <span>📅 {formatSchedule(goal)}</span>}
                               <span>👥 {goal.participantCount || 0} {lang === "he" ? "משתתפים" : "participants"}</span>
                               {goal.completedCount > 0 && (

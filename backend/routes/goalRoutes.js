@@ -6,6 +6,7 @@ const router = express.Router();
 const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
 const Goal = require('../models/Goal');
+const { buildSearchFilter } = require('../services/featuredChallenges');
 
 const JWT_SECRET = require('../config/jwtSecret');
 
@@ -31,6 +32,100 @@ function getUserId(req) {
   }
   return null;
 }
+
+function formatGoal(g) {
+  return {
+    ...g,
+    participantCount: g.participants?.length || 0,
+    completedCount: g.participants?.filter(p => p.status === 'completed').length || 0
+  };
+}
+
+/**
+ * The user's daily tasks: their own private tasks plus every challenge they
+ * joined and have not finished. Shown as the circles on the home screen;
+ * each one is marked per day through /api/task-status with key "goal:<id>".
+ */
+function toTask(g, userId) {
+  const me = (g.participants || []).find(p => String(p.userId) === String(userId));
+  const joinedAt = me?.joinedAt || g.createdAt;
+  return {
+    id: String(g._id),
+    key: `goal:${g._id}`,
+    kind: g.kind === 'task' ? 'task' : 'challenge',
+    featured: !!g.featuredKey,
+    title: g.title,
+    titleEn: g.titleEn || '',
+    emoji: g.emoji || '',
+    category: g.category || 'general',
+    durationDays: g.durationDays || null,
+    streak: me?.currentStreak || 0,
+    lastCheckInDate: me?.lastCheckInDate || null,
+    joinedAt
+  };
+}
+
+// GET /api/goals/tasks → { tasks }
+router.get('/tasks', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId || !mongoose.Types.ObjectId.isValid(userId)) return res.status(401).json({ error: 'עליך להתחבר.' });
+    const goals = await Goal.find({
+      participants: { $elemMatch: { userId: new mongoose.Types.ObjectId(userId), status: 'joined' } }
+    })
+      .select('title titleEn emoji category durationDays kind featuredKey participants createdAt')
+      .sort({ createdAt: 1 })
+      .limit(40)
+      .lean();
+    res.json({ tasks: goals.map(g => toTask(g, userId)) });
+  } catch (err) {
+    console.error('Tasks error:', err);
+    res.status(500).json({ error: 'שגיאה בטעינת המשימות.' });
+  }
+});
+
+// POST /api/goals/tasks { title, emoji } → a private daily task
+router.post('/tasks', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId || !mongoose.Types.ObjectId.isValid(userId)) return res.status(401).json({ error: 'עליך להתחבר.' });
+    const title = String(req.body?.title || '').trim().slice(0, 80);
+    if (!title) return res.status(400).json({ error: 'נדרש שם למשימה.' });
+    const count = await Goal.countDocuments({ creatorId: userId, kind: 'task' });
+    if (count >= 30) return res.status(400).json({ error: 'אפשר עד 30 משימות.' });
+    const goal = await Goal.create({
+      title,
+      emoji: String(req.body?.emoji || '').slice(0, 8),
+      kind: 'task',
+      isPublic: false,
+      category: 'general',
+      creatorId: new mongoose.Types.ObjectId(userId),
+      participants: [{ userId: new mongoose.Types.ObjectId(userId), status: 'joined' }]
+    });
+    res.status(201).json({ ok: true, task: toTask(goal.toObject(), userId) });
+  } catch (err) {
+    console.error('Create task error:', err);
+    res.status(500).json({ error: 'שגיאה ביצירת המשימה.' });
+  }
+});
+
+// POST /api/goals/:id/leave → stop showing it as a task. A private task is deleted.
+router.post('/:id/leave', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId || !mongoose.Types.ObjectId.isValid(userId)) return res.status(401).json({ error: 'עליך להתחבר.' });
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ error: 'לא נמצא.' });
+    const uid = new mongoose.Types.ObjectId(userId);
+    const removed = await Goal.deleteOne({ _id: req.params.id, kind: 'task', creatorId: uid });
+    if (!removed.deletedCount) {
+      await Goal.updateOne({ _id: req.params.id }, { $pull: { participants: { userId: uid } } });
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Leave goal error:', err);
+    res.status(500).json({ error: 'שגיאה ביציאה מהאתגר.' });
+  }
+});
 
 /**
  * POST /api/goals
@@ -128,61 +223,18 @@ router.post('/create', async (req, res) => {
 router.get('/search', async (req, res) => {
   try {
     const { q, category } = req.query;
-    const filter = { isPublic: true };
-
-    // Text search on title
-    if (q && q.trim()) {
-      filter.$text = { $search: q.trim() };
-    }
-
-    // Category filter
-    if (category && category !== 'all') {
-      filter.category = category;
-    }
-
-    const goals = await Goal.find(filter)
+    // Words are matched in the Hebrew and English title, description and
+    // category (services/featuredChallenges.js). Built-in challenges come first.
+    const goals = await Goal.find(buildSearchFilter(q, category))
       .populate('creatorId', 'displayName photo email')
       .populate('participants.userId', 'displayName photo')
-      .sort({ createdAt: -1 })
+      .sort({ featuredKey: -1, createdAt: -1 })
       .limit(50)
       .lean();
-
-    // Format participants count
-    const formatted = goals.map(g => ({
-      ...g,
-      participantCount: g.participants?.length || 0,
-      completedCount: g.participants?.filter(p => p.status === 'completed').length || 0
-    }));
-
-    res.json({ goals: formatted, count: formatted.length });
+    res.json({ goals: goals.map(formatGoal), count: goals.length });
   } catch (err) {
     console.error('Search goals error:', err);
-    // Fallback: if text search fails (e.g., no text index), do a regex search
-    try {
-      const { q, category } = req.query;
-      const filter = { isPublic: true };
-      if (q && q.trim()) {
-        filter.title = { $regex: q.trim(), $options: 'i' };
-      }
-      if (category && category !== 'all') {
-        filter.category = category;
-      }
-      const goals = await Goal.find(filter)
-        .populate('creatorId', 'displayName photo email')
-        .populate('participants.userId', 'displayName photo')
-        .sort({ createdAt: -1 })
-        .limit(50)
-        .lean();
-      const formatted = goals.map(g => ({
-        ...g,
-        participantCount: g.participants?.length || 0,
-        completedCount: g.participants?.filter(p => p.status === 'completed').length || 0
-      }));
-      res.json({ goals: formatted, count: formatted.length });
-    } catch (fallbackErr) {
-      console.error('Search goals fallback error:', fallbackErr);
-      res.status(500).json({ error: 'שגיאה בחיפוש אתגרים.' });
-    }
+    res.status(500).json({ error: 'שגיאה בחיפוש אתגרים.' });
   }
 });
 
@@ -193,7 +245,7 @@ router.get('/search', async (req, res) => {
 router.get('/active', async (req, res) => {
   try {
     const { category } = req.query;
-    const filter = { isPublic: true };
+    const filter = { isPublic: true, kind: { $ne: 'task' } };
     if (category && category !== 'all') {
       filter.category = category;
     }
@@ -498,7 +550,8 @@ router.get('/my', async (req, res) => {
     }
 
     const goals = await Goal.find({
-      'participants.userId': new mongoose.Types.ObjectId(userId)
+      'participants.userId': new mongoose.Types.ObjectId(userId),
+      kind: { $ne: 'task' }
     })
       .populate('creatorId', 'displayName photo email')
       .populate('participants.userId', 'displayName photo')

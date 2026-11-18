@@ -31,8 +31,8 @@ export default function ViewNavigation({ currentView, onViewChange, onPrev, onNe
         ))}
       </div>
 
-      {/* Navigation Controls */}
-      <div className="flex items-center gap-1 shrink-0 self-end sm:self-auto">
+      {/* Navigation Controls (the weekly strip has its own day picker) */}
+      {currentView !== 'weekly' && <div className="flex items-center gap-1 shrink-0 self-end sm:self-auto">
         <button
           onClick={onToday}
           className="px-3.5 h-11 text-xs font-semibold rounded-2xl bg-white text-[#2A2D45] shadow-[0_4px_14px_-8px_rgba(40,30,120,0.3)] hover:bg-slate-50 transition whitespace-nowrap"
@@ -45,7 +45,7 @@ export default function ViewNavigation({ currentView, onViewChange, onPrev, onNe
         <button onClick={onNext} aria-label={t.viewNext || (isRTL ? 'הבא' : 'Next')} className="w-11 h-11 flex items-center justify-center rounded-2xl bg-white shadow-[0_4px_14px_-8px_rgba(40,30,120,0.3)] hover:bg-slate-50 transition text-[#2A2D45]">
           <NextIcon className="w-5 h-5" />
         </button>
-      </div>
+      </div>}
     </div>
   );
 }

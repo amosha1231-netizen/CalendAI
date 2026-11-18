@@ -4697,6 +4697,10 @@ app.get('*', (req, res) => {
 mongoReady
   .then(() => {
     console.log('MongoDB connected');
+    // Built-in challenges, so search always has something to find (config/featuredChallenges.js).
+    require('./services/featuredChallenges').seedFeaturedChallenges(require('./models/Goal'))
+      .then(n => console.log(`Featured challenges ready: ${n}`))
+      .catch(err => console.error('Featured challenges seed failed:', err.message));
     // Reminder pings: checks every 30s for reminders that are due (services/reminderDispatcher).
     createDispatcher({
       Reminder: require('./models/Reminder'),

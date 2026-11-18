@@ -337,11 +337,12 @@ export default function GlobalSearch({ lang, user, onJoinChallenge, onViewProfil
                               >
                                 <div className="flex-1 min-w-0">
                                   <div className="text-sm font-medium text-slate-900 dark:text-white truncate flex items-center gap-1.5">
-                                    <span className="text-xs">{goal.category === "workout" ? "💪" : goal.category === "study" ? "📚" : goal.category === "work" ? "💼" : goal.category === "sleep" ? "🌙" : "🎯"}</span>
-                                    {goal.title}
+                                    <span className="text-xs">{goal.emoji || (goal.category === "workout" ? "💪" : goal.category === "study" ? "📚" : goal.category === "work" ? "💼" : goal.category === "sleep" ? "🌙" : "🎯")}</span>
+                                    {lang !== "he" && goal.titleEn ? goal.titleEn : goal.title}
                                   </div>
                                   <div className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-2 mt-0.5">
-                                    <span>👤 {goal.creatorId?.displayName || "Unknown"}</span>
+                                    <span>{goal.featuredKey ? "✨ CalendAI" : `👤 ${goal.creatorId?.displayName || "Unknown"}`}</span>
+                                    {goal.durationDays ? <span>📅 {goal.durationDays} {lang === "he" ? "ימים" : "days"}</span> : null}
                                     <span>👥 {goal.participantCount || 0}</span>
                                   </div>
                                 </div>
