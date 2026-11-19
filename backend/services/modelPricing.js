@@ -68,6 +68,15 @@ function getModelPrice(modelName) {
   return { ...(fb[modelName] || fb.default), source: 'fallback-price' };
 }
 
+/**
+ * False only when OpenRouter's live list is loaded and does not hold this id
+ * (a retired model). Before the first fetch every id counts as known.
+ */
+function isKnownModel(modelName) {
+  if (livePrices.size === 0) return true;
+  return livePrices.has(modelName);
+}
+
 // For tests.
 function _setLivePrices(map) { livePrices = new Map(map); lastRefreshAt = Date.now(); }
 function _lastRefreshAt() { return lastRefreshAt; }
@@ -76,6 +85,7 @@ module.exports = {
   refreshModelPrices,
   startModelPriceRefresh,
   getModelPrice,
+  isKnownModel,
   parseModelsPayload,
   _setLivePrices,
   _lastRefreshAt

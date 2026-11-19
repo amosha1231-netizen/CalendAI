@@ -166,6 +166,7 @@ export function TasksTodayCard({ lang = 'he', user, todayEvents, onManage }) {
 }
 
 const THRESHOLD = 80;
+const FLY_MS = 200;
 
 /**
  * The task opens in the middle. Swipe right = done (green), left = not done
@@ -201,17 +202,22 @@ export function TaskFocus({ lang = 'he', user, items, startIndex = 0, statuses, 
     return null;
   };
 
-  const commit = async (status) => {
+  const commit = (status) => {
     if (!item || leaving) return;
     setLeaving(status);
     setError('');
+    const previous = statuses[item.key];
     const marked = { ...statuses, [item.key]: status };
     onMarked && onMarked(item.key, status);
-    try {
-      await markTodayItem(user, item, status);
-    } catch (e) {
-      setError(s.failed);
-    }
+    // Save in the background: the next task comes right away instead of
+    // waiting for the server. If the save fails, the mark is undone.
+    const saving = item;
+    Promise.resolve()
+      .then(() => markTodayItem(user, saving, status))
+      .catch(() => {
+        onMarked && onMarked(saving.key, previous);
+        setError(s.failed);
+      });
     setTimeout(() => {
       setLeaving(null);
       setDrag({ x: 0, y: 0, active: false });
@@ -222,7 +228,7 @@ export function TaskFocus({ lang = 'he', user, items, startIndex = 0, statuses, 
       } else {
         setIndex(j);
       }
-    }, 260);
+    }, FLY_MS);
   };
 
   const onPointerDown = e => {
@@ -280,8 +286,9 @@ export function TaskFocus({ lang = 'he', user, items, startIndex = 0, statuses, 
         ) : item ? (
           <>
             <div
+              key={item.key}
               className={`pointer-events-auto touch-none w-56 h-56 rounded-full bg-white border-[6px] flex flex-col items-center justify-center text-center px-6 cursor-grab ${glow}`}
-              style={{ transform: fly, transition: drag.active && !leaving ? 'none' : 'transform 260ms ease, box-shadow 160ms' }}
+              style={{ transform: fly, transition: drag.active && !leaving ? 'none' : `transform ${FLY_MS}ms ease, box-shadow 160ms` }}
               onPointerDown={onPointerDown}
               onPointerMove={onPointerMove}
               onPointerUp={onPointerUp}

@@ -18,10 +18,9 @@ function initModel() {
     openaiClient = new OpenAI({
       baseURL: 'https://openrouter.ai/api/v1',
       apiKey: apiKey,
-      // DeepSeek on OpenRouter is sometimes rate-limited upstream (429
-      // "engine_overloaded"). Retry a few more times with the SDK's backoff
-      // before the request is given up.
-      maxRetries: 4,
+      // Retries are set per call in createChatCompletion: on a 429 we move to
+      // a fallback model right away instead of waiting out a long backoff.
+      maxRetries: 1,
       defaultHeaders: {
         'HTTP-Referer': process.env.BASE_URL || 'https://calendai.org',
         'X-Title': 'CalendAI',
@@ -32,6 +31,75 @@ function initModel() {
   } catch (e) {
     console.error('Failed to initialize DeepSeek AI model:', e.message);
   }
+}
+
+// ──────────────────────────────────────────────
+// Model fallback
+// ──────────────────────────────────────────────
+// deepseek/deepseek-chat on OpenRouter shares an upstream pool that is often
+// rate-limited ("temporarily rate-limited upstream", 429). OpenRouter already
+// tries every DeepSeek provider before it answers 429, so retrying the same
+// model again only adds seconds of backoff. Instead, the next model in this
+// list answers the request. Billing uses OpenRouter's real usage.cost, so the
+// user is charged what the model that answered really cost.
+const DEFAULT_FALLBACK_MODELS = ['openai/gpt-4o-mini', 'google/gemini-2.5-flash'];
+const ATTEMPT_TIMEOUT_MS = 25_000;
+
+function fallbackModels() {
+  const fromEnv = (process.env.AI_FALLBACK_MODELS || '').split(',').map(m => m.trim()).filter(Boolean);
+  return fromEnv.length ? fromEnv : DEFAULT_FALLBACK_MODELS;
+}
+
+/** Models to try in order: the primary, then fallbacks OpenRouter still lists. */
+function modelChain(primary) {
+  const { isKnownModel } = require('./modelPricing');
+  const chain = [primary];
+  for (const m of fallbackModels()) {
+    if (m && !chain.includes(m) && isKnownModel(m)) chain.push(m);
+  }
+  return chain;
+}
+
+/** True when another model may succeed where this one failed. */
+function shouldTryNextModel(err) {
+  const status = err && err.status;
+  if (status === 429 || status === 408 || status === 404) return true;
+  if (typeof status === 'number' && status >= 500) return true;
+  // Unknown or retired model id.
+  if (status === 400 && /model/i.test(String(err.message || ''))) return true;
+  // Timeouts and dropped connections have no status.
+  if (!status) return true;
+  return false;
+}
+
+/**
+ * chat.completions.create with model fallback. Each model gets one quick try
+ * (plus one SDK retry for a dropped connection) and a time limit, so one slow
+ * or overloaded provider can't hold the user for long.
+ * @returns {Promise<{ completion: Object, model: string }>}
+ */
+async function createChatCompletion(params, client = openaiClient, primary = modelName) {
+  const chain = modelChain(primary);
+  let lastErr;
+  for (let i = 0; i < chain.length; i++) {
+    const model = chain[i];
+    const started = Date.now();
+    try {
+      const completion = await client.chat.completions.create(
+        { ...params, model },
+        { timeout: ATTEMPT_TIMEOUT_MS, maxRetries: 1 }
+      );
+      const used = (completion && typeof completion.model === 'string' && completion.model) || model;
+      console.log(`[AI] ${used} answered in ${Date.now() - started}ms${i > 0 ? ` (fallback #${i}, primary ${chain[0]} was unavailable)` : ''}`);
+      return { completion, model: used };
+    } catch (err) {
+      lastErr = err;
+      const more = i < chain.length - 1 && shouldTryNextModel(err);
+      console.warn(`[AI] ${model} failed after ${Date.now() - started}ms: ${err && err.status ? err.status + ' ' : ''}${err && err.message}${more ? ' → trying ' + chain[i + 1] : ''}`);
+      if (!more) throw err;
+    }
+  }
+  throw lastErr;
 }
 
 /**
@@ -922,8 +990,7 @@ ${RECURRING_REMINDER_RULES}
   `;
 
   try {
-    const completion = await openaiClient.chat.completions.create({
-      model: modelName,
+    const { completion, model: modelName } = await createChatCompletion({
       messages: [
         { role: 'system', content: systemInstruction },
         { role: 'user', content: userPrompt }
@@ -1650,8 +1717,7 @@ ${RECURRING_REMINDER_RULES}
   `;
 
   try {
-    const completion = await openaiClient.chat.completions.create({
-      model: modelName,
+    const { completion, model: modelName } = await createChatCompletion({
       messages: [
         { role: 'system', content: systemInstruction },
         { role: 'user', content: prompt }
@@ -1845,8 +1911,7 @@ async function rescheduleWithGemini(currentSchedule, reason) {
   `;
 
   try {
-    const completion = await openaiClient.chat.completions.create({
-      model: modelName,
+    const { completion, model: modelName } = await createChatCompletion({
       messages: [
         { role: 'system', content: systemInstruction },
         { role: 'user', content: prompt }
@@ -1877,4 +1942,4 @@ async function rescheduleWithGemini(currentSchedule, reason) {
   }
 }
 
-module.exports = { parseWithGemini, parseWithGeminiSmart, parseImageWithVision, rescheduleWithGemini, cleanTitle };
+module.exports = { parseWithGemini, parseWithGeminiSmart, parseImageWithVision, rescheduleWithGemini, cleanTitle, createChatCompletion, shouldTryNextModel };

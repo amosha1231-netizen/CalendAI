@@ -15,6 +15,9 @@ function isTaskText(text) {
 // "תזכיר לי", "תזכורת", "remind me": the user wants a ping, so it is a task too.
 const REMIND_TEXT_RE = /(תזכיר|תזכירי|להזכיר|תזכורת|\bremind(?:er)?\b)/i;
 
+// Asking for an alert without "תזכיר" ("התראה", "פינג", "alert") keeps a bare reminder.
+const PING_TEXT_RE = /(התרא|פינג|\b(?:alert|ping|notify)\b)/i;
+
 /** True when the text asks for a task or a reminder (both become tasks). */
 function wantsTask(text) {
   return isTaskText(text) || (typeof text === 'string' && REMIND_TEXT_RE.test(text));
@@ -79,7 +82,14 @@ function applyTaskIntent(events, text) {
     if (!ev || typeof ev !== 'object' || ev.isSleep === true) return ev;
     if (Number(ev.reminderMinutesBefore) > 0) return ev.isTask ? asPlainEvent(ev) : ev;
     const aiSaysTask = ev.isTask === true || ev.isReminder === true;
-    if (!wantsTaskBesidesTitles(text, real)) return ev.isTask ? asPlainEvent(ev) : ev;
+    if (!wantsTaskBesidesTitles(text, real)) {
+      // Nothing in the request asks for a ping ("תפילה מחר בשש בלי נדר"), so a
+      // ping the AI added on its own is dropped: it stays a regular event.
+      if (ev.isTask || (ev.isReminder === true && !PING_TEXT_RE.test(String(text || '')))) {
+        return asPlainEvent({ ...ev, isReminder: false });
+      }
+      return ev;
+    }
 
     if (real.length <= 1) return asTask(ev);
 
