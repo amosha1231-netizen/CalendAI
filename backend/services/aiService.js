@@ -142,6 +142,10 @@ const RECURRING_REMINDER_RULES = `
     start time AND a done / not-done mark in the day view. It is neither a meeting nor a bare reminder.
     It is a TASK when the request says "משימה" / "מטלה" / "task" / "to-do", or asks to mark it done
     ("לסמן בוצע" / "לסמן אם עשיתי" / "וי" / "mark done" / "check off"), or asks for a ping/reminder AND to mark it.
+    "תזכיר לי" / "remind me" for something to do at a set time is also a TASK.
+    DEFAULT IS A PLAIN EVENT: anything the user did not call a task or ask to be reminded of gets "isTask": false.
+    When one request lists several items, set "isTask": true ONLY on the items the user called a task / asked a
+    reminder for, never on all of them because one of them was.
     For a TASK:
     1. Set "isTask": true and "isReminder": false (the server adds the ping itself; a task must NOT become a bare reminder).
     2. "startTime" = the time it should be done / pinged. "endTime" = startTime + 15 minutes, unless the user gave a duration.

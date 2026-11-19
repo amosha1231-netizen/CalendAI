@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { isTaskText, applyTaskIntent, taskPingEvents, scheduleHasTask } = require('../services/taskPings');
+const { isTaskText, wantsTask, applyTaskIntent, taskPingEvents, scheduleHasTask } = require('../services/taskPings');
 const { reminderSpecsFromEvents } = require('../services/reminderSchedule');
 const { prepareParsedEvent, sanitizeConfirmedEvents } = require('../services/parsedEvents');
 const { createDispatcher } = require('../services/reminderDispatcher');
@@ -102,4 +102,29 @@ test('a task ping opens today, and stops once the task is deleted', async () => 
   assert.equal(sent.length, 1);
   assert.equal(sent[0].url, '/');
   assert.equal(Reminder.rows.find(r => r._id === 't2').active, false);
+});
+
+test('a plain event is the default; only items the user called a task become tasks', () => {
+  const ev = (title, time) => ({ summary: title, title, day: 'Thursday', startTime: time, endTime: time, isTask: true });
+
+  // The AI over-tagged everything, and "מטלה" is only part of a title: no task at all.
+  const spoken = applyTaskIntent([ev('לימוד', '12:30'), ev('מטלה עם חברים', '13:00'), ev('נועה', '15:30')],
+    'מחר לימוד ב12 וחצי מטלה עם חברים באחת ונועה ב3 וחצי');
+  assert.deepEqual(spoken.map(e => e.isTask), [undefined, undefined, undefined]);
+
+  // Only the item whose own part of the sentence says "משימה" is a task.
+  const mixed = applyTaskIntent([ev('לימוד', '12:00'), ev('להתקשר לנועה', '15:00')], 'לימוד ב-12, משימה להתקשר לנועה ב-3');
+  assert.deepEqual(mixed.map(e => e.isTask), [undefined, true]);
+});
+
+test('"תזכיר לי" makes a task with a ping', () => {
+  assert.ok(wantsTask('תזכיר לי מחר ב-9 להתקשר לרופא'));
+  assert.ok(wantsTask('remind me at 8 to take a pill'));
+  assert.ok(!wantsTask('פגישה עם דני ביום חמישי בחמש'));
+  const [pill] = applyTaskIntent([{ summary: 'לקחת כדור', isReminder: true, startTime: '08:00', recurrence: 'daily' }], 'תזכיר לי כל יום ב-8 לקחת כדור');
+  assert.equal(pill.isTask, true);
+  assert.equal(pill.isReminder, false);
+  // A "15 minutes before" alert on a meeting stays a meeting.
+  const [meeting] = applyTaskIntent([{ summary: 'פגישה עם דני', startTime: '17:00', reminderMinutesBefore: 15 }], 'פגישה עם דני ב-5, תזכיר לי רבע שעה לפני');
+  assert.equal(meeting.isTask, undefined);
 });

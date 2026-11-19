@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { formatClock, formatTimeString } from "../utils/timeFormat";
 import { 
   Clock, Moon, Bell, BellRing, MapPin, Edit3, Trash2, 
@@ -9,12 +9,14 @@ import { ReminderChip } from './Reminders';
 import TaskStatusCircle, { TaskProgressSummary } from './TaskStatusCircle';
 import { toDateKey, addDaysKey, taskKey, fetchTaskStatuses, saveTaskStatus, summarizeStatuses } from '../utils/taskStatus';
 import { eventsOnDate } from '../utils/eventOccurrence';
+import useLongPress from '../hooks/useLongPress';
+import EventKindMenu from './EventKindMenu';
 
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
 
 export default function DayView({ 
   date, schedule, dayKey, lang, t, 
-  onEditEvent, onRemoveEvent, onSlotClick, 
+  onEditEvent, onRemoveEvent, onSlotClick, onToggleTask,
   locationFilter, LOCATION_LABELS,
   reminders = [], onOpenReminders, user
 }) {
@@ -49,6 +51,13 @@ export default function DayView({
     const key = taskKey(event);
     return statusItems.find(i => i.date === dateKey && i.key === key)?.status || null;
   };
+
+  // Long press on an event: switch it between a regular event and a task.
+  const pressedRef = useRef(null);
+  const [kindMenu, setKindMenu] = useState(null);
+  const { handlers: pressHandlers, wasLongPress } = useLongPress(() => {
+    if (onToggleTask && pressedRef.current) setKindMenu(pressedRef.current);
+  });
 
   const handleStatusChange = async (event, status) => {
     const key = taskKey(event);
@@ -120,7 +129,9 @@ export default function DayView({
 
   const events = getEventsForDay();
   const sortedEvents = [...events].sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
-  const dayKeys = new Set(sortedEvents.map(taskKey));
+  // Only tasks get a done circle; a regular event is just a block in the schedule.
+  const dayTasks = sortedEvents.filter(e => e.isTask);
+  const dayKeys = new Set(dayTasks.map(taskKey));
   const dayStatusItems = statusItems.filter(i => i.date === dateKey && dayKeys.has(i.key));
   const weekSummary = summarizeStatuses(statusItems);
 
@@ -183,8 +194,8 @@ export default function DayView({
         </div>
       )}
 
-      {sortedEvents.length > 0 && (
-        <TaskProgressSummary dayItems={dayStatusItems} dayTotal={sortedEvents.length} weekSummary={weekSummary} t={t} />
+      {dayTasks.length > 0 && (
+        <TaskProgressSummary dayItems={dayStatusItems} dayTotal={dayTasks.length} weekSummary={weekSummary} t={t} />
       )}
       {statusError && (
         <div className="mb-3 text-xs text-rose-600 bg-rose-50 border border-rose-100 rounded-xl px-3 py-2">{statusError}</div>
@@ -220,7 +231,10 @@ export default function DayView({
                         <div
                           key={idx}
                           className="group relative p-3 rounded-xl border-r-[3px] flex flex-col gap-1 hover:shadow-md transition cursor-pointer bg-white border-slate-200 hover:border-blue-400"
-                          onClick={() => actualIndex >= 0 && onEditEvent && onEditEvent(event._dayKey || dayKey, actualIndex)}
+                          onClick={() => { if (wasLongPress()) return; if (actualIndex >= 0 && onEditEvent) onEditEvent(event._dayKey || dayKey, actualIndex); }}
+                          {...pressHandlers}
+                          onPointerDown={e => { pressedRef.current = actualIndex >= 0 ? { event, day: event._dayKey || dayKey, index: actualIndex } : null; pressHandlers.onPointerDown(e); }}
+                          style={{ WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none' }}
                         >
                           <button
                             onClick={e => { e.stopPropagation(); if (actualIndex >= 0) onRemoveEvent && onRemoveEvent(event._dayKey || dayKey, actualIndex); }}
@@ -230,10 +244,10 @@ export default function DayView({
                             <Trash2 className="w-3 h-3" />
                           </button>
                           <div className="font-semibold text-sm text-slate-800 flex items-center gap-1.5">
-                            <TaskStatusCircle status={statusFor(event)} onChange={s => handleStatusChange(event, s)} t={t} />
+                            {event.isTask && <TaskStatusCircle status={statusFor(event)} onChange={s => handleStatusChange(event, s)} t={t} />}
                             {event.isSleep && <Moon className="w-3.5 h-3.5 text-indigo-500 shrink-0" />}
                             {event.reminderMinutesBefore > 0 && <Bell className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
-                            <span className={`truncate ${statusFor(event) === 'done' ? 'line-through text-slate-400' : ''}`}>{event.title}</span>
+                            <span className={`truncate ${event.isTask && statusFor(event) === 'done' ? 'line-through text-slate-400' : ''}`}>{event.title}</span>
                             <Edit3 className="w-3 h-3 text-slate-300 md:opacity-0 md:group-hover:opacity-100 transition-opacity ms-auto shrink-0" />
                           </div>
                           <div className="flex items-center gap-1 text-xs text-slate-500">
@@ -276,6 +290,15 @@ export default function DayView({
           );
         })}
       </div>
+
+      {kindMenu && (
+        <EventKindMenu
+          event={kindMenu.event}
+          t={t}
+          onClose={() => setKindMenu(null)}
+          onPick={isTask => { const m = kindMenu; setKindMenu(null); onToggleTask(m.day, m.index, isTask); }}
+        />
+      )}
 
       {/* Empty State */}
       {sortedEvents.length === 0 && reminders.length === 0 && !hebrewInfo.holidayName && (
