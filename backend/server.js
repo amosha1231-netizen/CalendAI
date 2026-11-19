@@ -2170,6 +2170,28 @@ app.post('/api/schedule/add-to-free-slot', async (req, res) => {
   }
 });
 
+/**
+ * After an event became a task, give it its ping; after a task became a plain
+ * event, drop the ping (unless another task with the same title still needs it).
+ */
+async function syncTaskPing(userId, schedule, event, day) {
+  const Reminder = require('./models/Reminder');
+  const title = String(event.title || event.summary || '').trim();
+  if (!title) return;
+  if (event.isTask === true) {
+    const existing = await Reminder.findOne({ userId, kind: 'task', title }).lean();
+    if (existing) return;
+    const timeZone = getCurrentRequestTimeZone();
+    const { reminders: specs } = reminderSpecsFromEvents(
+      taskPingEvents([{ ...event, title, summary: title, day }]),
+      { timeZone, todayName: getTodayDayName() }
+    );
+    if (specs.length) await createReminders(userId, specs, { timeZone, source: 'manual', kind: 'task' });
+  } else if (!scheduleHasTask(schedule, title)) {
+    await Reminder.deleteMany({ userId, kind: 'task', title });
+  }
+}
+
 app.put('/api/schedule/event', async (req, res) => {
   const { day, index, updates } = req.body;
   if (!day || index === undefined || !updates) {
@@ -2182,13 +2204,23 @@ app.put('/api/schedule/event', async (req, res) => {
     const actualDay = day === 'Today' ? getTodayDayName() : day;
     
     if (schedule[actualDay] && schedule[actualDay][index]) {
-      schedule[actualDay][index] = { ...schedule[actualDay][index], ...updates };
+      const before = schedule[actualDay][index];
+      const next = { ...before, ...updates };
+      // Turning an event into a task (or back) from the long-press menu.
+      const kindChanged = typeof updates.isTask === 'boolean' && Boolean(before.isTask) !== updates.isTask;
+      if (updates.isTask === true) next.isReminder = false;
+      if (updates.isTask === false) delete next.isTask;
+      schedule[actualDay][index] = next;
       syncTodayWithCurrentDay(schedule);
       saveSchedulesNow();
       
       // Save to MongoDB for logged-in users
       if (mongoose.Types.ObjectId.isValid(userId)) {
         await saveScheduleToMongo(userId, schedule);
+        if (kindChanged) {
+          await syncTaskPing(userId, schedule, next, actualDay).catch(err =>
+            console.error('Failed to sync task ping:', err.message));
+        }
       }
       
       res.json({ ok: true, event: schedule[actualDay][index] });

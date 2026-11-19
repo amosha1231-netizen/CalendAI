@@ -57,6 +57,8 @@ import { normalizeCredits, normalizeUserCredits, formatCredits } from "./utils/c
 import { isShabbatNow as isShabbatNowAtUser } from "./utils/shabbatHelper";
 import { getUserTimeZone, setUserTimeZone, presetLocationForTimeZone, formatUtcOffset, PRESET_LOCATIONS } from "./utils/userLocation";
 import { eventsOnDate } from "./utils/eventOccurrence";
+import useLongPress from "./hooks/useLongPress";
+import EventKindMenu from "./components/EventKindMenu";
 
 // ── JWT Decode helper (client-side expiry check) ──
 function decodeJwtPayload(token) {
@@ -1349,6 +1351,40 @@ function AppRoutes() {
     } catch (err) { console.error(err); }
   };
 
+  // Week view cards use the same long-press menu as the day view.
+  const weekPressRef = useRef(null);
+  const [weekKindMenu, setWeekKindMenu] = useState(null);
+  const { handlers: weekPressHandlers, wasLongPress: weekWasLongPress } = useLongPress(() => {
+    if (weekPressRef.current) setWeekKindMenu(weekPressRef.current);
+  });
+
+  // Long press → switch an event between a regular event and a task (done circle + ping).
+  const handleToggleTask = async (day, index, isTask) => {
+    saveScheduleState();
+    setSchedule(prev => {
+      const u = { ...prev };
+      if (u[day] && u[day][index]) {
+        u[day] = u[day].map((ev, i) => {
+          if (i !== index) return ev;
+          const next = { ...ev, isTask };
+          if (!isTask) delete next.isTask;
+          else next.isReminder = false;
+          return next;
+        });
+      }
+      return u;
+    });
+    try {
+      await fetch(`${API_BASE}/api/schedule/event`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ day, index, updates: { isTask } }),
+        credentials: "include"
+      });
+      notifyTasksChanged();
+    } catch (err) { console.error(err); }
+  };
+
   const handleOpenReschedule = () => {
     setIsRescheduleOpen(true);
     setReschedulePreview(null);
@@ -2324,6 +2360,7 @@ function AppRoutes() {
                 lang={lang}
                 t={t}
                 onEditEvent={handleOpenEditModal}
+                onToggleTask={handleToggleTask}
                 onRemoveEvent={handleRemoveEvent}
                 onSlotClick={handleSlotClick}
                 locationFilter={locationFilter}
@@ -2353,7 +2390,10 @@ function AppRoutes() {
                   return (
                 <div key={index}
                   className={`group relative p-3.5 rounded-2xl border-r-[3px] bg-white shadow-sm flex flex-col gap-1 hover:shadow-md transition cursor-pointer ${getEventAccent(event)}`}
-                  onClick={() => actualIndex >= 0 && handleOpenEditModal(dayKey, actualIndex)}>
+                  onClick={() => { if (weekWasLongPress()) return; if (actualIndex >= 0) handleOpenEditModal(dayKey, actualIndex); }}
+                  {...weekPressHandlers}
+                  onPointerDown={e => { weekPressRef.current = actualIndex >= 0 ? { event, day: dayKey, index: actualIndex } : null; weekPressHandlers.onPointerDown(e); }}
+                  style={{ WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none' }}>
                   <button onClick={e => { e.stopPropagation(); if (actualIndex >= 0) handleRemoveEvent(dayKey, actualIndex); }}
                     className="absolute -top-1.5 -left-1.5 opacity-0 group-hover:opacity-100 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center transition shadow-sm z-10">
                     <Trash2 className="w-3 h-3" />
@@ -2392,6 +2432,15 @@ function AppRoutes() {
                 </div>
                   );
                 }}
+              />
+            )}
+
+            {weekKindMenu && (
+              <EventKindMenu
+                event={weekKindMenu.event}
+                t={t}
+                onClose={() => setWeekKindMenu(null)}
+                onPick={isTask => { const m = weekKindMenu; setWeekKindMenu(null); handleToggleTask(m.day, m.index, isTask); }}
               />
             )}
 
