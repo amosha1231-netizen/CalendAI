@@ -5416,3 +5416,86 @@ of open item 1 and wasn't true as of round 78.
    harden in this branch's own code.
 3. Should a provider booking's synced Google Calendar event description
    include the guest's phone number/notes (currently name only)?
+
+---
+
+## Round 80 (scheduled run, 2026-11-19)
+
+Fresh clone, `npm install` in both `frontend/` and `backend/`. Baseline
+re-verified: `npm run build` (frontend) clean. `node --test` (backend):
+317 tests, 301 pass, 16 fail — failing test names checked individually
+by name and are identical to the documented `mongodb-memory-server`-
+blocked set (credit-deduction races x4, mutual-session-claim/cancel
+races x6, provider-booking-claim races x3, owner-refill tests x3); not
+a regression. (One earlier run this session showed a transient 17th
+failure/298 pass; re-ran clean at 301/16 — consistent with the known
+`accountRoutes.test.js` IPC-reporter flake documented in AGENTS.md, not
+pursued further since the clean re-run matches baseline exactly.) Items
+1-5 re-verified directly in source: `setInputText("")` still fires in
+`handleParse` (`frontend/src/App.jsx:1138`) before the request; `multer`
++ `POST /api/parse-image` (`backend/server.js:37,43,2511`) +
+`parseImageWithVision` (`backend/services/aiService.js:1032`) backend
+route, and the frontend upload button's `handleParseImage` wired to
+`${API_BASE}/api/parse-image` (`frontend/src/App.jsx:1051,1067`), all
+still present and correct. Still `[x]`.
+
+**Round 79's predicted conflict has now materialized — escalating.**
+`git fetch origin master`: head moved from `c1d1069` to `251514b`;
+`git rev-list --left-right --count origin/master...HEAD` is now
+`51 74` (51 behind, up from 46). PR #56 ("Meet a friend: group
+meetings...") — flagged last round as directly rewriting
+`MutualScheduler.jsx` for a different group-booking feature — has
+**merged** into master (`a49203b`, folded in via merge commit
+`251514b`), along with #55 (one-off-occurrence fix, no scope overlap)
+and a new #57 (app-icon swap, no scope overlap). Ran
+`git merge-tree --write-tree HEAD origin/master` (read-only, no working
+tree touched) to check whether this is a real conflict rather than an
+auto-mergeable overlap: it reports actual `CONFLICT (content)` in both
+`backend/server.js` and `frontend/src/components/MutualScheduler.jsx`
+— confirming by direct test, not just file-overlap inference, that
+reconciling this branch now requires manually resolving a real content
+conflict in the same component two different "mutual scheduling"
+features have each changed. `routes/mutualRoutes.js`, `googleCalendar.js`,
+and `test/mutualRoutesValidation.test.js` auto-merge cleanly despite
+also showing as touched in the 3-way merge base, so the conflict is
+scoped to just those two files, not the whole feature set.
+`list_pull_requests` (open): only #30 (Sign in with Apple, unrelated) —
+no PR open against `wip/mutual-provider-booking`, no new PR touching
+scope files beyond #56, no response to any of the three open items
+below.
+
+Did not spin up another full file-by-file adversarial review of the
+ten scope files this round — `git log --oneline -1` on all ten confirms
+the newest touching commit is still `9fbde7b` from the rounds 56-63
+hardening series (unchanged for the seventeenth consecutive round), so
+there is no new code in this branch's own files to react to. The
+one actionable development this round is entirely about *master's*
+drift, not this branch's own hardening state.
+
+**Sending a push notification this round** — the conflict round 79
+flagged as a risk is now a confirmed, real content conflict (verified
+via `git merge-tree`, not inference), master has grown from 46 to 51
+commits ahead, and this is the first round where reconciling this
+branch provably requires manual conflict resolution rather than a
+clean rebase. This is new, decision-relevant information.
+
+**Open items, updated:**
+1. Merge/PR decision for `wip/mutual-provider-booking` (74 commits
+   ahead, 51 behind `origin/master`, no open PR for this branch) — PR
+   #56 has now merged into master and **does** produce a real content
+   conflict against this branch in `backend/server.js` and
+   `frontend/src/components/MutualScheduler.jsx` (confirmed via
+   `git merge-tree`, not just file-overlap inference). The other eight
+   scope files still auto-merge cleanly. Recommend a human now decide
+   (a) whether PR #56's "meet a friend" group scheduling and this
+   branch's 1:1 mutual-availability/provider booking are meant to
+   coexist in `MutualScheduler.jsx` or converge some other way, and
+   (b) direct a merge of `origin/master` into this branch (resolving
+   those two files) followed by a PR, since every week of delay adds
+   more commits to reconcile against.
+2. Whether to pause this scheduled task's hardening sweep on this
+   branch — eleven adversarial reviews (56-63) landed seven real fixes;
+   seventeen consecutive rounds since (64-80) have found nothing new to
+   harden in this branch's own code.
+3. Should a provider booking's synced Google Calendar event description
+   include the guest's phone number/notes (currently name only)?
