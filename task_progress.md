@@ -5613,3 +5613,63 @@ for full detail):**
    harden in this branch's own code.
 3. Should a provider booking's synced Google Calendar event description
    include the guest's phone number/notes (currently name only)?
+
+---
+
+## Round 83 (scheduled run, 2026-11-19)
+
+Fresh clone, `npm install` in both `frontend/` and `backend/`. Baseline
+re-verified: `npm run build` (frontend) clean. `node --test` (backend):
+317 tests, 301 pass, 16 fail — failures checked individually by name,
+identical to the documented `mongodb-memory-server`-blocked set (credit-
+deduction races x4, mutual-session-claim/cancel races x6, provider-
+booking-claim races x3, owner-refill tests x3); not a regression. Items
+1-5 unchanged, still `[x]`.
+
+Re-checked for drift: `git fetch origin master` moved from `251514b`
+(rounds 81-82) to `574a77e` — this is PR #58 ("Make a regular event the
+default; tasks only when asked, switch by long press") merging, which
+rounds 81-82 had already checked for scope overlap and found none;
+confirmed again directly against its commit (`16c3a67`): touches
+`backend/server.js`, `backend/services/aiService.js`,
+`backend/services/taskPings.js`, `backend/test/taskPings.test.js` only —
+no overlap with any of the ten mutual/provider scope files. `git log
+--oneline -1` on the ten scope files confirms the newest touching commit
+is still `9fbde7b` from the rounds 56-63 hardening series — twentieth
+consecutive round with nothing new in this branch's own code.
+`list_pull_requests` (open): only #30 (Sign in with Apple, unrelated) —
+#58 is gone from the open list now that it merged. No PR targeting
+`wip/mutual-provider-booking` itself. `git merge-tree --write-tree HEAD
+origin/master` reconfirms the exact same two-file conflict shape
+(`backend/server.js`, `frontend/src/components/MutualScheduler.jsx`) as
+rounds 80-82 — unchanged by PR #58's merge. No response to any of the
+three open items below.
+
+Did not spin up another full file-by-file adversarial review this
+round — twenty rounds (64-83) with no change to this branch's own scope
+files makes a repeat pass pure busywork, not hardening. No code changes
+made this round beyond this file.
+
+**Not sending a push notification this round.** PR #58 merging into
+master is not new information for the open items: rounds 81-82 already
+checked it for scope overlap and found none, and the merge-tree conflict
+shape against this branch is byte-for-byte the same two files as before.
+Same open items, no PR opened, no response from the human. A notification
+here would be noise.
+
+**Open items, unchanged, still awaiting a human decision (see round 80
+for full detail):**
+1. Merge/PR decision for `wip/mutual-provider-booking` (77 commits
+   ahead, 53 behind `origin/master`, no open PR) — PR #56 ("meet a
+   friend" group scheduling) merged into master and produces a real,
+   confirmed content conflict against this branch in
+   `backend/server.js` and `frontend/src/components/MutualScheduler.jsx`.
+   Recommend a human decide (a) whether that feature and this branch's
+   1:1 mutual-availability/provider booking are meant to coexist or
+   converge, and (b) direct a merge/PR now before more commits accrue.
+2. Whether to pause this scheduled task's hardening sweep on this
+   branch — eleven adversarial reviews (56-63) landed seven real fixes;
+   twenty consecutive rounds since (64-83) have found nothing new to
+   harden in this branch's own code.
+3. Should a provider booking's synced Google Calendar event description
+   include the guest's phone number/notes (currently name only)?
