@@ -5673,3 +5673,39 @@ for full detail):**
    harden in this branch's own code.
 3. Should a provider booking's synced Google Calendar event description
    include the guest's phone number/notes (currently name only)?
+
+---
+
+## Round 84 (scheduled run, 2026-11-20)
+
+Fresh clone. Re-verified baseline: `npm run build` (frontend) clean.
+`node --test` (backend): 317 tests, 301 pass, 16 fail — same documented
+`mongodb-memory-server`-blocked set as every prior round (credit-
+deduction races x4, mutual-session-claim/cancel races x6, provider-
+booking-claim races x3, owner-refill tests x3); not a regression.
+
+This run's stored prompt lists five checklist items (handleParse input-
+clearing, image upload backend/frontend, build verify) as the primary
+scope — all five were already `[x]` long before this round (see top of
+this file); the prompt is stale relative to actual progress. Nothing
+left to do there.
+
+Drift check: `git fetch origin master` — still `574a77e`, same as round
+83. `git log --oneline -1` on the ten scope files: still `9fbde7b`,
+twenty-first consecutive round unchanged. `git merge-tree --write-tree
+HEAD origin/master` reconfirms the same two-file conflict
+(`backend/server.js`, `frontend/src/components/MutualScheduler.jsx`).
+No PR opened against this branch. No response to any of the three open
+items.
+
+**Sending a push notification this round.** Not because anything new
+happened, but because the opposite is the story: twenty-one straight
+rounds with zero new findings and zero human response to a real,
+confirmed merge conflict, on a scheduled task that has now run 84 times
+against a branch whose actual coding scope finished long ago. Flagging
+the loop itself, not new code.
+
+Open items are unchanged from round 80 (see above for full detail):
+1. Merge/PR decision for `wip/mutual-provider-booking`.
+2. Whether to keep running this scheduled hardening sweep at all.
+3. Phone number in provider-booking calendar event description?
