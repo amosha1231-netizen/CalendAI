@@ -5708,4 +5708,54 @@ the loop itself, not new code.
 Open items are unchanged from round 80 (see above for full detail):
 1. Merge/PR decision for `wip/mutual-provider-booking`.
 2. Whether to keep running this scheduled hardening sweep at all.
+
+---
+
+## Round 85 (scheduled run, 2026-11-20)
+
+Fresh clone. Re-verified baseline: `npm run build` (frontend) clean.
+`node --test` (backend): 317 tests, 301 pass, 16 fail — checked each
+failing test name individually, byte-for-byte the same documented
+`mongodb-memory-server`-blocked set as every prior round (credit-
+deduction races x4, mutual-session-claim/cancel races x6, provider-
+booking-claim races x3, owner-refill tests x3); not a regression.
+This run's stored prompt lists the same five checklist items as always
+(handleParse input-clearing, image upload backend/frontend, build
+verify) — all five were `[x]` long before this round; nothing left to
+do there.
+
+Drift check: `git fetch origin master` — still `574a77e`, same as
+rounds 83-84. `git log --oneline -1` on the ten scope files: still
+`9fbde7b`, twenty-second consecutive round unchanged. `git merge-tree
+--write-tree HEAD origin/master` reconfirms the same two-file conflict
+(`backend/server.js`, `frontend/src/components/MutualScheduler.jsx`).
+One new open PR since round 84: #59 ("Fall back to another AI model on
+429, advance task circles instantly"), targets `master`, not this
+branch; read its full file list
+(`backend/services/aiService.js`, `backend/services/modelPricing.js`,
+`backend/services/taskPings.js`, `backend/test/aiFallback.test.js`,
+`backend/test/taskPings.test.js`, `frontend/src/components/TasksToday.jsx`)
+— zero overlap with any of the ten mutual/provider scope files. No PR
+targeting `wip/mutual-provider-booking` itself (checked via
+`head=wip/mutual-provider-booking`: empty). No response to any of the
+three open items.
+
+Did not spin up another full file-by-file adversarial review — twenty-
+two rounds (64-85) with no change to this branch's own scope files
+makes a repeat pass pure busywork. No code changes made this round
+beyond this file.
+
+**Not sending a push notification this round.** Round 84 (earlier
+today) already escalated the exact same "stuck in a loop" finding —
+twenty-one rounds of nothing, no response — and nothing has changed
+since: same master head, same scope-file commit, same absent PR, the
+one new PR has no scope overlap, and there's been no time for a human
+response between round 84 and this run. Repeating that notification
+now would just be noise on top of the one already sent.
+
+Open items, unchanged (see round 80 for full detail):
+1. Merge/PR decision for `wip/mutual-provider-booking`.
+2. Whether to keep running this scheduled hardening sweep at all.
+3. Should a provider booking's synced Google Calendar event description
+   include the guest's phone number/notes (currently name only)?
 3. Phone number in provider-booking calendar event description?
