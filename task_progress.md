@@ -6301,3 +6301,55 @@ Open items, unchanged (see round 80 for full detail):
    thirty-three rounds since the last new finding (round 63).
 3. Should a provider booking's synced Google Calendar event description
    include the guest's phone number/notes (currently name only)?
+
+---
+
+## Round 97: re-verify baseline, no drift (34th consecutive round unchanged)
+
+Fresh clone this run (no `node_modules` in either `frontend/` or
+`backend/`) — ran `npm install` in both before verifying, as expected
+per "each run starts from a fresh clone."
+
+task_progress.md items 1-5 (handleParse input-clearing, image upload
+backend/frontend, build verify) — all still `[x]`; nothing left to do
+there.
+
+Verification this round:
+- `frontend`: `npm run build` — clean, `vite build` succeeds (same
+  large-chunk warning as every prior round, not a regression).
+- `backend`: `node --test` — 301/317 pass. All 16 failures are in
+  files that import `MongoMemoryReplSet`/`MongoMemoryServer`
+  (`accountRoutes`, `criticalPaths`, `googleCalendar`,
+  `mutualAvailability`, `mutualBooking`, `mutualProviderModels`,
+  `mutualRoutesValidation`, `ownerCredits`, `providerGoogleAvailability`,
+  `providerProfile`, `providerRoutesValidation`, `providerSearch`,
+  `rateLimiting`, `scheduleCache`) — the documented sandbox network gap
+  (fastdl.mongodb.org blocked), not a code regression.
+- `node --check` on all test files touching replica-set Mongo — syntax
+  clean.
+
+Drift check: `git fetch origin master` — still `574a77e`, same as
+rounds 83-96. Scope-file commit on this branch — still `9fbde7b`,
+unchanged. Open PRs (`list_pull_requests`, state=open): still only #59
+and #30, neither targeting this branch. Open issues: none. No response
+to any of the three open items from round 80.
+
+Did not spin up another full file-by-file adversarial review —
+thirty-four rounds (64-97) with no change to this branch's own scope
+files makes a repeat pass pure busywork. No code changes made this
+round beyond this file.
+
+**Not sending a push notification this round.** Same reasoning as
+rounds 85-96: round 84 already escalated the "stuck in a loop, needs a
+merge/PR decision" finding; nothing has changed since that a human
+hasn't already been told.
+
+Open items, unchanged (see round 80 for full detail):
+1. Merge/PR decision for `wip/mutual-provider-booking` (real confirmed
+   conflict with PR #56/master in `backend/server.js` and
+   `frontend/src/components/MutualScheduler.jsx`; precedent exists —
+   this branch was merged once before via PR #28, 2026-10-31).
+2. Whether to keep running this scheduled hardening sweep at all —
+   thirty-four rounds since the last new finding (round 63).
+3. Should a provider booking's synced Google Calendar event description
+   include the guest's phone number/notes (currently name only)?
