@@ -1,6 +1,8 @@
 // Shapes AI-parsed events for the schedule, and validates the events a client
 // confirms from the chatbot's preview card (see /api/parse-schedule/confirm).
 
+const { nextDateForDay } = require('./scheduleOccurrence');
+
 const PARSE_DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const PARSE_RECURRENCES = ['once', 'daily', 'weekly', 'monthly', 'yearly', 'forever'];
 const MAX_CONFIRMED_EVENTS = 20;
@@ -9,7 +11,7 @@ const MAX_CONFIRMED_EVENTS = 20;
  * Turn one AI-parsed event into the shape stored in the schedule: resolves
  * "Today", the recurrence default, event type, duration and endTime.
  */
-function prepareParsedEvent(event, { todayName, recurrence, locationId, eventType, duration }) {
+function prepareParsedEvent(event, { todayName, todayIso, recurrence, locationId, eventType, duration }) {
   let day = event.day || todayName;
   if (day === 'Today') {
     day = todayName;
@@ -59,6 +61,13 @@ function prepareParsedEvent(event, { todayName, recurrence, locationId, eventTyp
       const eDisplayH = eh > 12 ? eh - 12 : (eh === 0 ? 12 : eh);
       eventWithRecurrence.endTime = `${String(eDisplayH).padStart(2, '0')}:${String(em).padStart(2, '0')} ${eAmpm}`;
     }
+  }
+
+  // A one-off saved without a date would otherwise show on the next matching
+  // weekday forever (every week), so pin it to the date it was meant for.
+  if (eventRecurrence === 'once' && !eventWithRecurrence.targetDate && todayIso) {
+    const targetDate = nextDateForDay(day, todayIso);
+    if (targetDate) eventWithRecurrence.targetDate = targetDate;
   }
 
   // A task is a calendar event with a done mark; its ping is added separately.

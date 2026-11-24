@@ -60,3 +60,21 @@ test('weekly events block every week; daily events block every day once', () => 
   const titles = getScheduleEventsForDate(schedule, '2026-11-03', TODAY).map(e => e.title).sort();
   assert.deepEqual(titles, ['Class', 'Gym']);
 });
+
+test('occurrenceDateOf: targetDate wins, else the next matching weekday', () => {
+  const { occurrenceDateOf, nextDateForDay } = require('../services/scheduleOccurrence');
+  assert.equal(nextDateForDay('Tuesday', TODAY), '2026-10-27');
+  assert.equal(nextDateForDay('Wednesday', TODAY), '2026-10-28');
+  assert.equal(nextDateForDay('Monday', TODAY), '2026-11-02');
+  assert.equal(nextDateForDay('Today', TODAY), null);
+  assert.equal(occurrenceDateOf({ day: 'Wednesday', targetDate: '2026-11-04' }, TODAY), '2026-11-04');
+  assert.equal(occurrenceDateOf({ day: 'Wednesday' }, TODAY), '2026-10-28');
+});
+
+test('a one-off from an earlier week no longer blocks this week', () => {
+  const schedule = { Wednesday: [
+    { title: 'Old study', day: 'Wednesday', startTime: '05:45 PM', endTime: '07:15 PM', recurrence: 'once', targetDate: '2026-10-21' },
+    { title: 'Weekly class', day: 'Wednesday', startTime: '07:15 PM', endTime: '08:00 PM', recurrence: 'weekly' }
+  ] };
+  assert.deepEqual(getScheduleEventsForDate(schedule, '2026-10-28', TODAY).map(e => e.title), ['Weekly class']);
+});
