@@ -34,6 +34,7 @@ import Reminders, { RemindersPinger, ReminderChip, remindersOnDate, consumeRemin
 
 // ── Lazy-loaded page chunks ──
 const LandingPage = lazy(() => import("./components/LandingPage"));
+import AppleSignInButton, { isAppleSignInAvailable } from "./components/AppleSignInButton";
 const AuthSuccess = lazy(() => import("./pages/AuthSuccess"));
 const GuestBookingView = lazy(() => import("./components/GuestBookingView"));
 const Booking = lazy(() => import("./components/Booking"));
@@ -1734,6 +1735,7 @@ function AppRoutes() {
             <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-200" /></div>
             <div className="relative flex justify-center text-xs"><span className="bg-white px-2 text-slate-400">{lang === 'he' ? 'או' : 'or'}</span></div>
           </div>
+          <AppleSignInButton lang={lang} className="!h-12 !rounded-xl mb-2 !text-sm !font-medium" />
           <button onClick={() => { setShowEmailAuth(false); handleLogin(lang); }}
             className="w-full px-4 py-3 bg-white border border-slate-300 text-slate-700 rounded-xl font-medium hover:bg-slate-50 transition shadow-sm flex items-center justify-center gap-2">
             <LogIn className="w-4 h-4" /> {t.loginWithGoogle}
@@ -2064,7 +2066,7 @@ function AppRoutes() {
             </button>
             {/* Auth — signed-in users log out from the avatar menu */}
             {!user && (
-              <button onClick={() => handleLogin(lang)} className="flex items-center gap-1 h-[42px] text-xs font-bold px-3 rounded-[14px] bg-aurora text-white shadow-glow transition">
+              <button onClick={() => (isAppleSignInAvailable() ? setShowLoginPrompt(true) : handleLogin(lang))} className="flex items-center gap-1 h-[42px] text-xs font-bold px-3 rounded-[14px] bg-aurora text-white shadow-glow transition">
                 <LogIn className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline">{t.loginWithGoogle}</span>
               </button>
@@ -2845,6 +2847,7 @@ function AppRoutes() {
             </div>
             <h3 className="text-lg font-bold text-slate-800 mb-2">{t.loginToSave}</h3>
             <p className="text-sm text-slate-500 mb-6">{t.loginToSaveDesc}</p>
+            <AppleSignInButton lang={lang} className="!h-12 !rounded-xl mb-2 !text-sm !font-medium" />
             <button onClick={() => handleLogin(lang)} className="w-full px-4 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition shadow-lg">{t.loginWithGoogle}</button>
             <button onClick={() => setShowLoginPrompt(false)} className="w-full mt-3 text-sm text-slate-400 hover:text-slate-600 py-2 transition">{t.cancel}</button>
           </div>
@@ -2895,6 +2898,7 @@ function AppRoutes() {
             </div>
             <h3 className="text-lg font-bold text-slate-800 mb-2">{t.guestLimitTitle}</h3>
             <p className="text-sm text-slate-500 mb-6">{t.guestLimitDesc}</p>
+            <AppleSignInButton lang={lang} className="!h-12 !rounded-xl mb-2 !text-sm !font-medium" />
             <button onClick={() => handleLogin(lang)} className="w-full px-4 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition shadow-lg flex items-center justify-center gap-2"><LogIn className="w-4 h-4" /> {t.loginWithGoogle}</button>
             <button onClick={() => { setShowGuestLimitModal(false); setShowEmailAuth(true); setAuthMode('login'); }}
               className="w-full mt-2 px-4 py-3 bg-white border border-slate-300 text-slate-700 rounded-xl font-medium hover:bg-slate-50 transition shadow-sm flex items-center justify-center gap-2"><Mail className="w-4 h-4" /> {lang === 'he' ? 'התחבר עם אימייל' : 'Login with Email'}</button>

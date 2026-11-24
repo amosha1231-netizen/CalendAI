@@ -1451,6 +1451,48 @@ app.get('/api/auth/microsoft/callback', async (req, res) => {
 
 // The home-screen web app collects a login that finished in iOS's in-app browser.
 // 204 = not there (yet); the app keeps asking for a few minutes.
+// ──────────────────────────────────────────────
+// Sign in with Apple (iOS app). See services/appleAuth.js.
+// ──────────────────────────────────────────────
+const appleAuth = require('./services/appleAuth');
+
+/**
+ * POST /api/auth/apple/native
+ * Body: { identityToken, nonce, authorizationCode?, givenName?, familyName? }
+ * Returns { oauthCode }: the same one-time code the Google / Microsoft
+ * callbacks hand out, so the app finishes sign-in through /?oauth_code=...
+ */
+app.post('/api/auth/apple/native', authLimiter, async (req, res) => {
+  const { identityToken, nonce, authorizationCode, givenName, familyName } = req.body || {};
+  if (typeof nonce !== 'string' || nonce.length < 16 || nonce.length > 128) {
+    return res.status(400).json({ error: 'apple_auth_failed' });
+  }
+  let identity;
+  try {
+    identity = await appleAuth.verifyAppleIdentityToken(identityToken, { nonce });
+  } catch (e) {
+    console.warn('Apple sign-in refused:', e.message);
+    return res.status(401).json({ error: 'apple_auth_failed' });
+  }
+  try {
+    const result = await appleAuth.findOrCreateAppleUser(User, identity, { givenName, familyName });
+    if (result.error) return res.status(409).json({ error: result.error });
+    const user = result.user;
+    if (authorizationCode && !user.appleRefreshToken) {
+      const refreshToken = await appleAuth.exchangeAppleCode(authorizationCode);
+      if (refreshToken) {
+        user.appleRefreshToken = refreshToken;
+        await user.save();
+      }
+    }
+    const oauthCode = await createOAuthHandoff(user._id);
+    return res.json({ oauthCode });
+  } catch (err) {
+    console.error('Apple sign-in error:', err);
+    return res.status(500).json({ error: 'apple_auth_failed' });
+  }
+});
+
 app.post('/api/auth/oauth-poll', async (req, res) => {
   const secret = String(req.body?.secret || '');
   try {

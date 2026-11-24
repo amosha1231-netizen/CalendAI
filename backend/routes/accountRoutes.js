@@ -18,6 +18,7 @@ const Goal = require('../models/Goal');
 const Booking = require('../models/Booking');
 const MutualBooking = require('../models/MutualBooking');
 const ProviderBooking = require('../models/ProviderBooking');
+const { revokeAppleToken } = require('../services/appleAuth');
 
 // Same auth as the other route files: JWT bearer first, then the passport session.
 function getAuthenticatedUserId(req) {
@@ -61,7 +62,7 @@ router.delete('/', async (req, res) => {
 
   const id = new mongoose.Types.ObjectId(String(userId));
   try {
-    const user = await User.findById(id).select('_id googleRefreshToken googleAccessToken').lean();
+    const user = await User.findById(id).select('_id googleRefreshToken googleAccessToken appleRefreshToken').lean();
     if (!user) return res.status(404).json({ error: 'Account not found.' });
 
     // Best effort: revoke CalendAI's access to their Google Calendar. Never blocks the deletion.
@@ -78,6 +79,8 @@ router.delete('/', async (req, res) => {
         console.warn('Google token revoke failed (account still deleted):', e.message);
       }
     }
+    // Same for Sign in with Apple (Apple asks apps to revoke on deletion). Best effort.
+    if (user.appleRefreshToken) await revokeAppleToken(user.appleRefreshToken);
 
     await Promise.all([
       Event.deleteMany({ userId: id }),

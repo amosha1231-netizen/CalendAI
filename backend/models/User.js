@@ -18,6 +18,7 @@ const providerAvailabilitySchema = new mongoose.Schema({
 const userSchema = new mongoose.Schema({
   googleId: { type: String, sparse: true },
   microsoftId: { type: String, sparse: true },
+  appleId: { type: String, index: { unique: true, sparse: true } }, // Sign in with Apple stable user id (`sub`)
   email: { type: String, required: true, unique: true, lowercase: true },
   password: { type: String },
   displayName: { type: String },
@@ -26,6 +27,7 @@ const userSchema = new mongoose.Schema({
   googleRefreshToken: { type: String },
   microsoftAccessToken: { type: String },
   microsoftRefreshToken: { type: String },
+  appleRefreshToken: { type: String }, // only to revoke the Apple login on account deletion
   isPro: { type: Boolean, default: false }, // mirror of proExpiresAt > now; read through isProActive()
   proExpiresAt: { type: Date }, // Pro is active until this time (see services/subscriptions.js)
   proSource: { type: String }, // 'lemonsqueezy' | 'app_store' | 'play_store'

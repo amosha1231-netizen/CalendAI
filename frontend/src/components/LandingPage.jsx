@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { LogIn, Mail, Bot, Link2, Bell, BarChart3, Check, Mic, Sparkles, ShieldCheck } from "lucide-react";
 import { isShabbatNow } from "../utils/shabbatHelper";
 import ShabbatBanner from "./ShabbatBanner";
+import AppleSignInButton from "./AppleSignInButton";
 
 // Feature copy in i18n.js carries a leading emoji (kept for older call sites);
 // the dedicated icon chip below renders its own icon, so strip it here to avoid showing it twice.
@@ -169,6 +170,8 @@ export default function LandingPage({ t, lang, onLogin, onMicrosoftLogin, onTryG
 
             {/* Sign-in */}
             <div className="mt-7 flex flex-col gap-2.5 max-w-md mx-auto lg:mx-0">
+              {/* iPhone app only: Apple first, as Apple's review expects it at least as prominent. */}
+              <AppleSignInButton lang={lang} />
               <AuthButton onClick={onLogin}>
                 <svg className="w-5 h-5" viewBox="0 0 24 24" aria-hidden="true">
                   <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
