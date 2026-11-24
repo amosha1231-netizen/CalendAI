@@ -19,6 +19,15 @@ In Xcode: select the **App** target → Signing & Capabilities → choose your
 team. Bump **Version** / **Build** for every upload, then Product → Archive →
 Distribute App → App Store Connect.
 
+## Build in the cloud (no Mac needed)
+
+`.github/workflows/ios-testflight.yml` builds and uploads to TestFlight on a
+GitHub macOS runner: GitHub → Actions → **iOS to TestFlight** → Run workflow.
+It signs automatically with an App Store Connect API key (role Admin), stored
+as the repository secrets `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_P8` (the
+full text of the `.p8` file). The build number is the run number unless you
+type one; it must be higher than the last uploaded build.
+
 ## How it differs from the web app
 
 - **Sign-in**: Google refuses OAuth inside a web view, so Google and Microsoft
