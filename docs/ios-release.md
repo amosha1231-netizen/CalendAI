@@ -29,6 +29,13 @@ Distribute App → App Store Connect.
   needed: the redirect URI is still the backend's `/api/auth/google/callback`.
 - **CORS**: the backend always allows `capacitor://localhost` (iOS) and
   `https://localhost` (Android).
+- **Sign in with Apple**: required by guideline 4.8 because the app offers
+  Google / Microsoft sign-in. A small in-project plugin
+  (`App/AppleSignInPlugin.swift`, registered by `MainViewController`) shows
+  Apple's sheet and returns the identity token; `POST /api/auth/apple` verifies
+  it against Apple's keys (audience = bundle ID, override with
+  `APPLE_BUNDLE_IDS`). The entitlement lives in `App/App.entitlements`. The
+  button appears only in the iOS app.
 - **Purchases**: App Store guideline 3.1.1 requires Apple in-app purchase for
   digital goods. The app sells Pro through Apple IAP via RevenueCat and never
   shows or links to the web checkout. Setup: `docs/payments.md`.

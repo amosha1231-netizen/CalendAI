@@ -39,6 +39,7 @@ const { getRequestLocation, getRequestTimeZone, isValidTimeZone } = require('./s
 const { getScheduleEventsForDate, isZeroDurationEvent, occurrenceDateOf } = require('./services/scheduleOccurrence');
 const { detectContact } = require('./services/contactDetect');
 const { notifyUser } = require('./services/userNotify');
+const { verifyAppleIdentityToken, isAppleEmailVerified } = require('./services/appleAuth');
 const { normalizeGroupSize, openSlots, groupStatus, responderKey } = require('./services/groupBooking');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }); // 10MB max
 
@@ -1642,7 +1643,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
 
     // Check if user has a password (might be Google-only account)
     if (!user.password) {
-      return res.status(401).json({ error: 'This account uses Google login. Please sign in with Google.' });
+      return res.status(401).json({ error: user.appleId && !user.googleId ? 'This account uses Sign in with Apple.' : 'This account uses Google login. Please sign in with Google.' });
     }
 
     // Verify password
@@ -1675,6 +1676,79 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
   } catch (err) {
     console.error('Login error:', err);
     res.status(500).json({ error: 'Login failed.' });
+  }
+});
+
+/**
+ * POST /api/auth/apple
+ * Sign in with Apple from the iOS app. Body: { identityToken, givenName?, familyName? }.
+ * Apple sends the name only on the very first sign-in, so the app passes it along.
+ */
+app.post('/api/auth/apple', authLimiter, async (req, res) => {
+  let payload;
+  try {
+    payload = await verifyAppleIdentityToken(req.body?.identityToken);
+  } catch (err) {
+    console.warn('Apple sign-in token rejected:', err.message);
+    return res.status(401).json({ error: 'Apple sign-in failed. Please try again.', code: 'apple_token_invalid' });
+  }
+  try {
+    const appleId = payload.sub;
+    const email = String(payload.email || '').toLowerCase();
+    const nameParts = [req.body?.givenName, req.body?.familyName]
+      .map((s) => (typeof s === 'string' ? s.trim().slice(0, 60) : ''))
+      .filter(Boolean);
+    const fullName = nameParts.join(' ');
+
+    let user = await User.findOne({ appleId });
+    if (!user) {
+      if (!email) {
+        return res.status(400).json({ error: 'Apple did not share an email address.', code: 'apple_no_email' });
+      }
+      const existing = await User.findOne({ email });
+      if (existing) {
+        // Same rules as Google: only link when Apple has verified the address,
+        // and never hand a Microsoft-created account (unverified email) to it.
+        if (!isAppleEmailVerified(payload) || (existing.microsoftId && !existing.googleId)) {
+          return res.status(409).json({ error: 'This email is already registered. Sign in the way you signed up.', code: 'apple_email_in_use' });
+        }
+        existing.appleId = appleId;
+        if (existing.password) {
+          console.warn(`Apple login cleared the unverified password on account ${existing._id}`);
+          existing.password = undefined;
+        }
+        if (!existing.displayName && fullName) existing.displayName = fullName;
+        await existing.save();
+        user = existing;
+      } else {
+        user = await User.create({
+          appleId,
+          email,
+          displayName: fullName || email.split('@')[0],
+          photo: ''
+        });
+      }
+    }
+
+    const token = jwt.sign(
+      { id: user._id.toString(), email: user.email, displayName: user.displayName },
+      JWT_SECRET,
+      { expiresIn: '30d' }
+    );
+    res.json({
+      ok: true,
+      token,
+      user: {
+        id: user._id,
+        email: user.email,
+        displayName: user.displayName,
+        aiCredits: user.aiCredits,
+        isPro: isProActive(user)
+      }
+    });
+  } catch (err) {
+    console.error('Apple sign-in error:', err);
+    res.status(500).json({ error: 'Apple sign-in failed.' });
   }
 });
 

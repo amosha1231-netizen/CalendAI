@@ -49,6 +49,8 @@ import TermsPage from "./pages/Terms";
 import translations from "./i18n";
 import safeStorage from "./utils/safeStorage";
 import { isNativeApp, startOAuth } from './utils/nativeApp';
+import { isAppleSignInAvailable, signInWithApple } from './utils/appleSignIn';
+import AppleLogo from './components/AppleLogo';
 import { isIapAvailable } from './utils/inAppPurchase';
 import InAppCreditsSheet from './components/InAppCreditsSheet';
 import { openCheckout, readCheckoutResponse, consumePaymentSuccessParam, CREDITS_PURCHASED_EVENT, notifyCreditsPurchased } from './utils/lemonCheckout';
@@ -541,6 +543,8 @@ function AppRoutes() {
   const [authName, setAuthName] = useState('');
   const [emailAuthLoading, setEmailAuthLoading] = useState(false);
   const [authError, setAuthError] = useState('');
+  const [appleLoginBusy, setAppleLoginBusy] = useState(false);
+  const [appleLoginError, setAppleLoginError] = useState('');
 
 
   const [profileLocation, setProfileLocation] = useState(() => {
@@ -1661,6 +1665,39 @@ function AppRoutes() {
 
   if (showPrivacy) return <Privacy onBack={() => setShowPrivacy(false)} />;
 
+  // Finish a sign-in that returned { token, user } (email/password or Apple).
+  const completeTokenLogin = (data) => {
+    setJwtToken(data.token);
+    if (setUser) setUser(normalizeUserCredits(data.user));
+    if (setIsPro) setIsPro(data.user?.isPro === true || data.user?.isPro === 'true');
+    try {
+      safeStorage.setItem('calendai-isLoggedIn', 'true');
+      safeStorage.setItem('calendai-user', JSON.stringify(normalizeUserCredits(data.user)));
+    } catch (e) {}
+    setShowEmailAuth(false);
+    setShowLoginPrompt(false);
+    setShowGuestLimitModal(false);
+    setSuccess(lang === 'he' ? 'התחברת בהצלחה!' : 'Logged in successfully!');
+  };
+
+  const appleSignInEnabled = isAppleSignInAvailable();
+  const handleAppleLogin = async () => {
+    if (appleLoginBusy) return;
+    setAppleLoginBusy(true);
+    setAppleLoginError('');
+    try {
+      const data = await signInWithApple(API_BASE);
+      if (data) completeTokenLogin(data);
+    } catch (err) {
+      console.warn('[Apple] sign-in failed:', err);
+      setAppleLoginError(err?.code === 'apple_email_in_use'
+        ? (lang === 'he' ? 'המייל הזה כבר רשום. התחברו בדרך שבה נרשמתם.' : 'This email is already registered. Sign in the way you signed up.')
+        : (lang === 'he' ? 'ההתחברות עם Apple נכשלה. נסו שוב.' : 'Sign in with Apple failed. Please try again.'));
+    } finally {
+      setAppleLoginBusy(false);
+    }
+  };
+
   const emailAuthModal = showEmailAuth && (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-[9999]" onClick={() => setShowEmailAuth(false)}>
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
@@ -1703,18 +1740,10 @@ function AppRoutes() {
               });
               const data = await res.json();
               if (!res.ok) throw new Error(data.error || 'Authentication failed');
-              setJwtToken(data.token);
-              if (setUser) setUser(normalizeUserCredits(data.user));
-              if (setIsPro) setIsPro(data.user?.isPro === true || data.user?.isPro === 'true');
-              safeStorage.setItem('calendai-isLoggedIn', 'true');
-              safeStorage.setItem('calendai-user', JSON.stringify(normalizeUserCredits(data.user)));
-              setShowEmailAuth(false);
-              setShowLoginPrompt(false);
-              setShowGuestLimitModal(false);
+              completeTokenLogin(data);
               setAuthEmail('');
               setAuthPassword('');
               setAuthName('');
-              setSuccess(lang === 'he' ? 'התחברת בהצלחה!' : 'Logged in successfully!');
             } catch (err) {
               setAuthError(err.message);
             } finally {
@@ -1734,6 +1763,12 @@ function AppRoutes() {
             <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-200" /></div>
             <div className="relative flex justify-center text-xs"><span className="bg-white px-2 text-slate-400">{lang === 'he' ? 'או' : 'or'}</span></div>
           </div>
+          {appleSignInEnabled && (
+            <button onClick={handleAppleLogin} disabled={appleLoginBusy}
+              className="w-full px-4 py-3 bg-black text-white rounded-xl font-medium hover:bg-neutral-800 transition shadow-sm flex items-center justify-center gap-2 disabled:opacity-60">
+              <AppleLogo className="w-4 h-4" /> {lang === 'he' ? 'התחברות עם Apple' : 'Sign in with Apple'}
+            </button>
+          )}
           <button onClick={() => { setShowEmailAuth(false); handleLogin(lang); }}
             className="w-full px-4 py-3 bg-white border border-slate-300 text-slate-700 rounded-xl font-medium hover:bg-slate-50 transition shadow-sm flex items-center justify-center gap-2">
             <LogIn className="w-4 h-4" /> {t.loginWithGoogle}
@@ -1751,6 +1786,9 @@ function AppRoutes() {
           lang={lang}
           onLogin={() => handleLogin(lang)}
           onMicrosoftLogin={handleMicrosoftLogin}
+          onAppleLogin={appleSignInEnabled ? handleAppleLogin : null}
+          appleLoginBusy={appleLoginBusy}
+          appleLoginError={appleLoginError}
           onTryGuest={handleTryGuest}
           onEmailLogin={() => { setShowEmailAuth(true); setAuthMode('login'); }}
           toggleLanguage={toggleLanguage}
