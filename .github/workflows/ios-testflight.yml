@@ -88,6 +88,44 @@ jobs:
           PY
           echo "ASC_KEY_PATH=$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8" >> "$GITHUB_ENV"
 
+      # Automatic signing makes Xcode fetch a development profile while
+      # archiving, and Apple refuses one while the team has no registered
+      # device ("Your team has no devices from which to generate a
+      # provisioning profile"). If the team has none, register one
+      # placeholder device through the API. It uses 1 of the 100 yearly
+      # device slots and can be disabled in Certificates, Identifiers &
+      # Profiles once a real iPhone is registered.
+      - name: Make sure the team has a registered device
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          python3 -m pip install --quiet --break-system-packages "pyjwt[crypto]" requests
+          python3 - <<'PY'
+          import os, time, jwt, requests
+          key = open(os.environ["ASC_KEY_PATH"]).read()
+          now = int(time.time())
+          token = jwt.encode(
+              {"iss": os.environ["ASC_ISSUER_ID"], "iat": now, "exp": now + 600, "aud": "appstoreconnect-v1"},
+              key, algorithm="ES256", headers={"kid": os.environ["ASC_KEY_ID"], "typ": "JWT"},
+          )
+          h = {"Authorization": f"Bearer {token}"}
+          api = "https://api.appstoreconnect.apple.com/v1/devices"
+          r = requests.get(api, params={"filter[platform]": "IOS", "filter[status]": "ENABLED", "limit": 1}, headers=h, timeout=60)
+          r.raise_for_status()
+          if r.json()["data"]:
+              print("Team already has a registered iOS device.")
+          else:
+              body = {"data": {"type": "devices", "attributes": {
+                  "name": "CI placeholder (GitHub Actions)", "platform": "IOS",
+                  "udid": "00008110-000C1A2B3C4D801E"}}}
+              r = requests.post(api, json=body, headers=h, timeout=60)
+              print("Register placeholder device:", r.status_code)
+              if r.status_code >= 300 and r.status_code != 409:
+                  print(r.text)
+                  raise SystemExit(1)
+          PY
+
       - name: Archive
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
