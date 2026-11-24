@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, Suspense, lazy } from 
 import { motion } from "framer-motion";
 import { BrowserRouter } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
-import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Share2, Download, Eye, ExternalLink, Copy, Mail, Mic, MicOff, Home, Zap, ChevronDown, ChevronUp, FileText, Layout, Trophy, Image, Upload, Search, CalendarPlus, BookOpen, Users, ListChecks, LayoutGrid, Link2, Briefcase, Settings, AlarmClock, Wallet, BarChart3, CheckSquare } from "lucide-react";
+import { Calendar, Send, Clock, AlertCircle, LogIn, LogOut, User, Trash2, CalendarDays, Sparkles, Loader2, AlertTriangle, Wand2, X, MapPin, Shield, Filter, Moon, Edit3, Check, ChevronLeft, ChevronRight, Sun, Bell, BellRing, CalendarCheck, RotateCcw, Share2, Download, Eye, EyeOff, ExternalLink, Copy, Mail, Mic, MicOff, Home, Zap, ChevronDown, ChevronUp, FileText, Layout, Trophy, Image, Upload, Search, CalendarPlus, BookOpen, Users, ListChecks, LayoutGrid, Link2, Briefcase, Settings, AlarmClock, Wallet, BarChart3, CheckSquare } from "lucide-react";
 import { staggerContainerVariants, staggerItemVariants } from "./hooks/useStaggeredAnimation";
 import GlobalSearch from "./components/GlobalSearch";
 import MonthlyCalendar from "./components/MonthlyCalendar";
@@ -540,6 +540,7 @@ function AppRoutes() {
   const [authMode, setAuthMode] = useState('login');
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
+  const [showAuthPassword, setShowAuthPassword] = useState(false);
   const [authName, setAuthName] = useState('');
   const [emailAuthLoading, setEmailAuthLoading] = useState(false);
   const [authError, setAuthError] = useState('');
@@ -1722,8 +1723,17 @@ function AppRoutes() {
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">{lang === 'he' ? 'סיסמה' : 'Password'}</label>
-            <input type="password" value={authPassword} onChange={e => setAuthPassword(e.target.value)}
-              className="w-full px-3 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="••••••" />
+            <div className="relative">
+              <input type={showAuthPassword ? 'text' : 'password'} value={authPassword} onChange={e => setAuthPassword(e.target.value)}
+                autoComplete={authMode === 'login' ? 'current-password' : 'new-password'}
+                className="w-full ps-3 pe-10 py-2 border rounded-lg text-sm text-slate-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="••••••" />
+              <button type="button" onClick={() => setShowAuthPassword(v => !v)}
+                aria-label={showAuthPassword ? (lang === 'he' ? 'הסתר סיסמה' : 'Hide password') : (lang === 'he' ? 'הצג סיסמה' : 'Show password')}
+                aria-pressed={showAuthPassword}
+                className="absolute inset-y-0 end-0 flex items-center px-3 text-slate-400 hover:text-slate-600">
+                {showAuthPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
           </div>
           <button onClick={async () => {
             setEmailAuthLoading(true);
