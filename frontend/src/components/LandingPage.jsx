@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { LogIn, Mail, Bot, Link2, Bell, BarChart3, Check, Mic, Sparkles, ShieldCheck } from "lucide-react";
 import { isShabbatNow } from "../utils/shabbatHelper";
 import ShabbatBanner from "./ShabbatBanner";
+import AppleLogo from "./AppleLogo";
 
 // Feature copy in i18n.js carries a leading emoji (kept for older call sites);
 // the dedicated icon chip below renders its own icon, so strip it here to avoid showing it twice.
@@ -26,6 +27,7 @@ const COPY = {
     title1: 'היומן שלך,',
     title2: 'חושב איתך.',
     subtitle: 'אמרו או כתבו מה צריך, ו-CalendAI ימצא זמן, יתאם פגישות ויעיר אתכם בדיוק בזמן.',
+    apple: 'המשך עם Apple',
     google: 'המשך עם Google',
     outlook: 'המשך עם Outlook',
     guest: 'או נסו בלי הרשמה',
@@ -44,6 +46,7 @@ const COPY = {
     title1: 'Your calendar,',
     title2: 'thinking with you.',
     subtitle: 'Say or type what you need. CalendAI finds the time, schedules meetings and wakes you up right on time.',
+    apple: 'Continue with Apple',
     google: 'Continue with Google',
     outlook: 'Continue with Outlook',
     guest: 'Or try it without signing up',
@@ -76,7 +79,7 @@ function authErrorMessage(code, lang) {
 }
 
 
-export default function LandingPage({ t, lang, onLogin, onMicrosoftLogin, onTryGuest, onEmailLogin, toggleLanguage }) {
+export default function LandingPage({ t, lang, onLogin, onMicrosoftLogin, onAppleLogin, appleLoginBusy, appleLoginError, onTryGuest, onEmailLogin, toggleLanguage }) {
   // ── Shabbat Guard ──
   const [shabbatActive, setShabbatActive] = useState(() => isShabbatNow());
 
@@ -169,6 +172,15 @@ export default function LandingPage({ t, lang, onLogin, onMicrosoftLogin, onTryG
 
             {/* Sign-in */}
             <div className="mt-7 flex flex-col gap-2.5 max-w-md mx-auto lg:mx-0">
+              {onAppleLogin && (
+                <AuthButton onClick={onAppleLogin} className="!bg-black !text-white !border-black hover:!bg-neutral-800">
+                  <AppleLogo className="w-5 h-5" />
+                  {appleLoginBusy ? '…' : c.apple}
+                </AuthButton>
+              )}
+              {onAppleLogin && appleLoginError && (
+                <p role="alert" className="text-sm text-rose-600 text-center">{appleLoginError}</p>
+              )}
               <AuthButton onClick={onLogin}>
                 <svg className="w-5 h-5" viewBox="0 0 24 24" aria-hidden="true">
                   <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
