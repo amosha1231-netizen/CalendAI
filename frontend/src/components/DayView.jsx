@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { formatClock, formatTimeString } from "../utils/timeFormat";
 import { 
   Clock, Moon, Bell, BellRing, MapPin, Edit3, Trash2, 
-  ChevronLeft, ChevronRight, Sun
+  ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Sun
 } from 'lucide-react';
 import { getTodayHebrewInfo } from '../utils/hebrewCalendar';
 import { ReminderChip } from './Reminders';
@@ -11,6 +11,7 @@ import { toDateKey, addDaysKey, taskKey, fetchTaskStatuses, saveTaskStatus, summ
 import { eventsOnDate } from '../utils/eventOccurrence';
 import useLongPress from '../hooks/useLongPress';
 import EventKindMenu from './EventKindMenu';
+import { layoutDay, formatDuration } from '../utils/timelineLayout';
 
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
 
@@ -115,18 +116,6 @@ export default function DayView({
     return -1;
   };
 
-  const getEventsForHour = (hour) => {
-    const startMin = hour * 60;
-    const endMin = startMin + 60;
-    return events.filter(ev => {
-      const evStart = timeToMinutes(ev.startTime);
-      const evEnd = timeToMinutes(ev.endTime);
-      if (evStart === -1) return false;
-      // Event overlaps with this hour
-      return evStart < endMin && (evEnd === -1 || evEnd > startMin);
-    });
-  };
-
   const events = getEventsForDay();
   const sortedEvents = [...events].sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
   // Only tasks get a done circle; a regular event is just a block in the schedule.
@@ -136,6 +125,111 @@ export default function DayView({
   const weekSummary = summarizeStatuses(statusItems);
 
   const formatHour = (hour) => formatClock(hour, 0, lang);
+
+  // Long events the user unfolded (tapped the arrow) on this screen.
+  const [expandedKeys, setExpandedKeys] = useState(() => new Set());
+  const eventKey = (ev) => `${ev._dayKey || dayKey}|${ev.title}|${ev.startTime}|${ev.endTime}`;
+  const toggleExpanded = (ev) => setExpandedKeys(prev => {
+    const next = new Set(prev);
+    const key = eventKey(ev);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
+  const timelineRows = layoutDay({
+    events: sortedEvents,
+    reminders,
+    hours: HOURS,
+    timeToMinutes,
+    reminderHour: r => parseInt(String(r.time), 10),
+    keyOf: eventKey,
+    expandedKeys,
+  });
+
+  const renderEventCard = (item, idx, nested = false) => {
+    const { event } = item;
+    const isLong = Boolean(item.isLong) && !nested;
+    const children = item.children || [];
+    const childReminders = item.childReminders || [];
+    const actualIndex = schedule[event._dayKey || dayKey]?.findIndex(e => e === event);
+    const accent = isLong
+      ? (event.isSleep ? 'bg-indigo-50 border-indigo-100 border-r-indigo-500' : 'bg-blue-50 border-blue-100 border-r-blue-500')
+      : 'bg-white border-slate-200 hover:border-blue-400';
+    return (
+      <div
+        key={idx}
+        className={`group relative ${nested ? 'p-2' : 'p-3'} rounded-xl border border-r-[3px] flex flex-col gap-1 hover:shadow-md transition cursor-pointer ${accent}`}
+        onClick={e => { e.stopPropagation(); if (wasLongPress()) return; if (actualIndex >= 0 && onEditEvent) onEditEvent(event._dayKey || dayKey, actualIndex); }}
+        {...pressHandlers}
+        onPointerDown={e => { e.stopPropagation(); pressedRef.current = actualIndex >= 0 ? { event, day: event._dayKey || dayKey, index: actualIndex } : null; pressHandlers.onPointerDown(e); }}
+        style={{ WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none' }}
+      >
+        {!nested && (
+          <button
+            onClick={e => { e.stopPropagation(); if (actualIndex >= 0) onRemoveEvent && onRemoveEvent(event._dayKey || dayKey, actualIndex); }}
+            aria-label={t.deleteEvent || (isRTL ? 'מחק אירוע' : 'Delete event')}
+            className="absolute -top-2 -end-2 md:opacity-0 md:group-hover:opacity-100 focus:opacity-100 bg-red-500 text-white rounded-full w-7 h-7 md:w-5 md:h-5 flex items-center justify-center transition shadow-sm z-10"
+          >
+            <Trash2 className="w-3 h-3" />
+          </button>
+        )}
+        <div className="font-semibold text-sm text-slate-800 flex items-center gap-1.5">
+          {event.isTask && <TaskStatusCircle status={statusFor(event)} onChange={s => handleStatusChange(event, s)} t={t} />}
+          {event.isSleep && <Moon className="w-3.5 h-3.5 text-indigo-500 shrink-0" />}
+          {event.reminderMinutesBefore > 0 && <Bell className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
+          <span className={`truncate ${event.isTask && statusFor(event) === 'done' ? 'line-through text-slate-400' : ''}`}>{event.title}</span>
+          {isLong ? (
+            <span className="ms-auto flex items-center gap-1 shrink-0">
+              <span className={`text-[11px] font-medium rounded-full px-2 py-0.5 ${event.isSleep ? 'bg-indigo-100 text-indigo-600' : 'bg-blue-100 text-blue-600'}`}>
+                {formatDuration(item.span.duration, lang)}
+              </span>
+              <button
+                onClick={e => { e.stopPropagation(); toggleExpanded(event); }}
+                onPointerDown={e => e.stopPropagation()}
+                aria-expanded={item.expanded}
+                aria-label={item.expanded ? (isRTL ? 'קפל את השעות' : 'Fold hours') : (isRTL ? 'פתח את השעות' : 'Show hours')}
+                className="p-1 -m-1 rounded-full text-slate-400 hover:text-slate-600 hover:bg-white/70"
+              >
+                {item.expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              </button>
+            </span>
+          ) : (
+            <Edit3 className="w-3 h-3 text-slate-300 md:opacity-0 md:group-hover:opacity-100 transition-opacity ms-auto shrink-0" />
+          )}
+        </div>
+        <div className="flex items-center gap-1 text-xs text-slate-500">
+          <Clock className="w-3 h-3 text-slate-400 shrink-0" />
+          <span dir="ltr">{formatTimeString(event.startTime, lang)} - {formatTimeString(event.endTime, lang)}</span>
+          {event.isSleep && <span className="text-[10px] text-indigo-500 mr-1">{t.sleepLabel}</span>}
+        </div>
+        {!nested && event.reminderMinutesBefore > 0 && (
+          <div className="flex items-center gap-1 text-[10px] text-amber-600">
+            <BellRing className="w-2.5 h-2.5" />
+            <span>{t.reminderColon} {event.reminderMinutesBefore} {t.reminderMinutes}</span>
+          </div>
+        )}
+        {!nested && event.isTask && (
+          <div className="flex items-center gap-1 text-[10px] text-emerald-700">
+            <BellRing className="w-2.5 h-2.5" />
+            <span>{(t.taskWithPing || 'Task · ping at {time}').replace('{time}', formatTimeString(event.startTime, lang))}</span>
+          </div>
+        )}
+        {!nested && event.location && !event.isTask && (
+          <div className="flex items-center gap-1 text-[10px] text-slate-400">
+            <MapPin className="w-2.5 h-2.5" />
+            <span>{LOCATION_LABELS?.[event.location] || event.location}</span>
+          </div>
+        )}
+        {(children.length > 0 || childReminders.length > 0) && (
+          <div className="mt-1 space-y-1">
+            {childReminders.map(r => (
+              <ReminderChip key={r.id} reminder={r} lang={lang} onClick={onOpenReminders} />
+            ))}
+            {children.map((child, i) => renderEventCard(child, i, true))}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   const monthNames = t.monthNames || ['January','February','March','April','May','June','July','August','September','October','November','December'];
   const dayNames = [t.daySunday, t.dayMonday, t.dayTuesday, t.dayWednesday, t.dayThursday, t.dayFriday, t.daySaturday];
@@ -201,12 +295,11 @@ export default function DayView({
         <div className="mb-3 text-xs text-rose-600 bg-rose-50 border border-rose-100 rounded-xl px-3 py-2">{statusError}</div>
       )}
 
-      {/* Hourly Timeline */}
+      {/* Hourly Timeline: each event once, in the hour it starts; a long
+          event is one row with its length, and the hours inside it fold. */}
       <div className="space-y-1">
-        {HOURS.map(hour => {
-          const hourEvents = getEventsForHour(hour);
-          const hourReminders = reminders.filter(r => parseInt(String(r.time), 10) === hour);
-          const hasEvents = hourEvents.length > 0 || hourReminders.length > 0;
+        {timelineRows.map(({ hour, items, reminders: hourReminders }) => {
+          const hasEvents = items.length > 0 || hourReminders.length > 0;
           return (
             <div
               key={hour}
@@ -225,57 +318,7 @@ export default function DayView({
                     {hourReminders.map(r => (
                       <ReminderChip key={r.id} reminder={r} lang={lang} onClick={onOpenReminders} />
                     ))}
-                    {hourEvents.map((event, idx) => {
-                      const actualIndex = schedule[event._dayKey || dayKey]?.findIndex(e => e === event);
-                      return (
-                        <div
-                          key={idx}
-                          className="group relative p-3 rounded-xl border-r-[3px] flex flex-col gap-1 hover:shadow-md transition cursor-pointer bg-white border-slate-200 hover:border-blue-400"
-                          onClick={() => { if (wasLongPress()) return; if (actualIndex >= 0 && onEditEvent) onEditEvent(event._dayKey || dayKey, actualIndex); }}
-                          {...pressHandlers}
-                          onPointerDown={e => { pressedRef.current = actualIndex >= 0 ? { event, day: event._dayKey || dayKey, index: actualIndex } : null; pressHandlers.onPointerDown(e); }}
-                          style={{ WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none' }}
-                        >
-                          <button
-                            onClick={e => { e.stopPropagation(); if (actualIndex >= 0) onRemoveEvent && onRemoveEvent(event._dayKey || dayKey, actualIndex); }}
-                            aria-label={t.deleteEvent || (isRTL ? 'מחק אירוע' : 'Delete event')}
-                            className="absolute -top-2 -end-2 md:opacity-0 md:group-hover:opacity-100 focus:opacity-100 bg-red-500 text-white rounded-full w-7 h-7 md:w-5 md:h-5 flex items-center justify-center transition shadow-sm z-10"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </button>
-                          <div className="font-semibold text-sm text-slate-800 flex items-center gap-1.5">
-                            {event.isTask && <TaskStatusCircle status={statusFor(event)} onChange={s => handleStatusChange(event, s)} t={t} />}
-                            {event.isSleep && <Moon className="w-3.5 h-3.5 text-indigo-500 shrink-0" />}
-                            {event.reminderMinutesBefore > 0 && <Bell className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
-                            <span className={`truncate ${event.isTask && statusFor(event) === 'done' ? 'line-through text-slate-400' : ''}`}>{event.title}</span>
-                            <Edit3 className="w-3 h-3 text-slate-300 md:opacity-0 md:group-hover:opacity-100 transition-opacity ms-auto shrink-0" />
-                          </div>
-                          <div className="flex items-center gap-1 text-xs text-slate-500">
-                            <Clock className="w-3 h-3 text-slate-400 shrink-0" />
-                            <span dir="ltr">{formatTimeString(event.startTime, lang)} - {formatTimeString(event.endTime, lang)}</span>
-                            {event.isSleep && <span className="text-[10px] text-indigo-500 mr-1">{t.sleepLabel}</span>}
-                          </div>
-                          {event.reminderMinutesBefore > 0 && (
-                            <div className="flex items-center gap-1 text-[10px] text-amber-600">
-                              <BellRing className="w-2.5 h-2.5" />
-                              <span>{t.reminderColon} {event.reminderMinutesBefore} {t.reminderMinutes}</span>
-                            </div>
-                          )}
-                          {event.isTask && (
-                            <div className="flex items-center gap-1 text-[10px] text-emerald-700">
-                              <BellRing className="w-2.5 h-2.5" />
-                              <span>{(t.taskWithPing || 'Task · ping at {time}').replace('{time}', formatTimeString(event.startTime, lang))}</span>
-                            </div>
-                          )}
-                          {event.location && !event.isTask && (
-                            <div className="flex items-center gap-1 text-[10px] text-slate-400">
-                              <MapPin className="w-2.5 h-2.5" />
-                              <span>{LOCATION_LABELS?.[event.location] || event.location}</span>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
+                    {items.map((item, idx) => renderEventCard(item, idx))}
                   </div>
                 ) : (
                   <div
