@@ -587,6 +587,7 @@ const { classifyRequest } = require('./services/semanticRouter');
 // ── Expected Expense suggestion detector (wedding, trip, etc.) ──
 const { detectExpenseSuggestion } = require('./services/expenseSuggestion');
 const { prepareParsedEvent, sanitizeConfirmedEvents } = require('./services/parsedEvents');
+const { placeUntimedEvents } = require('./services/autoPlace');
 
 // ── Public Goals & Challenges Routes ──
 const goalRoutes = require('./routes/goalRoutes');
@@ -2526,7 +2527,10 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
 
     // "משימה כל יום ראשון ב-11" must come back as a task (ping + done mark), even
     // when the AI answered with a plain event or a bare reminder.
-    const parsedEvents = applyTaskIntent(Array.isArray(parsedResult.events) ? parsedResult.events : [], text);
+    // Events said without a time go to a real free window (see services/autoPlace).
+    const parsedEvents = placeUntimedEvents(
+      applyTaskIntent(Array.isArray(parsedResult.events) ? parsedResult.events : [], text),
+      schedule, { todayName, todayIso: getTodayIso(), nowMinutes: getCurrentMinutes() });
     const { replyMessage } = parsedResult;
     const locationId = location || DEFAULT_LOCATION_ID;
 
@@ -2760,7 +2764,10 @@ async function runQuickAdd(userId, userData, text, source = 'quick-add') {
     });
   }
 
-  const { events: parsedEvents, replyMessage } = parsedResult;
+  const { replyMessage } = parsedResult;
+  const parsedEvents = Array.isArray(parsedResult.events)
+    ? placeUntimedEvents(parsedResult.events, schedule, { todayName, todayIso: getTodayIso(), nowMinutes: getCurrentMinutes() })
+    : parsedResult.events;
 
   if (!parsedEvents || parsedEvents.length === 0) {
     return reply(400, { success: false, error: 'Could not parse any events from the provided text.' });
