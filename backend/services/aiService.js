@@ -557,7 +557,7 @@ async function parseWithGemini(text, options = {}) {
     Fill in missing details using HUMAN JUDGMENT:
 
     - **Missing Day**: If no day is specified, default to "Today" (today's actual day name).
-    - **Missing Time**: If no time is specified, use the logical hours mapping above.
+    - **Missing Time**: If no time is specified, use the logical hours mapping above, and mark the event "timeSource": "none" (or "part-of-day" with "partOfDay"). When the user lists several events in order and one has no time, place it after the event said before it and before the event said after it, never overlapping them. The server double-checks these against the real calendar and may move them to a free slot.
     - **Missing Duration**: If no duration is given, assume 30 minutes (NOT 60 minutes).
     - **Rest Breaks**: If scheduling multiple events in sequence, leave 5-15 minute gaps between them.
     - **Conflicts**: If the user's request would create overlapping events, note this in "reasoning" and suggest alternatives in the replyMessage.
@@ -771,6 +771,8 @@ async function parseWithGemini(text, options = {}) {
           "day": "string – English day name (Sunday, Monday, etc.)",
           "startTime": "string – HH:MM 24-hour format (e.g., 14:30 or 18:00)",
           "endTime": "string – HH:MM 24-hour format (e.g., 15:30 or 19:00)",
+          "timeSource": "string – 'exact' if the user gave a time for THIS event (a clock time, 'בשבע', 'עוד שעה', or 'after X' / 'אחרי זה' chained to another event), 'part-of-day' if they only said a part of day ('בבוקר', 'בערב', 'in the afternoon'), 'none' if they gave no time at all for it",
+          "partOfDay": "string – only with timeSource 'part-of-day': 'morning', 'noon', 'afternoon', 'evening' or 'night'",
           "recurrence": "string – 'once', 'daily', 'weekly', 'monthly', 'yearly', or 'forever'. For sleep/bedtime events, use 'daily'.",
           "isRecurring": "boolean – true if this repeats weekly or daily",
           "isSleep": "boolean – true if this is a sleep/bedtime event",
@@ -1563,7 +1565,7 @@ async function parseWithGeminiSmart(text, options = {}) {
     Fill in missing details using HUMAN JUDGMENT:
 
     - **Missing Day**: If no day is specified, default to "Today" (today's actual day name).
-    - **Missing Time**: If no time is specified, use the logical hours mapping above.
+    - **Missing Time**: If no time is specified, use the logical hours mapping above, and mark the event "timeSource": "none" (or "part-of-day" with "partOfDay"). When the user lists several events in order and one has no time, place it after the event said before it and before the event said after it, never overlapping them. The server double-checks these against the real calendar and may move them to a free slot.
     - **Missing Duration**: If no duration is given, assume 30 minutes (NOT 60 minutes).
     - **Rest Breaks**: If scheduling multiple events in sequence, leave 5-15 minute gaps between them.
     - **Conflicts**: If the user's request would create overlapping events, note this in "reasoning" and suggest alternatives in the replyMessage.
@@ -1629,6 +1631,8 @@ async function parseWithGeminiSmart(text, options = {}) {
           "day": "string – English day name (Sunday, Monday, etc.)",
           "startTime": "string – HH:MM 24-hour format (e.g., 14:30 or 18:00)",
           "endTime": "string – HH:MM 24-hour format (e.g., 15:30 or 19:00)",
+          "timeSource": "string – 'exact' if the user gave a time for THIS event (a clock time, 'בשבע', 'עוד שעה', or 'after X' / 'אחרי זה' chained to another event), 'part-of-day' if they only said a part of day ('בבוקר', 'בערב', 'in the afternoon'), 'none' if they gave no time at all for it",
+          "partOfDay": "string – only with timeSource 'part-of-day': 'morning', 'noon', 'afternoon', 'evening' or 'night'",
           "recurrence": "string – 'once', 'daily', 'weekly', 'monthly', 'yearly', or 'forever'. For sleep/bedtime events, use 'daily'.",
           "isRecurring": "boolean – true if this repeats weekly or daily",
           "isSleep": "boolean – true if this is a sleep/bedtime event",

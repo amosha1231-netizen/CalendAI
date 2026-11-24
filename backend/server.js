@@ -36,7 +36,7 @@ const rateLimit = require('express-rate-limit');
 const crypto = require('crypto'); // For Lemon Squeezy webhook HMAC signature verification
 const multer = require('multer');
 const { getRequestLocation, getRequestTimeZone, isValidTimeZone } = require('./services/userLocation');
-const { getScheduleEventsForDate, isZeroDurationEvent } = require('./services/scheduleOccurrence');
+const { getScheduleEventsForDate, isZeroDurationEvent, occurrenceDateOf } = require('./services/scheduleOccurrence');
 const { detectContact } = require('./services/contactDetect');
 const { notifyUser } = require('./services/userNotify');
 const { normalizeGroupSize, openSlots, groupStatus, responderKey } = require('./services/groupBooking');
@@ -587,6 +587,7 @@ const { classifyRequest } = require('./services/semanticRouter');
 // ── Expected Expense suggestion detector (wedding, trip, etc.) ──
 const { detectExpenseSuggestion } = require('./services/expenseSuggestion');
 const { prepareParsedEvent, sanitizeConfirmedEvents } = require('./services/parsedEvents');
+const { placeUntimedEvents } = require('./services/autoPlace');
 
 // ── Public Goals & Challenges Routes ──
 const goalRoutes = require('./routes/goalRoutes');
@@ -1833,6 +1834,8 @@ function detectConflicts(newEvent, existingEvents, options = {}) {
   const dayStart = options.dayStart ? parseTimeToMinutes24(options.dayStart) : 6 * 60;
   const dayEnd = options.dayEnd ? parseTimeToMinutes24(options.dayEnd) : 23 * 60;
   if (newStart === null || newEnd === null) return { hasConflict: false, conflicts: [], suggestions: [] };
+  // A reminder (zero length) pings the user and takes no calendar time.
+  if (newStart === newEnd || isZeroDurationEvent(newEvent)) return { hasConflict: false, conflicts: [], suggestions: [] };
 
   // FUTURE-ONLY SUGGESTIONS (CRITICAL): For events scheduled TODAY, never suggest
   // free hours that start in the past — only suggest windows from the current time onward.
@@ -1953,6 +1956,41 @@ function detectConflicts(newEvent, existingEvents, options = {}) {
 function getTodayDayName() {
   const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   return dayNames[getUserNowParts().dayIndex];
+}
+
+/** Today's date (YYYY-MM-DD) in the requesting user's time zone. */
+function getTodayIso() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: getCurrentRequestTimeZone(), year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+}
+
+/**
+ * The events a new event can clash with: only those that really take time on
+ * the date it lands on (a one-off from another week, a monthly/yearly event
+ * on another date or a zero-length reminder does not), plus daily events.
+ */
+function conflictCandidatesFor(schedule, event, todayIso) {
+  const date = occurrenceDateOf(event, todayIso);
+  if (date) return getScheduleEventsForDate(schedule, date, todayIso);
+  return (schedule[event.day] || []).filter(e => !isZeroDurationEvent(e));
+}
+
+/**
+ * Busy slots for the AI prompt: what really takes time on each of the next
+ * 7 days, labelled with the weekday and date.
+ */
+function buildUpcomingBusySlots(schedule, todayIso = getTodayIso()) {
+  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const start = new Date(`${todayIso}T00:00:00Z`);
+  const slots = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(start.getTime() + i * 86400000);
+    const iso = d.toISOString().slice(0, 10);
+    for (const ev of getScheduleEventsForDate(schedule, iso, todayIso)) {
+      if (!ev.startTime || !ev.endTime) continue;
+      slots.push({ day: `${dayNames[d.getUTCDay()]} ${iso}`, startTime: ev.startTime, endTime: ev.endTime, title: ev.title || '' });
+    }
+  }
+  return slots;
 }
 
 function syncTodayWithCurrentDay(schedule) {
@@ -2254,17 +2292,19 @@ function locationDayOptions(locationId) {
 function buildParsePreview(parsedEvents, schedule, { remindersAsPings, ...prepareOptions }) {
   const workingSchedule = JSON.parse(JSON.stringify(schedule));
   const locationOptions = locationDayOptions(prepareOptions.locationId);
+  const todayIso = getTodayIso();
   const previewEvents = [];
   for (const event of parsedEvents) {
-    const prepared = prepareParsedEvent(event, prepareOptions);
+    const prepared = prepareParsedEvent(event, { ...prepareOptions, todayIso });
     if (isShabbat(prepared.day)) continue;
     // Reminders become pings, not calendar blocks, so they never clash.
     if (remindersAsPings && prepared.isReminder === true) {
       previewEvents.push({ ...prepared, conflicts: [] });
       continue;
     }
+    const candidates = conflictCandidatesFor(workingSchedule, prepared, todayIso);
+    const { conflicts } = detectConflicts(prepared, candidates, { ...locationOptions, day: prepared.day });
     const dayEvents = workingSchedule[prepared.day] || [];
-    const { conflicts } = detectConflicts(prepared, dayEvents, { ...locationOptions, day: prepared.day });
     dayEvents.push(prepared);
     workingSchedule[prepared.day] = dayEvents;
     previewEvents.push({ ...prepared, conflicts });
@@ -2304,9 +2344,10 @@ async function commitParsedEvents(req, userId, schedule, parsedEvents, { text, t
 
   const addedEvents = [];
   const conflictWarnings = [];
+  const todayIso = getTodayIso();
 
   for (const event of eventsToSchedule) {
-    const eventWithRecurrence = prepareParsedEvent(event, { todayName, recurrence, locationId, eventType, duration });
+    const eventWithRecurrence = prepareParsedEvent(event, { todayName, todayIso, recurrence, locationId, eventType, duration });
     const { day } = eventWithRecurrence;
 
     // ── HARD SHABBAT GUARD: Filter out any event scheduled on Saturday ──
@@ -2316,7 +2357,8 @@ async function commitParsedEvents(req, userId, schedule, parsedEvents, { text, t
     }
 
     if (schedule[day]) {
-      const { hasConflict, conflicts, suggestions } = detectConflicts(eventWithRecurrence, schedule[day], { ...locationOptions, day });
+      const candidates = conflictCandidatesFor(schedule, eventWithRecurrence, todayIso);
+      const { hasConflict, conflicts, suggestions } = detectConflicts(eventWithRecurrence, candidates, { ...locationOptions, day });
       if (hasConflict) {
         conflictWarnings.push({
           day: day,
@@ -2443,22 +2485,9 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
     const schedule = JSON.parse(JSON.stringify(getUserSchedule(userId)));
     const todayName = getTodayDayName();
 
-    // Build busy slots array from existing schedule for conflict-aware AI
-    const busySlots = [];
-    for (const [day, events] of Object.entries(schedule)) {
-      if (Array.isArray(events) && events.length > 0) {
-        for (const ev of events) {
-          if (ev.startTime && ev.endTime) {
-            busySlots.push({
-              day,
-              startTime: ev.startTime,
-              endTime: ev.endTime,
-              title: ev.title || ''
-            });
-          }
-        }
-      }
-    }
+    // Busy slots for conflict-aware AI: what really takes time in the next 7 days
+    // (not one-offs from past weeks or zero-length reminders).
+    const busySlots = buildUpcomingBusySlots(schedule);
 
     // ── SEMANTIC ROUTING: Classify the request as Fast Track or Smart Track ──
     const classification = classifyRequest(text);
@@ -2472,7 +2501,7 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
     } else {
       // SMART TRACK: User made a general request → inject busy slots into the AI
       // prompt with the 15-minute buffer instruction.
-      parsedResult = await parseWithGeminiSmart(text, { eventType, duration, busySlots, schedule });
+      parsedResult = await parseWithGeminiSmart(text, { eventType, duration, busySlots });
     }
     
     // Handle Shabbat block response from AI
@@ -2498,7 +2527,10 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
 
     // "משימה כל יום ראשון ב-11" must come back as a task (ping + done mark), even
     // when the AI answered with a plain event or a bare reminder.
-    const parsedEvents = applyTaskIntent(Array.isArray(parsedResult.events) ? parsedResult.events : [], text);
+    // Events said without a time go to a real free window (see services/autoPlace).
+    const parsedEvents = placeUntimedEvents(
+      applyTaskIntent(Array.isArray(parsedResult.events) ? parsedResult.events : [], text),
+      schedule, { todayName, todayIso: getTodayIso(), nowMinutes: getCurrentMinutes() });
     const { replyMessage } = parsedResult;
     const locationId = location || DEFAULT_LOCATION_ID;
 
@@ -2692,22 +2724,9 @@ async function runQuickAdd(userId, userData, text, source = 'quick-add') {
   const schedule = JSON.parse(JSON.stringify(getUserSchedule(effectiveUserId)));
   const todayName = getTodayDayName();
 
-  // Build busy slots array from existing schedule for conflict-aware AI
-  const busySlots = [];
-  for (const [day, events] of Object.entries(schedule)) {
-    if (Array.isArray(events) && events.length > 0) {
-      for (const ev of events) {
-        if (ev.startTime && ev.endTime) {
-          busySlots.push({
-            day,
-            startTime: ev.startTime,
-            endTime: ev.endTime,
-            title: ev.title || ''
-          });
-        }
-      }
-    }
-  }
+  // Busy slots for conflict-aware AI: what really takes time in the next 7 days
+  // (not one-offs from past weeks or zero-length reminders).
+  const busySlots = buildUpcomingBusySlots(schedule);
 
   // ── SEMANTIC ROUTING: Classify the request as Fast Track or Smart Track ──
   const classification = classifyRequest(text);
@@ -2719,7 +2738,7 @@ async function runQuickAdd(userId, userData, text, source = 'quick-add') {
     parsedResult = await parseWithGemini(text, { busySlots: [], schedule: {} });
   } else {
     // SMART TRACK: User made a general request → inject busy slots with 15-min buffer
-    parsedResult = await parseWithGeminiSmart(text, { busySlots, schedule });
+    parsedResult = await parseWithGeminiSmart(text, { busySlots });
   }
   
   // Handle Shabbat block response from AI
@@ -2745,7 +2764,10 @@ async function runQuickAdd(userId, userData, text, source = 'quick-add') {
     });
   }
 
-  const { events: parsedEvents, replyMessage } = parsedResult;
+  const { replyMessage } = parsedResult;
+  const parsedEvents = Array.isArray(parsedResult.events)
+    ? placeUntimedEvents(parsedResult.events, schedule, { todayName, todayIso: getTodayIso(), nowMinutes: getCurrentMinutes() })
+    : parsedResult.events;
 
   if (!parsedEvents || parsedEvents.length === 0) {
     return reply(400, { success: false, error: 'Could not parse any events from the provided text.' });

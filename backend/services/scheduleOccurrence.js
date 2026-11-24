@@ -92,4 +92,21 @@ function getScheduleEventsForDate(schedule, isoDate, todayIso) {
   return out;
 }
 
-module.exports = { isZeroDurationEvent, eventOccursOnDate, getScheduleEventsForDate, toIsoDay };
+/** The date (YYYY-MM-DD) of the next `dayName` on or after `todayIso`, or null. */
+function nextDateForDay(dayName, todayIso) {
+  const idx = DAY_NAMES.indexOf(dayName);
+  if (idx < 0 || !todayIso) return null;
+  const today = parseIsoDay(todayIso);
+  const diff = (idx - today.getUTCDay() + 7) % 7;
+  return new Date(today.getTime() + diff * 86400000).toISOString().slice(0, 10);
+}
+
+/**
+ * The calendar date an event lands on next: its targetDate when it has one,
+ * otherwise the next matching weekday (today included).
+ */
+function occurrenceDateOf(event, todayIso) {
+  return toIsoDay(event && event.targetDate) || nextDateForDay(event && event.day, todayIso);
+}
+
+module.exports = { isZeroDurationEvent, eventOccursOnDate, getScheduleEventsForDate, toIsoDay, nextDateForDay, occurrenceDateOf };
