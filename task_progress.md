@@ -6614,3 +6614,62 @@ Open items, unchanged (see round 100 for full detail):
    thirty-nine rounds since the last new finding (round 63).
 3. Should a provider booking's synced Google Calendar event description
    include the guest's phone number/notes (currently name only)?
+
+## Round 103: master moved for the first time in 6 days (two PRs merged); same conflict persists
+
+Fresh clone, so `npm install` in both `frontend/` and `backend/` first.
+`npm run build` (frontend) clean. `node --test "test/**/*.test.js"`
+(backend): 317 tests, 301 pass, 16 fail — confirmed by name to be
+byte-for-byte the same documented `mongodb-memory-server`-blocked set as
+every prior round (credit-deduction/webhook/booking-claim races: tests
+5-8; mutual-session-claim/cancel races: tests 87-92; provider-booking-claim
+races: tests 93-95; owner-refill tests: tests 152-154); not a regression.
+
+Drift check: `git fetch origin master` — **master moved** from `574a77e`
+(frozen since 2026-11-19, as reported in rounds 83-102) to `a74355d`,
+picking up two new merged PRs:
+- #60 "Fix false overlap warnings and place untimed events in free windows"
+- #61 "Show a long event as one folded row in the day timeline"
+
+Neither PR targets or touches this branch's scope files
+(`backend/models|routes|services` mutual/provider files,
+`frontend/src/components/MutualScheduler|ProviderBookingView|
+ProviderDirectory|ProviderProfileEditor.jsx`) directly, but
+`git merge-tree --write-tree HEAD origin/master` shows their changes to
+`frontend/src/App.jsx`, `backend/routes/mutualRoutes.js`,
+`backend/server.js`, `backend/services/googleCalendar.js`, and
+`backend/test/mutualRoutesValidation.test.js` auto-merge cleanly against
+this branch. The two files that have conflicted with master since round 80
+(`backend/server.js`, `frontend/src/components/MutualScheduler.jsx`) still
+conflict — same two files, conflict is unchanged in nature, just now
+against a newer master tip. Open PRs (`list_pull_requests`, state=open):
+still only #59 (AI fallback/task pings) and #30 (Sign in with Apple),
+neither targeting this branch. Open issues: none.
+
+Did not re-run the full file-by-file adversarial review of the
+mutual/provider feature itself — nothing changed in this branch's own
+scope files, and the master movement is orthogonal to that review's
+scope (task-parsing/timeline UI, not mutual/provider booking). No code
+changes this round beyond this file.
+
+**Sending a push notification this round.** This is the actual state
+change round 100's escalation was waiting on: master was frozen for six
+days and is now active again, which makes the merge/PR decision for
+`wip/mutual-provider-booking` time-sensitive again — every further
+unrelated master commit is more surface area for the conflict in
+`backend/server.js` / `MutualScheduler.jsx` to grow. Flagging now rather
+than waiting for round 104's re-check.
+
+Open items (see round 100 for full original detail; item 1 is now more
+urgent):
+1. Merge/PR decision for `wip/mutual-provider-booking` — conflict with
+   master in `backend/server.js` and
+   `frontend/src/components/MutualScheduler.jsx` persists against the new
+   master tip (`a74355d`); master is active again after 6 days frozen, so
+   delaying the merge call risks the conflict widening further.
+2. Whether to keep running this scheduled hardening sweep at all — no new
+   mutual/provider-feature finding since round 63 (40 rounds), though
+   this round's master-drift finding shows the sweep still earns its keep
+   as a watchdog even when the feature code itself is stable.
+3. Should a provider booking's synced Google Calendar event description
+   include the guest's phone number/notes (currently name only)?
