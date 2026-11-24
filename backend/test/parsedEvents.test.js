@@ -41,3 +41,12 @@ test('sanitizeConfirmedEvents rejects invalid lists', () => {
   assert.equal(sanitizeConfirmedEvents([{ ...base, startTime: 'soon' }]), null);
   assert.equal(sanitizeConfirmedEvents(Array(MAX_CONFIRMED_EVENTS + 1).fill(base)), null);
 });
+
+test('prepareParsedEvent pins a one-off without a date to its next occurrence', () => {
+  const wed = { title: 'x', day: 'Wednesday', startTime: '05:00 PM', endTime: '05:45 PM' };
+  // 2026-11-24 is a Tuesday.
+  assert.equal(prepareParsedEvent(wed, { todayName: 'Tuesday', todayIso: '2026-11-24' }).targetDate, '2026-11-25');
+  assert.equal(prepareParsedEvent({ ...wed, targetDate: '2026-12-02' }, { todayName: 'Tuesday', todayIso: '2026-11-24' }).targetDate, '2026-12-02');
+  assert.equal(prepareParsedEvent({ ...wed, recurrence: 'weekly' }, { todayName: 'Tuesday', todayIso: '2026-11-24' }).targetDate, undefined);
+  assert.equal(prepareParsedEvent(wed, { todayName: 'Tuesday' }).targetDate, undefined);
+});
