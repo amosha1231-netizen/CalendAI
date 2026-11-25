@@ -6673,3 +6673,73 @@ urgent):
    as a watchdog even when the feature code itself is stable.
 3. Should a provider booking's synced Google Calendar event description
    include the guest's phone number/notes (currently name only)?
+
+## Round 104: master moved again (4 more commits); conflict region in server.js itself grew
+
+Fresh clone, so `npm install` in both `frontend/` and `backend/` first.
+`npm run build` (frontend) clean. `node --test "test/**/*.test.js"`
+(backend): 317 tests, 301 pass, 16 fail — confirmed by name to be
+byte-for-byte the same documented `mongodb-memory-server`-blocked set as
+every prior round (credit-deduction/webhook/booking-claim races: tests
+5-8; mutual-session-claim/cancel races: tests 87-92;
+provider-booking-claim races: tests 93-95; owner-refill tests: 152-154);
+not a regression. `node --check` on the seven backend scope files: all OK.
+
+Drift check: `git fetch origin master` — **master moved again**, from
+`a74355d` (round 103) to `8cc26ef`, four more merged PRs:
+- #63 "Add Sign in with Apple to the iOS app" (+75/-1 lines in
+  `backend/server.js` directly)
+- #64 "Add a GitHub Actions workflow that builds the iOS app and uploads
+  it to TestFlight"
+- #65 "iOS TestFlight build: accept the API key however it was pasted"
+- #66 "iOS TestFlight build: register a device so automatic signing can
+  archive"
+
+None of the four touch this branch's own scope files. To check whether
+round 103's predicted risk ("every further unrelated master commit is
+more surface area for the conflict to grow") actually materialized, did
+a real `git merge --no-commit --no-ff origin/master` in a scratch
+worktree (aborted after inspecting, no commit made) instead of just
+`merge-tree`: still exactly the same two files conflict
+(`backend/server.js`, `frontend/src/components/MutualScheduler.jsx`), but
+`backend/server.js` now has **three** conflicting hunks (lines ~39-50,
+~2374-2388, ~3537-3563) where earlier rounds's `merge-tree` checks only
+ever reported the file-level conflict, not hunk count, so this is the
+first round with a direct hunk-level reading. The #63 Apple Sign-in
+addition sits inside one of those three hunks. This confirms the
+prediction: the conflict is not static, it is actively accreting new
+surface as master keeps moving, exactly in the file both branches keep
+editing. `MutualScheduler.jsx` conflict is unchanged (one hunk,
+lines 213-486). Open PRs (`list_pull_requests`, state=open): still only
+#59 (AI fallback/task pings) and #30 (Sign in with Apple) — neither
+targets this branch; #30 appears to predate/duplicate merged #63, not
+investigated further as it's out of this branch's scope. Open issues:
+none.
+
+Did not re-run the full file-by-file adversarial review of the
+mutual/provider feature itself — nothing changed in this branch's own
+scope files. No code changes this round beyond this file.
+
+**Not sending a push notification this round.** Round 103 already
+escalated "master is active again, conflict will keep growing" one round
+ago. This round's finding is a direct, concrete confirmation of that
+same prediction (three hunks now vs. the same two-file conflict already
+flagged), not a new fact changing the decision the human needs to make —
+the merge/PR call is already flagged as urgent. Re-notifying every round
+for the continued accrual of the same already-escalated problem would be
+noise; will stay quiet until either someone responds, the conflict
+spreads to a third file or something qualitatively new happens, or
+enough rounds pass with the same growing-but-unaddressed state to
+warrant another reminder (as round 100 did after 37 quiet rounds).
+
+Open items, unchanged in substance (see round 100 for full original
+detail; item 1's evidence is now more concrete):
+1. Merge/PR decision for `wip/mutual-provider-booking` — conflict with
+   master in `backend/server.js` (now 3 hunks, growing) and
+   `frontend/src/components/MutualScheduler.jsx` (1 hunk, unchanged)
+   persists against the new master tip (`8cc26ef`); every day without a
+   decision adds more conflicting surface in `server.js` specifically.
+2. Whether to keep running this scheduled hardening sweep at all — no new
+   mutual/provider-feature finding since round 63 (41 rounds).
+3. Should a provider booking's synced Google Calendar event description
+   include the guest's phone number/notes (currently name only)?
