@@ -128,3 +128,30 @@ test('"תזכיר לי" makes a task with a ping', () => {
   const [meeting] = applyTaskIntent([{ summary: 'פגישה עם דני', startTime: '17:00', reminderMinutesBefore: 15 }], 'פגישה עם דני ב-5, תזכיר לי רבע שעה לפני');
   assert.equal(meeting.isTask, undefined);
 });
+
+test('"תפילה מחר בשש בלי נדר" stays a regular event, even if the AI marked it', () => {
+  const text = 'תפילה מחר בשש בלי נדר';
+  assert.equal(wantsTask(text), false);
+  for (const aiEvent of [
+    { summary: 'תפילה', day: 'Friday', startTime: '06:00', endTime: '06:30' },
+    { summary: 'תפילה', day: 'Friday', startTime: '06:00', endTime: '06:30', isTask: true },
+    { summary: 'תפילה', day: 'Friday', startTime: '06:00', endTime: '06:10', isReminder: true }
+  ]) {
+    const [ev] = applyTaskIntent([aiEvent], text);
+    assert.ok(!ev.isTask, 'not a task');
+    assert.ok(!ev.isReminder, 'no ping');
+    assert.equal(ev.summary, 'תפילה');
+  }
+});
+
+test('"משימה תפילה מחר בשש" and "תזכיר לי תפילה מחר בשש" become tasks', () => {
+  for (const text of ['משימה תפילה מחר בשש', 'תזכיר לי תפילה מחר בשש']) {
+    const [ev] = applyTaskIntent([{ summary: 'תפילה', day: 'Friday', startTime: '06:00', endTime: '06:30' }], text);
+    assert.equal(ev.isTask, true);
+  }
+});
+
+test('an explicit "התראה" keeps a bare reminder the AI made', () => {
+  const [ev] = applyTaskIntent([{ summary: 'כדור', isReminder: true }], 'התראה מחר בשמונה לקחת כדור');
+  assert.equal(ev.isReminder, true);
+});
