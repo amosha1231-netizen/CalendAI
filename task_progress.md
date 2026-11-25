@@ -6743,3 +6743,41 @@ detail; item 1's evidence is now more concrete):
    mutual/provider-feature finding since round 63 (41 rounds).
 3. Should a provider booking's synced Google Calendar event description
    include the guest's phone number/notes (currently name only)?
+   include the guest's phone number/notes (currently name only)?
+
+## Round 105: re-verify baseline, no drift (42nd consecutive quiet round); master unchanged since round 104
+
+Fresh clone; `npm install` in both `frontend/` and `backend/`. `npm run
+build` (frontend) clean. `node --test "test/**/*.test.js"` (backend): 317
+tests, 301 pass, 16 fail — same documented `mongodb-memory-server`-blocked
+set as every prior round (by number: 5-8, 87-95, 152-154), not a
+regression. Items 1-5 unchanged (already `[x]`, predate/confirmed on this
+branch).
+
+Drift check: `git fetch origin master` — unchanged since round 104
+(`8cc26ef`). `list_pull_requests` (state=all, head=this branch): no open
+PR for `wip/mutual-provider-booking` (#17, #28 both closed already). Open
+PRs on the repo: #68 and #67 (new since round 104, both iOS/UI, no scope
+overlap), #59 and #30 (unchanged, no scope overlap). No response yet to
+round 100/103's escalation.
+
+**Not sending a push notification this round.** Nothing qualitatively new
+since round 103's escalation (delivered) and round 104's re-confirmation
+(silent by design) — same two-file/3-hunk conflict, same unanswered
+decision, one day elapsed. Re-notifying now would be exactly the noise
+round 104 declined to make.
+
+Open items unchanged (see round 104 for full detail):
+1. Merge/PR decision for `wip/mutual-provider-booking` — still pending,
+   still the only blocker. Recommend prioritizing this over further
+   sweep rounds.
+2. Whether to keep running this scheduled sweep at all — 42 rounds with
+   no new mutual/provider-feature finding (since round 63). This sweep's
+   only remaining value is as a master-drift watchdog for item 1; once
+   item 1 is resolved (merge or close this branch), there is nothing left
+   for daily rounds to find. Suggest pausing the schedule until the merge
+   decision is made, rather than continuing to spend a full
+   install+build+test cycle per day to re-confirm an already-escalated,
+   unchanged state.
+3. Should a provider booking's synced Google Calendar event description
+   include the guest's phone number/notes (currently name only)?
