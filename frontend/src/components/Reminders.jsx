@@ -501,7 +501,7 @@ export default function Reminders({ lang = 'he', user, onClose, onChanged, onReq
       transition={{ duration: 0.2 }}
       role="dialog" aria-modal="true" aria-label={s.title}
     >
-      <div className="flex items-center gap-2 px-3 bg-white border-b border-slate-200" style={{ paddingTop: 'max(0.5rem, env(safe-area-inset-top))', paddingBottom: '0.5rem' }}>
+      <div className="flex items-center gap-2 px-3 bg-white border-b border-slate-200" style={{ paddingTop: '0.5rem', paddingBottom: '0.5rem' }}>
         <button onClick={onClose} className="w-11 h-11 flex items-center justify-center rounded-full hover:bg-slate-100" aria-label={s.back}>
           {isRtl ? <ChevronRight className="w-6 h-6 text-slate-600" /> : <ChevronLeft className="w-6 h-6 text-slate-600" />}
         </button>

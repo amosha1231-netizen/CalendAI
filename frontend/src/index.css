@@ -1843,3 +1843,34 @@ input[type="date"].w-full {
   min-width: 0;
   display: block;
 }
+
+/* ──────────────────────────────────────────── */
+/* iPhone status bar (notch / Dynamic Island)   */
+/* ──────────────────────────────────────────── */
+/* The app draws edge to edge (viewport-fit=cover), so the page starts below
+   the clock and battery. env() is 0 on Android, desktop and plain browsers. */
+body {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+/* Full-screen layers (dialogs, sheets, tool screens): the backdrop still covers
+   the status bar, but their content starts below it. A transparent top border
+   shrinks the content box while the background keeps painting underneath. */
+.fixed.inset-0 {
+  border-top: env(safe-area-inset-top, 0px) solid transparent;
+}
+
+/* With the floating bar on screen, a dialog only has the space between the
+   status bar and the bar. A panel never grows past it; a long one scrolls
+   inside, so its Save / Cancel buttons are always reachable. */
+body.has-bottom-nav .fixed.inset-0.items-center > *,
+body.has-bottom-nav .fixed.inset-0.items-end > *,
+body.has-bottom-nav .fixed.inset-0.items-start > * {
+  max-height: 100%;
+}
+body.has-bottom-nav .fixed.inset-0.items-center > :not([class*="overflow-"]),
+body.has-bottom-nav .fixed.inset-0.items-end > :not([class*="overflow-"]),
+body.has-bottom-nav .fixed.inset-0.items-start > :not([class*="overflow-"]) {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}

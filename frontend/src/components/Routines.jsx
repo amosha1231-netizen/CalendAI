@@ -186,7 +186,7 @@ function Sheet({ children, onClose, isRtl, title, s, z = 'z-[70]' }) {
       transition={{ duration: 0.2 }}
       role="dialog" aria-modal="true" aria-label={title}
     >
-      <div className="flex items-center gap-2 px-3 bg-white border-b border-slate-200" style={{ paddingTop: 'max(0.5rem, env(safe-area-inset-top))', paddingBottom: '0.5rem' }}>
+      <div className="flex items-center gap-2 px-3 bg-white border-b border-slate-200" style={{ paddingTop: '0.5rem', paddingBottom: '0.5rem' }}>
         <button onClick={onClose} className="w-11 h-11 flex items-center justify-center rounded-full hover:bg-slate-100" aria-label={s.back}>
           {isRtl ? <ChevronRight className="w-6 h-6 text-slate-600" /> : <ChevronLeft className="w-6 h-6 text-slate-600" />}
         </button>
@@ -1150,7 +1150,7 @@ export default function Routines({ lang = 'he', user, onClose, initialTab = 'tod
 
   return (
     <div className="fixed inset-0 z-[60] bg-slate-50 flex flex-col" dir={isRtl ? 'rtl' : 'ltr'} role="dialog" aria-modal="true" aria-label={s.title}>
-      <div className="bg-white border-b border-slate-200" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
+      <div className="bg-white border-b border-slate-200">
         <div className="max-w-lg mx-auto flex items-center gap-2 px-3 py-2">
           <h2 className="flex-1 min-w-0 truncate text-lg font-bold text-slate-800">{s.title}</h2>
           <button onClick={onClose} className="w-11 h-11 flex items-center justify-center rounded-full hover:bg-slate-100" aria-label={s.close}>

@@ -162,6 +162,10 @@ export default function BottomNav({ tabs, activeId, onSelect, isRTL, screenOpen 
     {screenOpen && (
       <div aria-hidden="true" className="fixed inset-x-0 bottom-0 z-[9985] bg-slate-50 border-t border-slate-200/60" style={{ height: 'var(--bottom-nav-space)' }} />
     )}
+    {/* On the home page, fade the page out under the bar so nothing looks cut off below it */}
+    {!screenOpen && (
+      <div aria-hidden="true" className="fixed inset-x-0 bottom-0 z-[9985] pointer-events-none bg-gradient-to-t from-canvas via-canvas/95 to-canvas/0" style={{ height: 'var(--bottom-nav-space)' }} />
+    )}
     <nav
       className="bottom-nav fixed z-[9990] inset-x-3 mx-auto max-w-md"
       style={{ bottom: 'calc(0.75rem + env(safe-area-inset-bottom, 0px))' }}
