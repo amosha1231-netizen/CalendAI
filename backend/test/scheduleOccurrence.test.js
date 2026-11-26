@@ -78,3 +78,34 @@ test('a one-off from an earlier week no longer blocks this week', () => {
   ] };
   assert.deepEqual(getScheduleEventsForDate(schedule, '2026-10-28', TODAY).map(e => e.title), ['Weekly class']);
 });
+
+test('undated one-offs from before the fix get their own past date, not a weekly repeat', () => {
+  const { pinUndatedOneOffs, eventOccursOnDate } = require('../services/scheduleOccurrence');
+  // 2026-11-26 is a Thursday; the meeting with Noa was last Thursday.
+  const schedule = {
+    Thursday: [
+      { title: 'Noa', day: 'Thursday', startTime: '15:30', endTime: '16:00', recurrence: 'once' },
+      { title: 'Dated', day: 'Thursday', startTime: '16:00', endTime: '16:30', recurrence: 'once', targetDate: '2026-11-26' },
+      { title: 'Weekly', day: 'Thursday', startTime: '09:00', endTime: '09:30', recurrence: 'weekly' }
+    ],
+    Tuesday: [{ title: 'Work', day: 'Tuesday', startTime: '10:00', endTime: '17:00', recurrence: 'once' }],
+    Today: [{ title: 'Noa', day: 'Thursday', recurrence: 'once' }]
+  };
+  assert.equal(pinUndatedOneOffs(schedule, '2026-11-26'), 2);
+  assert.equal(schedule.Thursday[0].targetDate, '2026-11-19');
+  assert.equal(schedule.Thursday[1].targetDate, '2026-11-26');
+  assert.equal(schedule.Thursday[2].targetDate, undefined);
+  assert.equal(schedule.Tuesday[0].targetDate, '2026-11-24');
+  assert.equal(schedule.Today[0].targetDate, undefined, 'Today is rebuilt by the caller');
+  assert.equal(eventOccursOnDate(schedule.Thursday[0], '2026-11-26', '2026-11-26'), false);
+  assert.equal(eventOccursOnDate(schedule.Thursday[0], '2026-11-19', '2026-11-19'), true);
+  // Running it again changes nothing.
+  assert.equal(pinUndatedOneOffs(schedule, '2026-11-26'), 0);
+});
+
+test('before the cutoff, undated one-offs are pinned to their last date up to today', () => {
+  const { pinUndatedOneOffs } = require('../services/scheduleOccurrence');
+  const schedule = { Monday: [{ title: 'X', day: 'Monday', recurrence: 'once' }] };
+  pinUndatedOneOffs(schedule, '2026-11-20'); // a Friday
+  assert.equal(schedule.Monday[0].targetDate, '2026-11-16');
+});

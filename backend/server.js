@@ -36,7 +36,7 @@ const rateLimit = require('express-rate-limit');
 const crypto = require('crypto'); // For Lemon Squeezy webhook HMAC signature verification
 const multer = require('multer');
 const { getRequestLocation, getRequestTimeZone, isValidTimeZone } = require('./services/userLocation');
-const { getScheduleEventsForDate, isZeroDurationEvent, occurrenceDateOf } = require('./services/scheduleOccurrence');
+const { getScheduleEventsForDate, isZeroDurationEvent, occurrenceDateOf, nextDateForDay, pinUndatedOneOffs } = require('./services/scheduleOccurrence');
 const { detectContact } = require('./services/contactDetect');
 const { notifyUser } = require('./services/userNotify');
 const { verifyAppleIdentityToken, isAppleEmailVerified } = require('./services/appleAuth');
@@ -2261,6 +2261,11 @@ app.post('/api/schedule/add-to-free-slot', async (req, res) => {
       recurrence: recurrence || 'once',
       location: locationId
     };
+    // A one-off without a date would come back every week.
+    if (newEvent.recurrence === 'once') {
+      const targetDate = nextDateForDay(actualDay, getTodayIso());
+      if (targetDate) newEvent.targetDate = targetDate;
+    }
     
     if (schedule[actualDay]) {
       schedule[actualDay].push(newEvent);
@@ -2727,6 +2732,11 @@ app.post('/api/parse-image', aiLimiter, upload.single('image'), async (req, res)
         recurrence: eventRecurrence,
         location: DEFAULT_LOCATION_ID
       };
+      // A one-off without a date would come back every week.
+      if (eventRecurrence === 'once' && !eventWithRecurrence.targetDate) {
+        const targetDate = nextDateForDay(day, getTodayIso());
+        if (targetDate) eventWithRecurrence.targetDate = targetDate;
+      }
 
       if (schedule[day]) {
         schedule[day].push(eventWithRecurrence);
@@ -2878,6 +2888,11 @@ async function runQuickAdd(userId, userData, text, source = 'quick-add') {
       location: DEFAULT_LOCATION_ID,
       ...(eventRecurrence === 'yearly' && { createdMonth })
     };
+    // A one-off without a date would come back every week.
+    if (eventRecurrence === 'once' && !eventWithRecurrence.targetDate) {
+      const targetDate = nextDateForDay(day, getTodayIso());
+      if (targetDate) eventWithRecurrence.targetDate = targetDate;
+    }
 
     // Add to schedule
     if (schedule[day]) {
@@ -3857,10 +3872,24 @@ app.get('/api/schedule', async (req, res) => {
     try {
       const user = await User.findById(userId);
       if (user && user.schedule) {
+        const schedule = JSON.parse(JSON.stringify(user.schedule));
+        // Older one-off events saved without a date repeated every week; pin
+        // each to its date once and save, so every reader sees the fix.
+        const pinned = pinUndatedOneOffs(schedule, getTodayIso());
+        syncTodayWithCurrentDay(schedule);
+        if (pinned > 0) {
+          try {
+            await User.updateOne(
+              { _id: userId, scheduleRevision: user.scheduleRevision },
+              { $set: { schedule }, $inc: { scheduleRevision: 1 } }
+            );
+          } catch (saveErr) {
+            console.error('Failed to save dated one-off events:', saveErr.message);
+          }
+        }
         // Update the in-memory cache with MongoDB data
-        userSchedules.set(userId, user.schedule);
-        syncTodayWithCurrentDay(user.schedule);
-        return res.json({ schedule: user.schedule });
+        userSchedules.set(userId, schedule);
+        return res.json({ schedule });
       }
     } catch (err) {
       console.error('Failed to load schedule from MongoDB:', err.message);

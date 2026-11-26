@@ -233,7 +233,6 @@ function AppRoutes() {
   const [parseRetryable, setParseRetryable] = useState(false);
   // recurrence and eventType are now determined by the AI from natural language text
   // Manual dropdowns have been removed — the AI parses schedules and frequencies intelligently.
-  const DEFAULT_RECURRENCE = 'weekly';
   const DEFAULT_EVENT_TYPE = 'activity';
   const DEFAULT_DURATION = 60;
   const [loading, setLoading] = useState(false);
@@ -1334,6 +1333,21 @@ function AppRoutes() {
     setInputText(prev => prev || text);
   };
 
+  // Sign-in options (email, Apple, Google) in one sheet, from anywhere in the app.
+  const openSignIn = () => {
+    setIsSidebarOpen(false);
+    setAuthMode('login');
+    setAuthError('');
+    setShowEmailAuth(true);
+  };
+
+  // Logging out closes the menu and returns to the start page, where every way to sign in is.
+  const handleLogoutToLanding = async () => {
+    setIsSidebarOpen(false);
+    try { await handleLogout(); } catch (e) {}
+    setCurrentView('landing');
+  };
+
   const handleTryGuest = () => {
     setCurrentView('dashboard');
     window.history.replaceState({}, document.title, window.location.pathname);
@@ -1502,7 +1516,7 @@ function AppRoutes() {
     try {
       const res = await fetch(`${API_BASE}/api/schedule/add-to-free-slot`, {
         method: "POST", headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({ day: freeSlotsData.day, startTime: slot.startTime, endTime: slot.endTime, title, recurrence: DEFAULT_RECURRENCE, location: selectedLocation }),
+        body: JSON.stringify({ day: freeSlotsData.day, startTime: slot.startTime, endTime: slot.endTime, title, recurrence: 'once', location: selectedLocation }),
         credentials: "include"
       });
       const data = await res.json();
@@ -2112,9 +2126,9 @@ function AppRoutes() {
             </button>
             {/* Auth — signed-in users log out from the avatar menu */}
             {!user && (
-              <button onClick={() => handleLogin(lang)} className="flex items-center gap-1 h-[42px] text-xs font-bold px-3 rounded-[14px] bg-aurora text-white shadow-glow transition">
+              <button onClick={openSignIn} className="flex items-center gap-1 h-[42px] text-xs font-bold px-3 rounded-[14px] bg-aurora text-white shadow-glow transition">
                 <LogIn className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">{t.loginWithGoogle}</span>
+                <span>{lang === 'he' ? 'התחברות' : 'Sign in'}</span>
               </button>
             )}
           </div>
@@ -3014,7 +3028,8 @@ function AppRoutes() {
         isPro={isPro}
         onOpenNativePaywall={() => setIapSheet('menu')}
         onOpenPlans={() => { setIsSidebarOpen(false); setShowPlans(true); }}
-        onLogout={handleLogout}
+        onLogout={handleLogoutToLanding}
+        onLogin={openSignIn}
         initialTab={drawerTab}
         title={drawerTab === 'analytics' ? getNavLabels(lang).analytics : getNavLabels(lang).me}
         selectedLocation={profileLocation !== 'none' ? profileLocation : selectedLocation}
