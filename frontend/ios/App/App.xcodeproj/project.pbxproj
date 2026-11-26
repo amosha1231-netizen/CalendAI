@@ -18,6 +18,7 @@
 		50B271D11FEDC1A000F3C39B /* public in Resources */ = {isa = PBXBuildFile; fileRef = 50B271D01FEDC1A000F3C39B /* public */; };
 		9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9582B6822FE993A50072D4E8 /* SceneDelegate.swift */; };
 		A1C0DE0000000000000000B2 /* calendai_alarm.wav in Resources */ = {isa = PBXBuildFile; fileRef = A1C0DE0000000000000000F2 /* calendai_alarm.wav */; };
+		A1C0DE0000000000000000B9 /* calendai_ping.wav in Resources */ = {isa = PBXBuildFile; fileRef = A1C0DE0000000000000000F9 /* calendai_ping.wav */; };
 		A1C0DE0000000000000000B3 /* AppleSignInPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C0DE0000000000000000F3 /* AppleSignInPlugin.swift */; };
 		A1C0DE0000000000000000B4 /* SiriIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C0DE0000000000000000F5 /* SiriIntents.swift */; };
 		A1C0DE0000000000000000B5 /* AppShortcuts.strings in Resources */ = {isa = PBXBuildFile; fileRef = A1C0DE0000000000000000C1 /* AppShortcuts.strings */; };
@@ -38,6 +39,7 @@
 		9582B6822FE993A50072D4E8 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
 		958DCC722DB07C7200EA8C5F /* debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = debug.xcconfig; path = ../debug.xcconfig; sourceTree = SOURCE_ROOT; };
 		A1C0DE0000000000000000F2 /* calendai_alarm.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = calendai_alarm.wav; sourceTree = "<group>"; };
+		A1C0DE0000000000000000F9 /* calendai_ping.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = calendai_ping.wav; sourceTree = "<group>"; };
 		A1C0DE0000000000000000F3 /* AppleSignInPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleSignInPlugin.swift; sourceTree = "<group>"; };
 		A1C0DE0000000000000000F4 /* App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
 		A1C0DE0000000000000000F5 /* SiriIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiriIntents.swift; sourceTree = "<group>"; };
@@ -91,6 +93,7 @@
 				504EC3131FED79650016851F /* Info.plist */,
 				A1C0DE0000000000000000F1 /* PrivacyInfo.xcprivacy */,
 				A1C0DE0000000000000000F2 /* calendai_alarm.wav */,
+				A1C0DE0000000000000000F9 /* calendai_ping.wav */,
 				2FAD9762203C412B000D30F8 /* config.xml */,
 				50B271D01FEDC1A000F3C39B /* public */,
 			);
@@ -170,6 +173,7 @@
 				A1C0DE0000000000000000B2 /* calendai_alarm.wav in Resources */,
 				A1C0DE0000000000000000B5 /* AppShortcuts.strings in Resources */,
 				A1C0DE0000000000000000B6 /* Localizable.strings in Resources */,
+				A1C0DE0000000000000000B9 /* calendai_ping.wav in Resources */,
 				50379B232058CBB4000EE86E /* capacitor.config.json in Resources */,
 				504EC30D1FED79650016851F /* Main.storyboard in Resources */,
 				2FAD9763203C412B000D30F8 /* config.xml in Resources */,

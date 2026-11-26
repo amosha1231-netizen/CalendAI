@@ -2161,7 +2161,7 @@ function AppRoutes() {
           {/* Today's tasks as circles (in place of the routines card): tap one to swipe it done / not done / later */}
           <TasksTodayCard lang={lang} user={user} todayEvents={eventsOnDate(schedule.Today || [], new Date())} onManage={() => setShowTasks(true)} />
           {user && (
-            <RemindersPinger lang={lang} user={user} refreshKey={remindersRefresh} onReminders={setReminderList} />
+            <RemindersPinger lang={lang} user={user} refreshKey={remindersRefresh} onReminders={setReminderList} onOpenReminders={() => setShowReminders(true)} />
           )}
           {/* ── AI Prompt Floating Card ── */}
           <div id="home-composer" className="scroll-mt-4 bg-white p-3.5 sm:p-5 rounded-[24px] shadow-soft">
