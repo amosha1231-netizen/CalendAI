@@ -237,6 +237,16 @@
       #app-splash {
         z-index: 100000;
       }
+      /* Cinematic intro (#app-intro): a kid pulls a giant switch in the dark,
+         then the app fades in from black. See the script under #app-intro. */
+      #app-intro {
+        position: fixed; inset: 0; z-index: 100001;
+        background: #000; display: flex; align-items: center; justify-content: center;
+        opacity: 1; transition: opacity 1.5s ease-in;
+      }
+      #app-intro.fade-in-app { opacity: 0; pointer-events: none; }
+      #app-intro.skip { transition-duration: .35s; }
+      #app-intro video { width: 100%; height: 100%; object-fit: cover; }
     </style>
   </head>
   <body>
@@ -253,6 +263,75 @@
         <div class="luxury-loader-status"></div>
       </div>
     </div>
+    <!-- Cinematic intro on app open. Shown once per session, only on the home
+         path for signed-in users and the native app (not for website visitors,
+         booking links or OAuth returns). Tap to skip. The video ends on black,
+         and the overlay then fades out over the real home screen (fade in from black). -->
+    <div id="app-intro" aria-hidden="true">
+      <video id="app-intro-video" playsinline webkit-playsinline preload="auto" src="/intro.mp4"></video>
+    </div>
+    <script>
+      (function () {
+        var intro = null;
+        var removed = false;
+        function remove() {
+          if (removed) return;
+          removed = true;
+          try { if (intro && intro.parentNode) intro.parentNode.removeChild(intro); } catch (e) { /* ignore */ }
+        }
+        try {
+          if (typeof window === 'undefined' || typeof document === 'undefined') return;
+          intro = document.getElementById('app-intro');
+          var video = document.getElementById('app-intro-video');
+          if (!intro || !video) return;
+          var FADE_AT = 2.65; // seconds into the video where it is fully black
+          var path = (window.location.pathname || '/').replace(/\/+$/, '') || '/';
+          var search = window.location.search || '';
+          var reduced = false;
+          try { reduced = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (e) { /* ignore */ }
+          var signedIn = false;
+          try { signedIn = !!(window.localStorage && (window.localStorage.getItem('token') || window.localStorage.getItem('calendai-jwt'))); } catch (e) { /* storage blocked */ }
+          var seen = false;
+          try { seen = !!(window.sessionStorage && window.sessionStorage.getItem('calendai-intro-seen')); } catch (e) { /* storage blocked */ }
+          var isNative = !!window.Capacitor;
+          var oauthReturn = /(?:^|[?&])(token|code|state|error)=/.test(search);
+          if (path !== '/' || oauthReturn || reduced || seen || !(signedIn || isNative)) { remove(); return; }
+          try { window.sessionStorage && window.sessionStorage.setItem('calendai-intro-seen', '1'); } catch (e) { /* ignore */ }
+
+          var fading = false;
+          function fadeOut(skip) {
+            if (fading && !skip) return;
+            fading = true;
+            if (skip) intro.classList.add('skip');
+            intro.classList.add('fade-in-app');
+            setTimeout(remove, skip ? 450 : 1600);
+          }
+          // Never hold the app hostage: bail out if the video can't start or stalls.
+          var startTimer = setTimeout(function () { if (!video.currentTime) remove(); }, 1800);
+          setTimeout(function () { fadeOut(false); }, 7000);
+          video.addEventListener('error', remove);
+          video.addEventListener('playing', function () { clearTimeout(startTimer); });
+          video.addEventListener('timeupdate', function () { if (video.currentTime >= FADE_AT) fadeOut(false); });
+          video.addEventListener('ended', function () { fadeOut(false); });
+          intro.addEventListener('click', function () { fadeOut(true); });
+          // Try with sound first (allowed in the native app); browsers that block
+          // autoplay with sound get the same intro muted.
+          var p = null;
+          try { p = video.play(); } catch (e) { p = null; }
+          if (p && typeof p.catch === 'function') {
+            p.catch(function () {
+              video.muted = true;
+              try {
+                var p2 = video.play();
+                if (p2 && typeof p2.catch === 'function') p2.catch(remove);
+              } catch (e) { remove(); }
+            });
+          }
+        } catch (e) {
+          remove();
+        }
+      })();
+    </script>
     <!-- Crawlable summary for search engines and no-JS visitors. React replaces it on mount. -->
     <div id="root">
       <main style="max-width:720px;margin:0 auto;padding:24px 16px;font-family:system-ui,sans-serif;line-height:1.6">
