@@ -82,7 +82,7 @@ loc_attrs = {"description": desc, "marketingUrl": "https://www.calendai.org",
              "privacyPolicyUrl": "https://www.calendai.org/privacy"}
 if contact.get("contactEmail"): loc_attrs["feedbackEmail"] = contact["contactEmail"]
 en = next((l for l in locs if l["attributes"]["locale"].startswith("en")), None)
-print("locales:", [l["attributes"]["locale"] for l in locs])
+print("locales:", [(l["attributes"]["locale"], sorted(k for k, v in l["attributes"].items() if v)) for l in locs])
 if en:
     upd = {k: v for k, v in loc_attrs.items() if not en["attributes"].get(k)}
     if upd:
@@ -129,8 +129,13 @@ call("POST", f"/v1/betaGroups/{group['id']}/relationships/builds",
      {"data": [{"type": "builds", "id": build["id"]}]}, ok=(200, 201, 204, 409))
 
 step("Submit for Beta App Review")
-sub = call("POST", "/v1/betaAppReviewSubmissions", {"data": {"type": "betaAppReviewSubmissions",
-           "relationships": {"build": {"data": {"type": "builds", "id": build["id"]}}}}}, ok=(201, 409, 422))
+for attempt in range(6):
+    sub = call("POST", "/v1/betaAppReviewSubmissions", {"data": {"type": "betaAppReviewSubmissions",
+               "relationships": {"build": {"data": {"type": "builds", "id": build["id"]}}}}}, ok=(201, 409, 422))
+    if not (sub and "MISSING_BETA_APP_LOCALIZATION" in json.dumps(sub.get("errors", ""))):
+        break
+    print("localization not visible yet, retrying in 20s")
+    time.sleep(20)
 if sub and sub.get("errors"):
     print("submission response:", json.dumps(sub["errors"])[:1500])
 state = call("GET", f"/v1/builds/{build['id']}/betaAppReviewSubmission", ok=(200, 404))
