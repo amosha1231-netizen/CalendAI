@@ -32,7 +32,8 @@ def step(msg): print("\n== " + msg)
 
 step("App")
 app = call("GET", f"/v1/apps/{APP_ID}")["data"]
-print(app["attributes"]["name"], app["attributes"]["bundleId"])
+print(app["attributes"]["name"], app["attributes"]["bundleId"], "primaryLocale=", app["attributes"].get("primaryLocale"))
+PRIMARY = app["attributes"].get("primaryLocale") or "en-US"
 
 step("Builds")
 builds = call("GET", f"/v1/builds?filter[app]={APP_ID}&sort=-uploadedDate&limit=10&include=preReleaseVersion,buildBetaDetail")
@@ -93,6 +94,12 @@ else:
          "attributes": dict(loc_attrs, locale="en-US"),
          "relationships": {"app": {"data": {"type": "apps", "id": APP_ID}}}}})
     print("created en-US")
+
+if PRIMARY not in [l["attributes"]["locale"] for l in locs]:
+    r = call("POST", "/v1/betaAppLocalizations", {"data": {"type": "betaAppLocalizations",
+             "attributes": dict(loc_attrs, locale=PRIMARY),
+             "relationships": {"app": {"data": {"type": "apps", "id": APP_ID}}}}})
+    print("created primary locale", PRIMARY, "ok" if r else "failed")
 
 step("What to test")
 bbl = call("GET", f"/v1/builds/{build['id']}/betaBuildLocalizations")["data"]
