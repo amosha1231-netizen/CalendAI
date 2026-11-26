@@ -229,17 +229,12 @@ export default function Privacy({ onBack }) {
                 </a>.
               </li>
               <li>
-                <strong>OpenRouter (DeepSeek model)</strong> — for AI-powered schedule parsing and
-                suggestions. Text you enter is sent to OpenRouter for processing by the DeepSeek
-                model. See
-                <a href="https://openrouter.ai/privacy" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline ml-1">
-                  OpenRouter's Privacy Policy
+                <strong>Anthropic (Claude)</strong> — for AI-powered schedule parsing and
+                suggestions, including images you upload (e.g. a screenshot of a schedule).
+                Anthropic does not use data sent through its API to train its models. See
+                <a href="https://www.anthropic.com/legal/privacy" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline ml-1">
+                  Anthropic's Privacy Policy
                 </a>.
-              </li>
-              <li>
-                <strong>OpenRouter (vision model)</strong> — if you upload an image (e.g. a
-                screenshot of a schedule), it is sent to OpenRouter for processing by a
-                vision-capable model to extract schedule information.
               </li>
             </ul>
             <p className="mt-2">
