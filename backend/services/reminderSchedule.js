@@ -357,8 +357,28 @@ function reminderSpecsFromEvents(events, { timeZone, now = new Date(), todayName
   return { reminders: deduped, remainingEvents: remaining };
 }
 
+/**
+ * The next fire instants of a reminder, soonest first: at most `limit`, and
+ * none later than `days` from `after`. Used by the native app, which hands
+ * them to the phone as local notifications so they ping with the app closed.
+ */
+function upcomingFireTimes(reminder, after = new Date(), options = {}) {
+  const limit = Math.max(0, Math.min(options.limit || 8, 31));
+  const horizon = after.getTime() + (options.days || 8) * 86400000;
+  const out = [];
+  let cursor = after;
+  while (out.length < limit) {
+    const next = computeNextFire(reminder, cursor, options);
+    if (!next || next.getTime() > horizon) break;
+    out.push(next);
+    cursor = next;
+  }
+  return out;
+}
+
 module.exports = {
   FREQUENCIES,
+  upcomingFireTimes,
   DAY_NAMES,
   normalizeTime,
   localParts,
