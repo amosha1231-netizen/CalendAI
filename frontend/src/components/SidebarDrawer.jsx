@@ -3,6 +3,7 @@ import { X, BarChart3, Zap, Settings, Download, Moon, Sun, Target, Trophy, Activ
 import safeStorage from '../utils/safeStorage';
 import { getDeviceTimeZone, setDetectedLocation, presetLocationForTimeZone } from '../utils/userLocation';
 import SiriSetupModal from './SiriSetupModal';
+import DownloadAppButtons from './DownloadAppButtons';
 import { openCheckout, readCheckoutResponse, notifyCreditsPurchased } from '../utils/lemonCheckout';
 import { isNativeApp } from '../utils/nativeApp';
 import { isIapAvailable, manageSubscriptionUrl } from '../utils/inAppPurchase';
@@ -857,6 +858,17 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangC
                 {lang === 'he'
                   ? 'הוסף את CalendAI למסך הבית שלך לגישה מהירה מכל מקום'
                   : 'Add CalendAI to your home screen for quick access from anywhere'}
+              </p>
+
+              {/* Native apps (App Store / TestFlight, Google Play) */}
+              <div className="mb-6 p-4 rounded-2xl bg-slate-50 border border-slate-200">
+                <p className="text-sm font-bold text-slate-700 mb-3">
+                  {lang === 'he' ? 'הורדת האפליקציה לטלפון' : 'Get the phone app'}
+                </p>
+                <DownloadAppButtons lang={lang} />
+              </div>
+              <p className="text-xs text-slate-400 mb-3">
+                {lang === 'he' ? 'או הוסיפו את האתר למסך הבית:' : 'Or add the website to your home screen:'}
               </p>
 
               {/* Already installed indicator */}

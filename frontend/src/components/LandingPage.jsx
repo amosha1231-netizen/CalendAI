@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from "react";
-import { LogIn, Mail, Bot, Link2, Bell, BarChart3, Check, Mic, Sparkles, ShieldCheck } from "lucide-react";
+import { LogIn, Mail, Bot, Link2, Bell, BarChart3, Check, Mic, Sparkles, ShieldCheck, Smartphone } from "lucide-react";
 import { isShabbatNow } from "../utils/shabbatHelper";
 import ShabbatBanner from "./ShabbatBanner";
 import AppleLogo from "./AppleLogo";
+import DownloadAppButtons from "./DownloadAppButtons";
+import { isNativeApp } from "../utils/nativeApp";
 
 // Feature copy in i18n.js carries a leading emoji (kept for older call sites);
 // the dedicated icon chip below renders its own icon, so strip it here to avoid showing it twice.
@@ -40,6 +42,10 @@ const COPY = {
     privacyTitle: 'הפרטיות שלכם קודם.',
     privacyBody: 'אנחנו לא מוכרים מידע, החיבור מוצפן, ואפשר למחוק הכול בלחיצה אחת.',
     privacyLink: 'מדיניות הפרטיות',
+    appTitle: 'CalendAI גם בטלפון',
+    appBody: 'התקינו את האפליקציה וקבלו תזכורות, שעון מעורר ותיאום פגישות ישר מהכיס.',
+    appFooter: 'הורדת האפליקציה',
+    appShort: 'לאפליקציה',
   },
   en: {
     badge: 'AI scheduling assistant',
@@ -59,6 +65,10 @@ const COPY = {
     privacyTitle: 'Your privacy comes first.',
     privacyBody: "We don't sell data, connections are encrypted, and you can delete everything in one tap.",
     privacyLink: 'Privacy policy',
+    appTitle: 'CalendAI on your phone',
+    appBody: 'Install the app for reminders, smart alarms and meeting scheduling right from your pocket.',
+    appFooter: 'Get the app',
+    appShort: 'Get the app',
   },
 };
 
@@ -144,6 +154,12 @@ export default function LandingPage({ t, lang, onLogin, onMicrosoftLogin, onAppl
               Calend<span className="text-aurora">AI</span>
             </span>
           </div>
+          <div className="flex items-center gap-2">
+          {!isNativeApp() && (
+            <a href="#download-app" className="inline-flex items-center gap-1.5 h-[38px] px-3 rounded-xl whitespace-nowrap bg-white/80 border border-[#E3DEFF] text-brand text-[13px] font-semibold hover:bg-white transition">
+              <Smartphone className="w-4 h-4" /> <span className="hidden min-[360px]:inline">{c.appShort}</span>
+            </a>
+          )}
           <div className="flex p-[3px] gap-[3px] rounded-xl bg-[#ECEAF4]/80" role="radiogroup" aria-label={lang === 'he' ? 'שפה' : 'Language'}>
             {[['he', 'עב'], ['en', 'EN']].map(([code, label]) => (
               <button
@@ -156,6 +172,7 @@ export default function LandingPage({ t, lang, onLogin, onMicrosoftLogin, onAppl
                 {label}
               </button>
             ))}
+          </div>
           </div>
         </header>
 
@@ -281,6 +298,20 @@ export default function LandingPage({ t, lang, onLogin, onMicrosoftLogin, onAppl
         </div>
       </section>
 
+      {/* ── Get the app (website only; pointless inside the app itself) ── */}
+      {!isNativeApp() && (
+        <section id="download-app" className="pb-14 sm:pb-20">
+          <div className="max-w-2xl mx-auto px-5 sm:px-6">
+            <div className="bg-white rounded-[28px] p-7 sm:p-10 shadow-soft text-center">
+              <span className="w-12 h-12 rounded-2xl bg-brand-soft text-brand flex items-center justify-center mx-auto mb-4"><Smartphone className="w-6 h-6" /></span>
+              <h2 className="text-2xl sm:text-3xl font-extrabold mb-2 tracking-tight">{c.appTitle}</h2>
+              <p className="text-[15px] text-[#6E7189] mb-6 leading-relaxed">{c.appBody}</p>
+              <DownloadAppButtons lang={lang} />
+            </div>
+          </div>
+        </section>
+      )}
+
       {/* ── CTA ── */}
       <section className="pb-14 sm:pb-20">
         <div className="max-w-2xl mx-auto px-5 sm:px-6">
@@ -309,6 +340,12 @@ export default function LandingPage({ t, lang, onLogin, onMicrosoftLogin, onAppl
             <a href="/privacy" className="hover:text-[#6E7189]">{lang === 'he' ? 'פרטיות' : 'Privacy'}</a>
             <span>·</span>
             <a href="/terms" className="hover:text-[#6E7189]">{lang === 'he' ? 'תנאי שימוש' : 'Terms'}</a>
+            {!isNativeApp() && (
+              <>
+                <span>·</span>
+                <a href="#download-app" className="hover:text-[#6E7189]">{c.appFooter}</a>
+              </>
+            )}
           </div>
         </div>
       </footer>
