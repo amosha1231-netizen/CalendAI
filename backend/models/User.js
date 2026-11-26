@@ -60,6 +60,8 @@ const userSchema = new mongoose.Schema({
   },
   siriKeyHash: { type: String, index: { unique: true, sparse: true } }, // SHA-256 of the personal Siri/Shortcuts key
   siriKeyCreatedAt: { type: Date },
+  // SHA-256 hashes of keys the iPhone app keeps for its built-in Siri command (one per device, newest last).
+  siriAppKeyHashes: { type: [String], default: undefined, index: true },
   // Evening digest: a push the evening before with tomorrow's schedule (services/eveningDigest).
   eveningDigest: {
     enabled: { type: Boolean, default: false },

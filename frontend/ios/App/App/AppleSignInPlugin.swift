@@ -68,9 +68,10 @@ public class AppleSignInPlugin: CAPPlugin, CAPBridgedPlugin, ASAuthorizationCont
 }
 
 /// The app's bridge view controller. Registers plugins that live in this
-/// project (not in an npm package), such as Sign in with Apple.
+/// project (not in an npm package): Sign in with Apple and the Siri key bridge.
 class MainViewController: CAPBridgeViewController {
     override open func capacitorDidLoad() {
         bridge?.registerPluginInstance(AppleSignInPlugin())
+        bridge?.registerPluginInstance(CalendAISiriPlugin())
     }
 }

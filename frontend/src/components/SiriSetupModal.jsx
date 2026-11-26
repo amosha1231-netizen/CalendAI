@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Mic, Copy, Check, Loader2, Trash2 } from 'lucide-react';
 import safeStorage from '../utils/safeStorage';
+import { isNativeSiriAvailable, getNativeSiriStatus, ensureNativeSiri } from '../utils/nativeSiri';
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
 
@@ -68,8 +69,73 @@ function CopyField({ label, value, copied, onCopy }) {
   );
 }
 
+/**
+ * iPhone app: Siri is built in, so instead of a Shortcut we show the phrases to say.
+ * The device key is created automatically after sign-in (see AuthContext).
+ */
+function NativeSiriPanel({ he, user }) {
+  const userId = String(user?._id || user?.id || '');
+  const [state, setState] = useState('checking'); // checking | ready | failed
+
+  const connect = async (force) => {
+    setState('checking');
+    const ok = await ensureNativeSiri(userId, { force });
+    setState(ok ? 'ready' : 'failed');
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const status = await getNativeSiriStatus();
+      if (cancelled) return;
+      if (status?.hasKey && status.userId === userId) setState('ready');
+      else {
+        const ok = await ensureNativeSiri(userId);
+        if (!cancelled) setState(ok ? 'ready' : 'failed');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [userId]);
+
+  const phrases = he
+    ? ['"היי סירי, תוסיף אירוע בקלנדאי"', '"היי סירי, תוסיף לקלנדאי"', '"היי סירי, קלנדאי אירוע חדש"']
+    : ['"Hey Siri, add an event in CalendAI"', '"Hey Siri, add to CalendAI"', '"Hey Siri, CalendAI new event"'];
+
+  return (
+    <>
+      <div className={`rounded-2xl p-3 mb-4 text-sm text-center font-bold ${state === 'ready' ? 'bg-green-50 text-green-700' : state === 'failed' ? 'bg-red-50 text-red-600' : 'bg-slate-50 text-slate-500'}`}>
+        {state === 'ready' && (he ? 'סירי מחוברת ליומן שלכם ✓' : 'Siri is connected to your calendar ✓')}
+        {state === 'checking' && (he ? 'מחבר את סירי…' : 'Connecting Siri…')}
+        {state === 'failed' && (he ? 'לא הצלחתי לחבר את סירי. בדקו חיבור לאינטרנט ונסו שוב.' : 'Could not connect Siri. Check your connection and try again.')}
+      </div>
+
+      <div className="bg-blue-50 border border-blue-100 rounded-2xl p-4 mb-4 text-start">
+        <p className="text-sm font-bold text-slate-700 mb-2">{he ? 'אמרו אחד מאלה:' : 'Say one of these:'}</p>
+        <ul className="space-y-1.5 text-sm text-slate-700 mb-3">
+          {phrases.map((p) => <li key={p}>{p}</li>)}
+        </ul>
+        <p className="text-xs text-slate-600 leading-relaxed">
+          {he
+            ? 'סירי תשאל "מה להוסיף?", ואז אמרו למשל "פגישה עם דני מחר בשלוש". האירוע ייכנס ליומן של CalendAI וסירי תאשר בקול. חשוב לומר את שם האפליקציה, אחרת סירי תשתמש ביומן של אפל.'
+            : 'Siri asks "What should I add?", then say e.g. "meeting with Dan tomorrow at 3pm". It lands in your CalendAI calendar and Siri confirms. Say the app name, otherwise Siri uses Apple\'s calendar.'}
+        </p>
+      </div>
+
+      <button
+        onClick={() => connect(true)}
+        disabled={state === 'checking'}
+        className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-white border border-slate-200 text-slate-700 rounded-2xl font-bold text-sm hover:bg-slate-50 transition disabled:opacity-60"
+      >
+        {state === 'checking' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mic className="w-4 h-4" />}
+        {he ? 'חבר את סירי מחדש' : 'Reconnect Siri'}
+      </button>
+    </>
+  );
+}
+
 export default function SiriSetupModal({ lang, user, onClose }) {
   const he = lang === 'he';
+  const nativeSiri = isNativeSiriAvailable();
   const [status, setStatus] = useState(null); // { hasKey, endpoint }
   const [newKey, setNewKey] = useState('');
   const [loading, setLoading] = useState(false);
@@ -77,11 +143,11 @@ export default function SiriSetupModal({ lang, user, onClose }) {
   const [copied, setCopied] = useState('');
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || nativeSiri) return;
     siriKeyRequest('GET')
       .then(setStatus)
       .catch((e) => setError(e.message));
-  }, [user]);
+  }, [user, nativeSiri]);
 
   const handleRevoke = async () => {
     if (!window.confirm(he ? 'לבטל את המפתח? קיצור הדרך יפסיק לעבוד.' : 'Revoke the key? Your Shortcut will stop working.')) return;
@@ -190,6 +256,8 @@ export default function SiriSetupModal({ lang, user, onClose }) {
           <p className="text-sm text-center text-amber-600 bg-amber-50 rounded-xl p-3">
             {he ? 'יש להתחבר לחשבון כדי לחבר את סירי.' : 'Please log in to connect Siri.'}
           </p>
+        ) : nativeSiri ? (
+          <NativeSiriPanel he={he} user={user} />
         ) : (
           <>
             <button

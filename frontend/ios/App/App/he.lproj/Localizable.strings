@@ -1,0 +1,7 @@
+/* Hebrew texts for the Siri action (SiriIntents.swift). */
+"Add to CalendAI" = "הוספה ל-CalendAI";
+"What to add" = "מה להוסיף";
+"What should I add?" = "מה להוסיף?";
+"Open CalendAI and sign in once, then ask me again." = "פתחו את CalendAI והתחברו פעם אחת, ואז בקשו ממני שוב.";
+"I couldn't reach CalendAI. Check the internet connection and try again." = "לא הצלחתי להגיע ל-CalendAI. בדקו את החיבור לאינטרנט ונסו שוב.";
+"Something went wrong. Please try again in a moment." = "משהו השתבש. נסו שוב בעוד רגע.";

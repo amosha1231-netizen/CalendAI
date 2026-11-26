@@ -19,6 +19,9 @@
 		9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9582B6822FE993A50072D4E8 /* SceneDelegate.swift */; };
 		A1C0DE0000000000000000B2 /* calendai_alarm.wav in Resources */ = {isa = PBXBuildFile; fileRef = A1C0DE0000000000000000F2 /* calendai_alarm.wav */; };
 		A1C0DE0000000000000000B3 /* AppleSignInPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C0DE0000000000000000F3 /* AppleSignInPlugin.swift */; };
+		A1C0DE0000000000000000B4 /* SiriIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C0DE0000000000000000F5 /* SiriIntents.swift */; };
+		A1C0DE0000000000000000B5 /* AppShortcuts.strings in Resources */ = {isa = PBXBuildFile; fileRef = A1C0DE0000000000000000C1 /* AppShortcuts.strings */; };
+		A1C0DE0000000000000000B6 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = A1C0DE0000000000000000C2 /* Localizable.strings */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -37,6 +40,9 @@
 		A1C0DE0000000000000000F2 /* calendai_alarm.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = calendai_alarm.wav; sourceTree = "<group>"; };
 		A1C0DE0000000000000000F3 /* AppleSignInPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleSignInPlugin.swift; sourceTree = "<group>"; };
 		A1C0DE0000000000000000F4 /* App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
+		A1C0DE0000000000000000F5 /* SiriIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiriIntents.swift; sourceTree = "<group>"; };
+		A1C0DE0000000000000000F6 /* he */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = he; path = he.lproj/AppShortcuts.strings; sourceTree = "<group>"; };
+		A1C0DE0000000000000000F7 /* he */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = he; path = he.lproj/Localizable.strings; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -75,6 +81,9 @@
 				50379B222058CBB4000EE86E /* capacitor.config.json */,
 				504EC3071FED79650016851F /* AppDelegate.swift */,
 				A1C0DE0000000000000000F3 /* AppleSignInPlugin.swift */,
+				A1C0DE0000000000000000F5 /* SiriIntents.swift */,
+				A1C0DE0000000000000000C1 /* AppShortcuts.strings */,
+				A1C0DE0000000000000000C2 /* Localizable.strings */,
 				A1C0DE0000000000000000F4 /* App.entitlements */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
 				504EC30E1FED79650016851F /* Assets.xcassets */,
@@ -134,6 +143,7 @@
 			knownRegions = (
 				en,
 				Base,
+				he,
 			);
 			mainGroup = 504EC2FB1FED79650016851F;
 			packageReferences = (
@@ -158,6 +168,8 @@
 				504EC30F1FED79650016851F /* Assets.xcassets in Resources */,
 				A1C0DE0000000000000000B1 /* PrivacyInfo.xcprivacy in Resources */,
 				A1C0DE0000000000000000B2 /* calendai_alarm.wav in Resources */,
+				A1C0DE0000000000000000B5 /* AppShortcuts.strings in Resources */,
+				A1C0DE0000000000000000B6 /* Localizable.strings in Resources */,
 				50379B232058CBB4000EE86E /* capacitor.config.json in Resources */,
 				504EC30D1FED79650016851F /* Main.storyboard in Resources */,
 				2FAD9763203C412B000D30F8 /* config.xml in Resources */,
@@ -174,12 +186,29 @@
 				504EC3081FED79650016851F /* AppDelegate.swift in Sources */,
 				9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */,
 				A1C0DE0000000000000000B3 /* AppleSignInPlugin.swift in Sources */,
+				A1C0DE0000000000000000B4 /* SiriIntents.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXVariantGroup section */
+		A1C0DE0000000000000000C1 /* AppShortcuts.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				A1C0DE0000000000000000F6 /* he */,
+			);
+			name = AppShortcuts.strings;
+			sourceTree = "<group>";
+		};
+		A1C0DE0000000000000000C2 /* Localizable.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				A1C0DE0000000000000000F7 /* he */,
+			);
+			name = Localizable.strings;
+			sourceTree = "<group>";
+		};
 		504EC30B1FED79650016851F /* Main.storyboard */ = {
 			isa = PBXVariantGroup;
 			children = (

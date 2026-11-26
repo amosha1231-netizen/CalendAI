@@ -4,6 +4,7 @@ import { startOAuth } from '../utils/nativeApp';
 import { hasPendingPwaLogin, claimPwaLogin, clearPwaLogin } from '../utils/pwaLogin';
 import safeStorage from '../utils/safeStorage';
 import { normalizeUserCredits } from '../utils/credits';
+import { ensureNativeSiri, clearNativeSiri } from '../utils/nativeSiri';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
@@ -297,6 +298,10 @@ export function AuthProvider({ children }) {
   }, []);
 
   const handleLogout = useCallback(async () => {
+    // iPhone app: disconnect Siri from this account while the login token still works.
+    try {
+      await Promise.race([clearNativeSiri(), new Promise((resolve) => setTimeout(resolve, 3000))]);
+    } catch (e) {}
     try {
       await fetch(`${API_BASE}/api/auth/logout`, { method: "POST", credentials: "include" });
     } catch (err) { console.error(err); }
@@ -310,6 +315,13 @@ export function AuthProvider({ children }) {
     localStorage.removeItem('calendai-isLoggedIn');
     localStorage.removeItem('calendai-user');
   }, []);
+
+  // ── Siri on iPhone: connect this device to the signed-in account (no setup needed) ──
+  const signedInUserId = user?._id || user?.id || '';
+  useEffect(() => {
+    if (authStatus !== 'authenticated' || !signedInUserId) return;
+    ensureNativeSiri(String(signedInUserId)).catch(() => {});
+  }, [authStatus, signedInUserId]);
 
   // ── Safety Fallback Timer ──
   // Forces loading to false after 3 seconds to prevent infinite loading state.

@@ -3081,8 +3081,53 @@ app.delete('/api/siri/key', async (req, res) => {
 });
 
 /**
+ * The iPhone app's built-in Siri command ("Hey Siri, add an event in CalendAI")
+ * keeps its own key on the device, separate from the Shortcut key above, so
+ * turning it on never breaks a Shortcut the user already set up.
+ * POST /api/siri/app-key — create a key for this device. Up to 5 devices stay valid.
+ * DELETE /api/siri/app-key — body { key }: forget one device's key (sign-out).
+ */
+const MAX_SIRI_APP_KEYS = 5;
+
+app.post('/api/siri/app-key', async (req, res) => {
+  const userId = getAuthenticatedUserId(req);
+  if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
+    return res.status(401).json({ error: 'Authentication required.' });
+  }
+  try {
+    const key = SIRI_KEY_PREFIX + crypto.randomBytes(24).toString('hex');
+    const result = await User.updateOne(
+      { _id: userId },
+      { $push: { siriAppKeyHashes: { $each: [hashSiriKey(key)], $slice: -MAX_SIRI_APP_KEYS } } }
+    );
+    if (!result.matchedCount) return res.status(404).json({ error: 'User not found.' });
+    res.json({ key, userId: String(userId), endpoint: getSiriEndpointUrl() });
+  } catch (error) {
+    console.error('[Siri] Failed to create app key:', error.message);
+    res.status(500).json({ error: 'Failed to create Siri key.' });
+  }
+});
+
+app.delete('/api/siri/app-key', async (req, res) => {
+  const userId = getAuthenticatedUserId(req);
+  if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
+    return res.status(401).json({ error: 'Authentication required.' });
+  }
+  const key = typeof req.body?.key === 'string' ? req.body.key.trim() : '';
+  if (!key.startsWith(SIRI_KEY_PREFIX)) return res.status(400).json({ error: 'Missing key.' });
+  try {
+    await User.updateOne({ _id: userId }, { $pull: { siriAppKeyHashes: hashSiriKey(key) } });
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('[Siri] Failed to remove app key:', error.message);
+    res.status(500).json({ error: 'Failed to remove Siri key.' });
+  }
+});
+
+/**
  * POST /api/events/siri
- * Called by the user's Apple Shortcut ("Hey Siri, <shortcut name>").
+ * Called by the user's Apple Shortcut ("Hey Siri, <shortcut name>") or by the
+ * iPhone app's built-in Siri command (AddEventIntent.swift).
  * Auth: personal Siri key in the X-CalendAI-Key header (or Bearer / body.key).
  * Body: { text: "פגישה עם דני מחר בשלוש" }
  * Response: plain text for Siri to speak. Add ?format=json for { success, response, ... }.
@@ -3101,7 +3146,8 @@ app.post(SIRI_ENDPOINT_PATH, aiLimiter, async (req, res) => {
       return speak(false, 'קיצור הדרך לא מחובר לחשבון. פתחו את CalendAI, תפריט, "חיבור לסירי", וצרו מפתח חדש.');
     }
 
-    const user = await User.findOne({ siriKeyHash: hashSiriKey(key) }).lean();
+    const keyHash = hashSiriKey(key);
+    const user = await User.findOne({ $or: [{ siriKeyHash: keyHash }, { siriAppKeyHashes: keyHash }] }).lean();
     if (!user) {
       return speak(false, 'מפתח הסירי אינו תקף או שבוטל. צרו מפתח חדש באפליקציה ועדכנו את קיצור הדרך.');
     }
