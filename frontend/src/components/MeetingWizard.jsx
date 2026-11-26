@@ -25,6 +25,8 @@ export default function MeetingWizard({ schedule, lang, t, hostName = 'Host', lo
   const [selectedSlots, setSelectedSlots] = useState([]); // { hour, minute }
   const [selectedDate, setSelectedDate] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; });
   const [availableRanges, setAvailableRanges] = useState(null);
+  const [busyEvents, setBusyEvents] = useState([]); // what fills the chosen day, from the server
+  const [showBusyList, setShowBusyList] = useState(false);
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
   const [showOnlyFree, setShowOnlyFree] = useState(true);
   const [linkCreating, setLinkCreating] = useState(false);
@@ -45,8 +47,8 @@ export default function MeetingWizard({ schedule, lang, t, hostName = 'Host', lo
     const token = safeStorage.getItem('token') || safeStorage.getItem('calendai-jwt');
     fetch(`${API_BASE}/api/schedule/free-slots?date=${selectedDate}&duration=${duration}&location=${encodeURIComponent(locationId)}`, { credentials: 'include', headers: token ? { Authorization: `Bearer ${token}` } : {} })
       .then(async res => { const data = await res.json(); if (!res.ok) throw new Error(data.error || 'Availability check failed'); return data; })
-      .then(data => { if (!cancelled) { setAvailableRanges(data.freeSlots || []); setSelectedDay(data.day); } })
-      .catch(err => { if (!cancelled) { setAvailableRanges([]); setError(err.message); } })
+      .then(data => { if (!cancelled) { setAvailableRanges(data.freeSlots || []); setBusyEvents(Array.isArray(data.busy) ? data.busy : []); setSelectedDay(data.day); } })
+      .catch(err => { if (!cancelled) { setAvailableRanges([]); setBusyEvents([]); setError(err.message); } })
       .finally(() => { if (!cancelled) setAvailabilityLoading(false); });
     return () => { cancelled = true; };
   }, [step, selectedDate, duration, locationId]);
@@ -175,7 +177,22 @@ export default function MeetingWizard({ schedule, lang, t, hostName = 'Host', lo
     setDragActive(false);
   }
 
+  // The events that make a slot busy (Google Calendar ones included), so the
+  // grid can say *what* takes the time instead of a bare "busy".
+  function busyEventsFor(hour, minute) {
+    const start = hour * 60 + minute;
+    return busyEvents.filter(ev => ev.startMinutes < start + duration && ev.endMinutes > start);
+  }
+
+  function formatMinutes(total) {
+    const normalized = ((total % 1440) + 1440) % 1440;
+    return formatTimeDisplay(Math.floor(normalized / 60), normalized % 60);
+  }
+
   function formatTimeDisplay(hour, minute) {
+    // Hebrew (and most non-US) users read a 24-hour clock; AM/PM also reads
+    // backwards inside right-to-left text ("PM 07:00").
+    if (lang !== 'en') return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
     const h12 = hour % 12 || 12;
     const ampm = hour >= 12 ? 'PM' : 'AM';
     return `${String(h12).padStart(2, '0')}:${String(minute).padStart(2, '0')} ${ampm}`;
@@ -403,6 +420,7 @@ export default function MeetingWizard({ schedule, lang, t, hostName = 'Host', lo
                 {HOURS.map(hour => (
                   [0, 30].map(minute => {
                     const busy = isSlotBusy(hour, minute);
+                    const blockers = busy ? busyEventsFor(hour, minute) : [];
                     const selected = selectedSlots.some(s => s.hour === hour && s.minute === minute);
 
                     if (busy && showOnlyFree) return null;
@@ -424,7 +442,8 @@ export default function MeetingWizard({ schedule, lang, t, hostName = 'Host', lo
                             toggleSlot(hour, minute);
                           }
                         }}
-                        className={`flex items-center justify-center px-2 py-2.5 rounded-lg text-xs font-medium border transition select-none ${
+                        title={blockers.length ? blockers.map(b => b.title).join(', ') : undefined}
+                        className={`flex items-center justify-center min-w-0 overflow-hidden px-2 py-2.5 rounded-lg text-xs font-medium border transition select-none ${
                           busy
                             ? 'bg-red-50 border-red-200 text-red-400 cursor-not-allowed'
                             : selected
@@ -433,9 +452,12 @@ export default function MeetingWizard({ schedule, lang, t, hostName = 'Host', lo
                         }`}
                         disabled={busy || availabilityLoading || availableRanges === null}
                       >
-                        <span className="flex items-center gap-1">
+                        <span className={`flex items-center gap-1 ${busy ? 'w-full min-w-0' : ''}`}>
                           {busy ? (
-                            <><span className="w-1.5 h-1.5 rounded-full bg-red-400" /> {t.wizardBusySlot}</>
+                            <span className="flex flex-col items-center leading-tight w-full min-w-0">
+                              <span>{formatTimeDisplay(hour, minute)}</span>
+                              <span dir="auto" className="block w-full text-center text-[10px] truncate">{blockers[0]?.title || t.wizardBusySlot}</span>
+                            </span>
                           ) : selected ? (
                             <><Check className="w-3 h-3" /> {formatTimeDisplay(hour, minute)}</>
                           ) : (
@@ -448,6 +470,33 @@ export default function MeetingWizard({ schedule, lang, t, hostName = 'Host', lo
                 ))}
               </div>
             </div>
+
+            {/* Why is the day taken? Lists what fills it, Google Calendar events
+                included, since those don't appear in CalendAI's own day view. */}
+            {!availabilityLoading && busyEvents.length > 0 && (
+              <div className="text-xs">
+                <button
+                  type="button"
+                  onClick={() => setShowBusyList(v => !v)}
+                  className="text-blue-600 hover:underline"
+                >
+                  {isRTL ? `מה תופס את היום הזה? (${busyEvents.length})` : `What fills this day? (${busyEvents.length})`}
+                </button>
+                {showBusyList && (
+                  <ul className="mt-2 space-y-1 bg-slate-50 border border-slate-200 rounded-lg p-2 max-h-40 overflow-y-auto">
+                    {busyEvents.map((ev, i) => (
+                      <li key={i} className="flex items-center justify-between gap-2">
+                        <span className="truncate text-slate-700">{ev.title || t.wizardBusySlot}</span>
+                        <span className="shrink-0 text-slate-500 tabular-nums" dir="ltr">
+                          {formatMinutes(ev.startMinutes)}–{formatMinutes(ev.endMinutes)}
+                          {ev.source === 'google' && <span className="ms-1 px-1 rounded bg-white border border-slate-200 text-[10px]">Google</span>}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
 
             {/* Selected Count */}
             <div className="text-xs text-slate-500 text-center">

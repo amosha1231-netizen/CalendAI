@@ -2197,13 +2197,13 @@ app.get('/api/schedule/free-slots', async (req, res) => {
           for (const event of result.data.items || []) {
             if (event.status === 'cancelled' || event.transparency === 'transparent' || !event.start || !event.end) continue;
             if (event.start.date && event.end.date) {
-              if (event.start.date <= dateISO && event.end.date > dateISO) dayEvents.push({ startTime: '00:00', endTime: '23:59', title: event.summary || 'Google Calendar event' });
+              if (event.start.date <= dateISO && event.end.date > dateISO) dayEvents.push({ startTime: '00:00', endTime: '23:59', title: event.summary || 'Google Calendar event', source: 'google' });
             } else if (event.start.dateTime && event.end.dateTime) {
               const eventStart = new Date(event.start.dateTime);
               const eventEnd = new Date(event.end.dateTime);
               const clippedStart = new Date(Math.max(eventStart.getTime(), start.getTime()));
               const clippedEnd = new Date(Math.min(eventEnd.getTime(), end.getTime()));
-              if (clippedEnd > clippedStart) dayEvents.push({ startTime: toClock(clippedStart), endTime: toClock(clippedEnd), title: event.summary || 'Google Calendar event' });
+              if (clippedEnd > clippedStart) dayEvents.push({ startTime: toClock(clippedStart), endTime: toClock(clippedEnd), title: event.summary || 'Google Calendar event', source: 'google' });
             }
           }
           googleCalendarConnected = true;
@@ -2216,8 +2216,23 @@ app.get('/api/schedule/free-slots', async (req, res) => {
     const allFreeSlots = findFreeSlotsForDay(schedule, actualDay, locationId, dayEvents, dateISO);
     
     const suitableSlots = allFreeSlots.filter(slot => slot.durationMinutes >= durationMinutes);
-    
+
+    // What fills the day, so the meeting wizard can say why a time is taken
+    // (e.g. a Google Calendar event the CalendAI day view doesn't show).
+    const busy = dayEvents
+      .filter(event => !isZeroDurationEvent(event))
+      .map(event => {
+        const startMinutes = timeToMinutes(event.startTime);
+        let endMinutes = timeToMinutes(event.endTime);
+        if (startMinutes === null || endMinutes === null) return null;
+        if (endMinutes <= startMinutes) endMinutes += 1440;
+        return { startMinutes, endMinutes, title: String(event.title || event.summary || ''), source: event.source === 'google' ? 'google' : 'calendai' };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.startMinutes - b.startMinutes);
+
     res.json({
+      busy,
       day: actualDay,
       date: dateISO || null,
       googleCalendarConnected,
