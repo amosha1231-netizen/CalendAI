@@ -300,7 +300,8 @@ async function isSlotMutuallyFree(host, invitee, { locationId, date, startTime, 
   // relies on to re-verify a client-supplied date — without this check, a
   // direct API call (bypassing the UI) could still lock in a Shabbat meeting
   // as long as neither calendar happened to be busy then.
-  if (shabbatService.isShabbatDay(dayName)) {
+  // Saturday opens again at motzei Shabbat (havdalah in the session's time zone).
+  if (shabbatService.isShabbatDay(dayName) && startMin < shabbatService.motzashStartMinutes(date, { timeZone })) {
     return { free: false, timeZone };
   }
 
@@ -342,7 +343,7 @@ async function isSlotMutuallyFree(host, invitee, { locationId, date, startTime, 
 }
 
 /**
- * Compute mutual free slots for the next `rangeDays` days (skipping Shabbat),
+ * Compute mutual free slots for the next `rangeDays` days (Saturday only from motzei Shabbat),
  * long enough to fit `duration` minutes, for both host and invitee.
  */
 async function getMutualFreeSlots(host, invitee, { locationId, duration, rangeDays = 7 } = {}) {
@@ -366,7 +367,11 @@ async function getMutualFreeSlots(host, invitee, { locationId, duration, rangeDa
     const isoDate = d.toISOString().slice(0, 10);
     const dayOfWeek = DAY_NAMES[d.getUTCDay()];
 
-    if (shabbatService.isShabbatDay(dayOfWeek)) continue;
+    // Saturday: only motzei Shabbat (from havdalah) can be offered.
+    const shabbatStartMin = shabbatService.isShabbatDay(dayOfWeek)
+      ? shabbatService.motzashStartMinutes(isoDate, { timeZone })
+      : null;
+    if (shabbatStartMin !== null && shabbatStartMin >= dayEndMin) continue;
 
     const [busyHost, busyInvitee] = await Promise.all([
       getFreeBusyForDay(host, isoDate, dayStartHHMM, dayEndHHMM, timeZone),
@@ -375,7 +380,8 @@ async function getMutualFreeSlots(host, invitee, { locationId, duration, rangeDa
     const combinedHost = [...busyHost, ...getLocalScheduleBusy(host, isoDate, dayOfWeek, todayIsoInTimeZone(timeZone))];
     const combinedInvitee = [...busyInvitee, ...getLocalScheduleBusy(invitee, isoDate, dayOfWeek, todayIsoInTimeZone(timeZone))];
 
-    const windowStartMin = offset === 0 ? Math.max(dayStartMin, currentMinuteOfDay(timeZone)) : dayStartMin;
+    const baseStartMin = shabbatStartMin !== null ? Math.max(dayStartMin, shabbatStartMin) : dayStartMin;
+    const windowStartMin = offset === 0 ? Math.max(baseStartMin, currentMinuteOfDay(timeZone)) : baseStartMin;
     // Never list a Friday slot that would run into Shabbat — see
     // FRIDAY_SHABBAT_CUTOFF_MIN above (isSlotMutuallyFree enforces the same
     // cutoff server-side, but listing one here just to have /confirm reject

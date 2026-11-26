@@ -125,6 +125,54 @@ function isShabbatDay(day) {
   return d.includes('שבת') || d.includes('saturday');
 }
 
+// Motzei Shabbat (מוצ"ש) opens this many minutes after havdalah is rounded up to.
+const MOTZASH_ROUND_MINUTES = 5;
+// Friday cutoff (minutes since midnight) used across the app for new meetings/events.
+const FRIDAY_SHABBAT_CUTOFF_MIN = 16 * 60;
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+function isIsoDate(value) {
+  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+/**
+ * Minutes since local midnight from which a Saturday is open again — havdalah
+ * at the location, rounded up to the next 5 minutes (e.g. 17:23 → 17:25).
+ * @param {string} [isoDate] - The Saturday (YYYY-MM-DD). Defaults to the coming/current one.
+ * @param {{ timeZone?: string, lat?: number, lng?: number }} [location]
+ */
+function motzashStartMinutes(isoDate, location) {
+  const loc = normalizeLocation(location);
+  // Noon UTC on that date is the same calendar day in every inhabited time zone.
+  const probe = isIsoDate(isoDate) ? new Date(`${isoDate}T12:00:00Z`) : new Date();
+  const { end } = getShabbatWindow(probe, loc);
+  const { totalMinutes } = getLocalParts(end, loc.timeZone);
+  return Math.min(24 * 60, Math.ceil(totalMinutes / MOTZASH_ROUND_MINUTES) * MOTZASH_ROUND_MINUTES);
+}
+
+/** "HH:MM" of motzashStartMinutes — for messages and the AI prompt. */
+function motzashStartClock(isoDate, location) {
+  const m = motzashStartMinutes(isoDate, location);
+  return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+}
+
+/**
+ * Would a local window on a given day fall in Shabbat?
+ * Friday: anything running past 16:00. Saturday: anything starting before
+ * motzei Shabbat (havdalah at the location) — or with no time at all.
+ * @param {{ date?: string, dayName?: string, startMin?: number|null, endMin?: number|null, location?: object }} window
+ */
+function isShabbatSlot({ date, dayName, startMin = null, endMin = null, location } = {}) {
+  const day = isIsoDate(date) ? DAY_NAMES[new Date(`${date}T12:00:00Z`).getUTCDay()] : dayName;
+  if (!day) return false;
+  if (isShabbatDay(day)) {
+    if (!Number.isFinite(startMin)) return true;
+    return startMin < motzashStartMinutes(isIsoDate(date) ? date : undefined, location);
+  }
+  if (day === 'Friday' && Number.isFinite(endMin)) return endMin > FRIDAY_SHABBAT_CUTOFF_MIN;
+  return false;
+}
+
 /** Current Shabbat status for the API endpoint. */
 function getShabbatStatus(location) {
   const result = isShabbatTime(new Date(), location);
@@ -146,6 +194,10 @@ module.exports = {
   isShabbatDay,
   getShabbatStatus,
   getShabbatWindow,
+  motzashStartMinutes,
+  motzashStartClock,
+  isShabbatSlot,
+  FRIDAY_SHABBAT_CUTOFF_MIN,
   JERUSALEM_LAT,
   JERUSALEM_LNG
 };
