@@ -236,3 +236,16 @@ test('dispatcher never pings on Shabbat, even for reminders saved with skipShabb
   assert.equal(sent.length, 0);
   assert.equal(Reminder.rows[0].nextFireAt.toISOString(), '2026-10-18T05:00:00.000Z');
 });
+
+test('upcomingFireTimes lists the next pings inside the window, skipping blocked ones', () => {
+  const r = { frequency: 'daily', time: '08:00', timezone: IL };
+  const after = new Date('2026-10-14T04:00:00Z');
+  const all = s.upcomingFireTimes(r, after, { limit: 10, days: 3 });
+  assert.deepEqual(all.map(d => d.toISOString()), ['2026-10-14T05:00:00.000Z', '2026-10-15T05:00:00.000Z', '2026-10-16T05:00:00.000Z']);
+  const capped = s.upcomingFireTimes(r, after, { limit: 2, days: 8 });
+  assert.equal(capped.length, 2);
+  const blocked = s.upcomingFireTimes(r, after, { limit: 10, days: 3, isBlocked: d => d.toISOString().startsWith('2026-10-15') });
+  assert.deepEqual(blocked.map(d => d.toISOString()), ['2026-10-14T05:00:00.000Z', '2026-10-16T05:00:00.000Z']);
+  const once = s.upcomingFireTimes({ frequency: 'once', date: '2026-10-20', time: '09:00', timezone: IL }, after, { days: 8 });
+  assert.equal(once.length, 1);
+});

@@ -13,6 +13,7 @@ const shabbatService = require('../services/shabbatService');
 const webPush = require('../services/webPush');
 const User = require('../models/User');
 const { nextDigestFire, DEFAULT_TIME: DIGEST_DEFAULT_TIME } = require('../services/eveningDigest');
+const { scheduleHasTask } = require('../services/taskPings');
 
 const JWT_SECRET = require('../config/jwtSecret');
 
@@ -128,7 +129,20 @@ router.get('/', async (req, res) => {
   if (!userId) return;
   try {
     const docs = await Reminder.find({ userId }).lean();
-    const list = docs.map(serialize).sort((a, b) => {
+    // The native app schedules the coming pings on the phone itself (it has no
+    // Web Push), so each active reminder carries its next fire times. A task's
+    // ping is left out once its task is gone from the calendar.
+    const hasTasks = docs.some(d => d.active !== false && d.kind === 'task');
+    const owner = hasTasks ? await User.findById(userId).select('schedule').lean() : null;
+    const now = new Date();
+    const upcomingFor = d => {
+      if (d.active === false || !d.nextFireAt) return [];
+      if (d.kind === 'task' && owner && !scheduleHasTask(owner.schedule, d.title)) return [];
+      return [new Date(d.nextFireAt), ...schedule.upcomingFireTimes(d, new Date(d.nextFireAt), {
+        limit: 7, days: 8, isBlocked: instant => isShabbatAt(instant, d.timezone)
+      })].filter(t => t > now).map(t => t.toISOString());
+    };
+    const list = docs.map(d => ({ ...serialize(d), upcoming: upcomingFor(d) })).sort((a, b) => {
       if (a.active !== b.active) return a.active ? -1 : 1;
       return (a.nextFireAt ? new Date(a.nextFireAt).getTime() : Infinity) - (b.nextFireAt ? new Date(b.nextFireAt).getTime() : Infinity);
     });

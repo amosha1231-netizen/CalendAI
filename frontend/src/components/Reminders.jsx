@@ -7,6 +7,10 @@ import {
   isPushSupported, needsHomeScreenInstall, getNotificationPermission, getCurrentSubscription,
   enablePush, disablePush, syncExistingSubscription
 } from '../utils/pushNotifications';
+import {
+  isNativeReminderPlatform, getNativeReminderPermission, requestNativeReminderPermission,
+  syncNativeReminders, sendNativeTestPing, listenForReminderTaps
+} from '../utils/nativeReminders';
 
 // ── Strings (he, en; fr/es fall back to en) ──
 const STRINGS = {
@@ -25,6 +29,10 @@ const STRINGS = {
     notifEnable: 'הפעל התראות', notifDisable: 'כבה', notifTest: 'שלח בדיקה', notifTestSent: 'נשלחה התראת בדיקה',
     notifDenied: 'ההתראות חסומות בדפדפן. אפשר לפתוח אותן בהגדרות האתר.',
     notifUnsupported: 'המכשיר הזה לא תומך בהתראות דחיפה. תקבל פינג כשהאפליקציה פתוחה.',
+    nativeOn: 'ההתראות פועלות. תקבל פינג גם כשהאפליקציה סגורה.', nativeOff: 'הפעל התראות כדי לקבל פינג גם כשהאפליקציה סגורה',
+    nativeDenied: 'ההתראות של CalendAI כבויות בטלפון. פתח הגדרות ← CalendAI ← התראות והפעל אותן (כולל צלילים).',
+    nativeTestBody: 'ההתראות עובדות. כך יישמע הפינג של תזכורת.', nativeTestSoon: 'הפינג יגיע בעוד כמה שניות',
+    channelName: 'תזכורות ומשימות',
     notifIos: 'באייפון: הוסף את CalendAI למסך הבית (שיתוף ← הוסף למסך הבית) ופתח משם כדי לקבל התראות.',
     notifServerOff: 'התראות דחיפה עוד לא הוגדרו בשרת. בינתיים תקבל פינג כשהאפליקציה פתוחה.',
     inAppOnly: 'פינג רק כשהאפליקציה פתוחה',
@@ -52,6 +60,10 @@ const STRINGS = {
     notifEnable: 'Turn on', notifDisable: 'Turn off', notifTest: 'Send a test', notifTestSent: 'Test notification sent',
     notifDenied: 'Notifications are blocked in the browser. You can allow them in the site settings.',
     notifUnsupported: "This device doesn't support push notifications. You'll be pinged while the app is open.",
+    nativeOn: "Notifications are on. You'll get a ping even when the app is closed.", nativeOff: 'Turn on notifications to get a ping even when the app is closed',
+    nativeDenied: "CalendAI's notifications are off on this phone. Open Settings → CalendAI → Notifications and turn them on (with sounds).",
+    nativeTestBody: 'Notifications work. This is how a reminder ping sounds.', nativeTestSoon: 'The ping arrives in a few seconds',
+    channelName: 'Reminders and tasks',
     notifIos: 'On iPhone: add CalendAI to your Home Screen (Share → Add to Home Screen) and open it from there to get notifications.',
     notifServerOff: "Push notifications aren't set up on the server yet. Until then you'll be pinged while the app is open.",
     inAppOnly: 'Pings only while the app is open',
@@ -143,6 +155,8 @@ function playPing() {
     const Ctx = window.AudioContext || window.webkitAudioContext;
     if (!Ctx) return;
     const ctx = new Ctx();
+    // A context made outside a tap starts suspended on iPhone: wake it first.
+    if (ctx.state === 'suspended' && ctx.resume) ctx.resume().catch(() => {});
     [0, 0.25].forEach(offset => {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
@@ -191,8 +205,71 @@ function useReminders(user, refreshKey) {
   return { reminders, setReminders, push, load };
 }
 
+// ── Notifications panel (native app: the phone's own notifications) ──
+function NativeNotificationsPanel({ s }) {
+  const [state, setState] = useState('checking'); // checking | granted | prompt | denied
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState('');
+  const refresh = useCallback(async () => {
+    const p = await getNativeReminderPermission();
+    setState(p === 'unsupported' ? 'denied' : p);
+  }, []);
+  useEffect(() => {
+    refresh();
+    const onVisible = () => { try { if (document.visibilityState === 'visible') refresh(); } catch (e) {} };
+    try { document.addEventListener('visibilitychange', onVisible); } catch (e) {}
+    return () => { try { document.removeEventListener('visibilitychange', onVisible); } catch (e) {} };
+  }, [refresh]);
+
+  const turnOn = async () => {
+    setBusy(true); setNote('');
+    const p = await requestNativeReminderPermission();
+    setBusy(false);
+    setState(p === 'granted' ? 'granted' : 'denied');
+  };
+  const test = async () => {
+    setBusy(true); setNote('');
+    const ok = await sendNativeTestPing({ body: s.nativeTestBody, channelName: s.channelName });
+    setBusy(false);
+    if (ok) setNote(s.nativeTestSoon);
+    else { setNote(''); refresh(); }
+  };
+
+  if (state === 'checking') return null;
+  const on = state === 'granted';
+  return (
+    <div className={`rounded-2xl border p-3 ${on ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
+      <div className="flex items-start gap-3">
+        {on ? <BellRing className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" /> : <BellOff className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />}
+        <div className="flex-1 min-w-0">
+          <p className="font-semibold text-slate-800 text-sm">{s.notifTitle}</p>
+          <p className="text-sm text-slate-600">{on ? s.nativeOn : state === 'denied' ? s.nativeDenied : s.nativeOff}</p>
+          {note && <p className="text-sm text-slate-700 mt-1" role="status">{note}</p>}
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-2 mt-3">
+        {state === 'prompt' && (
+          <button onClick={turnOn} disabled={busy} className="min-h-[44px] px-4 rounded-xl bg-indigo-600 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-60">
+            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Bell className="w-4 h-4" />}{s.notifEnable}
+          </button>
+        )}
+        {on && (
+          <button onClick={test} disabled={busy} className="min-h-[44px] px-4 rounded-xl bg-white border border-emerald-300 text-emerald-700 text-sm font-semibold flex items-center gap-2 disabled:opacity-60">
+            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}{s.notifTest}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Notifications panel ──
 function NotificationsPanel({ s, lang, push }) {
+  if (isNativeReminderPlatform()) return <NativeNotificationsPanel s={s} />;
+  return <WebNotificationsPanel s={s} lang={lang} push={push} />;
+}
+
+function WebNotificationsPanel({ s, lang, push }) {
   const [state, setState] = useState('checking'); // checking | on | off | denied | unsupported | ios | server-off
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState('');
@@ -586,13 +663,31 @@ export default function Reminders({ lang = 'he', user, onClose, onChanged, onReq
  * shows the in-app ping when one is due. Renders nothing else: reminders live
  * in the calendar, not in a card at the top of the home screen.
  */
-export function RemindersPinger({ lang = 'he', user, refreshKey, onReminders }) {
+export function RemindersPinger({ lang = 'he', user, refreshKey, onReminders, onOpenReminders }) {
   const s = getStrings(lang);
   const isRtl = lang === 'he';
   const { reminders, push, load } = useReminders(user, refreshKey);
   const [pings, setPings] = useState([]);
   const firedRef = useRef(new Set());
   const hasPushRef = useRef(false);
+  // Native app: the phone itself plays the ping (local notifications).
+  const nativePingsRef = useRef(false);
+
+  // Native app: hand the coming pings to the phone so they sound with the app closed.
+  useEffect(() => {
+    if (!isNativeReminderPlatform() || !reminders) return;
+    syncNativeReminders(user ? reminders : [], { channelName: s.channelName })
+      .then(() => getNativeReminderPermission())
+      .then(p => { nativePingsRef.current = p === 'granted'; })
+      .catch(() => {});
+  }, [user, reminders, s.channelName]);
+
+  // Tapping a reminder ping opens the reminders screen (a task's opens today).
+  const openRef = useRef(onOpenReminders);
+  openRef.current = onOpenReminders;
+  useEffect(() => listenForReminderTaps(({ kind }) => {
+    if (kind !== 'task' && openRef.current) openRef.current();
+  }), []);
 
   useEffect(() => {
     if (onReminders) onReminders(user ? (reminders || []) : []);
@@ -629,7 +724,7 @@ export function RemindersPinger({ lang = 'he', user, refreshKey, onReminders }) 
         if (at <= now && now - at < 5 * 60 * 1000 && !firedRef.current.has(key)) {
           firedRef.current.add(key);
           fired = true;
-          playPing();
+          if (!nativePingsRef.current) playPing();
           setPings(list => [...list.filter(p => p.key !== key), { key, emoji: r.emoji, title: r.title, time: r.time }]);
           let hidden = false;
           try { hidden = document.visibilityState !== 'visible'; } catch (e) {}
