@@ -588,7 +588,7 @@ function AlarmRingingScreen({ lang, tr, alarm, ringing, schedule, onSolved, onDi
       dir={lang === 'he' ? 'rtl' : 'ltr'}
       onPointerDown={handleAnyTap}
       className="fixed inset-0 z-[10001] bg-gradient-to-b from-indigo-950 via-indigo-900 to-orange-700 text-white flex flex-col items-center justify-between px-6 py-8 select-none"
-      style={{ paddingTop: 'max(2rem, env(safe-area-inset-top))', paddingBottom: 'max(2rem, env(safe-area-inset-bottom))' }}
+      style={{ paddingTop: '2rem', paddingBottom: 'max(2rem, env(safe-area-inset-bottom))' }}
     >
       <style>{`
         @keyframes calendai-alarm-pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.08); } }
