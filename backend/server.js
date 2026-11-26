@@ -36,7 +36,7 @@ const rateLimit = require('express-rate-limit');
 const crypto = require('crypto'); // For Lemon Squeezy webhook HMAC signature verification
 const multer = require('multer');
 const { getRequestLocation, getRequestTimeZone, isValidTimeZone, buildLocation } = require('./services/userLocation');
-const { getScheduleEventsForDate, isZeroDurationEvent, occurrenceDateOf } = require('./services/scheduleOccurrence');
+const { getScheduleEventsForDate, isZeroDurationEvent, occurrenceDateOf, nextDateForDay, pinUndatedOneOffs } = require('./services/scheduleOccurrence');
 const { detectContact } = require('./services/contactDetect');
 const { notifyUser } = require('./services/userNotify');
 const { verifyAppleIdentityToken, isAppleEmailVerified } = require('./services/appleAuth');
@@ -2247,13 +2247,13 @@ app.get('/api/schedule/free-slots', async (req, res) => {
           for (const event of result.data.items || []) {
             if (event.status === 'cancelled' || event.transparency === 'transparent' || !event.start || !event.end) continue;
             if (event.start.date && event.end.date) {
-              if (event.start.date <= dateISO && event.end.date > dateISO) dayEvents.push({ startTime: '00:00', endTime: '23:59', title: event.summary || 'Google Calendar event' });
+              if (event.start.date <= dateISO && event.end.date > dateISO) dayEvents.push({ startTime: '00:00', endTime: '23:59', title: event.summary || 'Google Calendar event', source: 'google' });
             } else if (event.start.dateTime && event.end.dateTime) {
               const eventStart = new Date(event.start.dateTime);
               const eventEnd = new Date(event.end.dateTime);
               const clippedStart = new Date(Math.max(eventStart.getTime(), start.getTime()));
               const clippedEnd = new Date(Math.min(eventEnd.getTime(), end.getTime()));
-              if (clippedEnd > clippedStart) dayEvents.push({ startTime: toClock(clippedStart), endTime: toClock(clippedEnd), title: event.summary || 'Google Calendar event' });
+              if (clippedEnd > clippedStart) dayEvents.push({ startTime: toClock(clippedStart), endTime: toClock(clippedEnd), title: event.summary || 'Google Calendar event', source: 'google' });
             }
           }
           googleCalendarConnected = true;
@@ -2266,8 +2266,23 @@ app.get('/api/schedule/free-slots', async (req, res) => {
     const allFreeSlots = findFreeSlotsForDay(schedule, actualDay, locationId, dayEvents, dateISO);
     
     const suitableSlots = allFreeSlots.filter(slot => slot.durationMinutes >= durationMinutes);
-    
+
+    // What fills the day, so the meeting wizard can say why a time is taken
+    // (e.g. a Google Calendar event the CalendAI day view doesn't show).
+    const busy = dayEvents
+      .filter(event => !isZeroDurationEvent(event))
+      .map(event => {
+        const startMinutes = timeToMinutes(event.startTime);
+        let endMinutes = timeToMinutes(event.endTime);
+        if (startMinutes === null || endMinutes === null) return null;
+        if (endMinutes <= startMinutes) endMinutes += 1440;
+        return { startMinutes, endMinutes, title: String(event.title || event.summary || ''), source: event.source === 'google' ? 'google' : 'calendai' };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.startMinutes - b.startMinutes);
+
     res.json({
+      busy,
       day: actualDay,
       date: dateISO || null,
       googleCalendarConnected,
@@ -2311,6 +2326,11 @@ app.post('/api/schedule/add-to-free-slot', async (req, res) => {
       recurrence: recurrence || 'once',
       location: locationId
     };
+    // A one-off without a date would come back every week.
+    if (newEvent.recurrence === 'once') {
+      const targetDate = nextDateForDay(actualDay, getTodayIso());
+      if (targetDate) newEvent.targetDate = targetDate;
+    }
     
     if (schedule[actualDay]) {
       schedule[actualDay].push(newEvent);
@@ -2777,6 +2797,11 @@ app.post('/api/parse-image', aiLimiter, upload.single('image'), async (req, res)
         recurrence: eventRecurrence,
         location: DEFAULT_LOCATION_ID
       };
+      // A one-off without a date would come back every week.
+      if (eventRecurrence === 'once' && !eventWithRecurrence.targetDate) {
+        const targetDate = nextDateForDay(day, getTodayIso());
+        if (targetDate) eventWithRecurrence.targetDate = targetDate;
+      }
 
       if (schedule[day]) {
         schedule[day].push(eventWithRecurrence);
@@ -2928,6 +2953,11 @@ async function runQuickAdd(userId, userData, text, source = 'quick-add') {
       location: DEFAULT_LOCATION_ID,
       ...(eventRecurrence === 'yearly' && { createdMonth })
     };
+    // A one-off without a date would come back every week.
+    if (eventRecurrence === 'once' && !eventWithRecurrence.targetDate) {
+      const targetDate = nextDateForDay(day, getTodayIso());
+      if (targetDate) eventWithRecurrence.targetDate = targetDate;
+    }
 
     // Add to schedule
     if (schedule[day]) {
@@ -3907,10 +3937,24 @@ app.get('/api/schedule', async (req, res) => {
     try {
       const user = await User.findById(userId);
       if (user && user.schedule) {
+        const schedule = JSON.parse(JSON.stringify(user.schedule));
+        // Older one-off events saved without a date repeated every week; pin
+        // each to its date once and save, so every reader sees the fix.
+        const pinned = pinUndatedOneOffs(schedule, getTodayIso());
+        syncTodayWithCurrentDay(schedule);
+        if (pinned > 0) {
+          try {
+            await User.updateOne(
+              { _id: userId, scheduleRevision: user.scheduleRevision },
+              { $set: { schedule }, $inc: { scheduleRevision: 1 } }
+            );
+          } catch (saveErr) {
+            console.error('Failed to save dated one-off events:', saveErr.message);
+          }
+        }
         // Update the in-memory cache with MongoDB data
-        userSchedules.set(userId, user.schedule);
-        syncTodayWithCurrentDay(user.schedule);
-        return res.json({ schedule: user.schedule });
+        userSchedules.set(userId, schedule);
+        return res.json({ schedule });
       }
     } catch (err) {
       console.error('Failed to load schedule from MongoDB:', err.message);

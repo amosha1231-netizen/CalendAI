@@ -15,6 +15,7 @@ const User = require('../models/User');
 
 // ── Event Model (shared from ../models/Event.js — Multi-Tenancy Isolated) ──
 const Event = require('../models/Event');
+const { nextDateForDay, toIsoDay } = require('../services/scheduleOccurrence');
 
 // ── Helper: Shabbat guard ──
 // Saturday is closed until motzei Shabbat (havdalah at the user's location);
@@ -176,7 +177,12 @@ router.post('/', async (req, res) => {
           eventType: event.eventType,
           duration: event.duration,
           isSleep: event.isSleep,
-          reminderMinutesBefore: event.reminderMinutesBefore
+          reminderMinutesBefore: event.reminderMinutesBefore,
+          // A one-off without a date would come back every week.
+          ...(() => {
+            const date = toIsoDay(targetDate) || (event.recurrence === 'once' ? nextDateForDay(actualDay, new Date().toISOString().slice(0, 10)) : null);
+            return date ? { targetDate: date } : {};
+          })()
         });
         syncTodayWithCurrentDay(schedule);
         await User.findByIdAndUpdate(userId, { $set: { schedule }, $inc: { scheduleRevision: 1 } });

@@ -19,9 +19,12 @@ import { parseTimeString } from './timeFormat';
 const LOCAL_KEY = 'calendai-daily-tasks';
 export const TASKS_CHANGED_EVENT = 'calendai:tasks-changed';
 
-export function notifyTasksChanged() {
+/** `background: true` marks a quiet refresh (live sync), not a change made here. */
+export function notifyTasksChanged({ background = false } = {}) {
   try {
-    if (typeof window !== 'undefined') window.dispatchEvent(new Event(TASKS_CHANGED_EVENT));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(TASKS_CHANGED_EVENT, { detail: { background } }));
+    }
   } catch (e) {}
 }
 
@@ -40,12 +43,13 @@ function writeLocal(list) {
 }
 
 /** The user's own daily tasks + joined challenges. */
-export async function loadDailyTasks(user) {
+export async function loadDailyTasks(user, { strict = false } = {}) {
   if (!user) return readLocal().map(t => ({ ...t, key: `local:${t.id}`, kind: t.kind || 'task' }));
   try {
     const res = await api.get('/api/goals/tasks');
     return Array.isArray(res.data?.tasks) ? res.data.tasks : [];
   } catch (e) {
+    if (strict) throw e;
     return [];
   }
 }
@@ -107,9 +111,9 @@ export function buildTodayItems({ todayEvents = [], dailyTasks = [], lang = 'he'
   return [...calendar, ...daily];
 }
 
-export async function loadTodayStatuses(user) {
+export async function loadTodayStatuses(user, { strict = false } = {}) {
   const today = toDateKey(new Date());
-  const items = await fetchTaskStatuses(user, today, today);
+  const items = await fetchTaskStatuses(user, today, today, { strict });
   const map = {};
   for (const i of items) if (i.date === today) map[i.key] = i.status;
   return map;

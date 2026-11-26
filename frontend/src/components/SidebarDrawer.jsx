@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { X, BarChart3, Zap, Settings, Download, Moon, Sun, Target, Trophy, Activity, Share2, MapPin, Loader2, ExternalLink, CheckCircle, Mic, Globe, User, LogOut, Crown } from 'lucide-react';
+import { X, BarChart3, Zap, Settings, Download, Moon, Sun, Target, Trophy, Activity, Share2, MapPin, Loader2, ExternalLink, CheckCircle, Mic, Globe, User, LogOut, LogIn, Crown } from 'lucide-react';
 import safeStorage from '../utils/safeStorage';
 import { getDeviceTimeZone, setDetectedLocation, presetLocationForTimeZone } from '../utils/userLocation';
 import SiriSetupModal from './SiriSetupModal';
@@ -137,7 +137,7 @@ function isDesktopDevice() {
   }
 }
 
-export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangChange, t, user, isPro, onUpgradeToPro, onOpenNativePaywall, onOpenPlans, onLogout, onOpenShareModal, selectedLocation, onLocationChange, selectedTimezone, onTimezoneChange, timezoneOptions, initialTab = 'settings', title, side = 'right' }) {
+export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangChange, t, user, isPro, onUpgradeToPro, onOpenNativePaywall, onOpenPlans, onLogout, onLogin, onOpenShareModal, selectedLocation, onLocationChange, selectedTimezone, onTimezoneChange, timezoneOptions, initialTab = 'settings', title, side = 'right' }) {
   const [activeTab, setActiveTab] = useState(initialTab);
   const [settingsData, setSettingsData] = useState({
     lang: lang,
@@ -433,6 +433,22 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangC
 
         {/* Content Area */}
         <div className="sidebar-content">
+          {/* Not signed in: say so first, with a way to sign in */}
+          {!user && onLogin && (
+            <div className="mb-4 rounded-2xl border border-[#E3DEFF] bg-[#F4F1FF] p-4">
+              <p className="text-sm font-bold text-slate-800">{lang === 'he' ? 'לא מחובר/ת' : 'Not signed in'}</p>
+              <p className="mt-1 text-xs text-slate-500">
+                {lang === 'he' ? 'התחברו כדי לשמור את היומן, לסנכרן עם Google ולקבל תזכורות.' : 'Sign in to keep your calendar, sync with Google and get reminders.'}
+              </p>
+              <button
+                onClick={onLogin}
+                className="mt-3 w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-aurora text-white text-sm font-bold shadow-glow"
+              >
+                <LogIn className="w-4 h-4" />
+                {lang === 'he' ? 'התחברות / הרשמה' : 'Sign in / Sign up'}
+              </button>
+            </div>
+          )}
           {/* Account Tab: who is signed in, log out, delete account */}
           {activeTab === 'account' && user && (
             <div className="space-y-4">
@@ -891,6 +907,21 @@ export default function SidebarDrawer({ isOpen, onClose, schedule, lang, onLangC
             </div>
           )}
         </div>
+
+        {/* Signed out: the bottom row signs in, where the signed-in row would log out */}
+        {!user && onLogin && (
+          <div className="sidebar-footer">
+            <button onClick={onLogin} className="w-full flex items-center gap-2 p-3 border-t border-slate-200 text-start hover:bg-slate-50">
+              <div className="w-8 h-8 bg-slate-100 rounded-full flex items-center justify-center text-slate-500">
+                <User className="w-4 h-4" />
+              </div>
+              <div className="flex-1 min-w-0 text-sm font-medium text-slate-500 truncate">{lang === 'he' ? 'אורח/ת' : 'Guest'}</div>
+              <span className="text-xs text-brand font-bold flex items-center gap-1">
+                <LogIn className="w-3.5 h-3.5" />{lang === 'he' ? 'התחברות' : 'Sign in'}
+              </span>
+            </button>
+          </div>
+        )}
 
         {/* Signed-in row at the bottom of the other tabs; tapping it opens the account tab */}
         {user && activeTab !== 'account' && (

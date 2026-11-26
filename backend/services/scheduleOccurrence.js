@@ -109,4 +109,44 @@ function occurrenceDateOf(event, todayIso) {
   return toIsoDay(event && event.targetDate) || nextDateForDay(event && event.day, todayIso);
 }
 
-module.exports = { isZeroDurationEvent, eventOccursOnDate, getScheduleEventsForDate, toIsoDay, nextDateForDay, occurrenceDateOf };
+/** The latest date on or before `refIso` that falls on `dayName`. */
+function lastDateForDay(dayName, refIso) {
+  const idx = DAY_NAMES.indexOf(dayName);
+  if (idx < 0 || !refIso) return null;
+  const ref = parseIsoDay(refIso);
+  const diff = (ref.getUTCDay() - idx + 7) % 7;
+  return new Date(ref.getTime() - diff * 86400000).toISOString().slice(0, 10);
+}
+
+// Until 2026-11-24 some one-off events were saved with only a weekday and no
+// date. Read with the "next matching weekday" rule, such an event came back
+// every week (a Thursday meeting from last week showed again this Thursday).
+// Those events were all created by that day, so the date they were meant for
+// is taken as their last weekday on or before it.
+const UNDATED_ONE_OFF_CUTOFF = '2026-11-24';
+
+/**
+ * Give every one-off event that has no date a fixed targetDate, so it stops
+ * repeating weekly. Mutates `schedule`; returns how many events were pinned.
+ * The 'Today' key is a copy of today's weekday and is left to the caller to
+ * rebuild.
+ */
+function pinUndatedOneOffs(schedule, todayIso, cutoffIso = UNDATED_ONE_OFF_CUTOFF) {
+  if (!schedule || typeof schedule !== 'object' || !todayIso) return 0;
+  const refIso = todayIso < cutoffIso ? todayIso : cutoffIso;
+  let pinned = 0;
+  for (const dayName of DAY_NAMES) {
+    const events = schedule[dayName];
+    if (!Array.isArray(events)) continue;
+    for (const ev of events) {
+      if (!ev || typeof ev !== 'object' || ev.recurrence !== 'once' || toIsoDay(ev.targetDate)) continue;
+      const date = lastDateForDay(ev.day && DAY_NAMES.includes(ev.day) ? ev.day : dayName, refIso);
+      if (!date) continue;
+      ev.targetDate = date;
+      pinned++;
+    }
+  }
+  return pinned;
+}
+
+module.exports = { isZeroDurationEvent, eventOccursOnDate, getScheduleEventsForDate, toIsoDay, nextDateForDay, lastDateForDay, occurrenceDateOf, pinUndatedOneOffs, UNDATED_ONE_OFF_CUTOFF };
