@@ -9,9 +9,6 @@ on:
         description: "Build number to share (empty = newest valid build)"
         required: false
         default: ""
-  push:
-    branches: ["claude/project-thread-q6z98t"]
-    paths: ["scripts/asc/**", ".github/workflows/testflight-public-link.yml"]
 
 jobs:
   link:
@@ -43,5 +40,5 @@ jobs:
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-          BUILD_NUMBER: ${{ github.event.inputs.build_number || '4' }}
+          BUILD_NUMBER: ${{ github.event.inputs.build_number }}
         run: python3 scripts/asc/testflight_public_link.py
