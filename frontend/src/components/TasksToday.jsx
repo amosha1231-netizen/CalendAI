@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { sameData } from '../utils/liveSync';
 import { formatTimeString } from '../utils/timeFormat';
 import { Plus, X, Check, ArrowUp, Trash2, Search, Loader2, Trophy } from 'lucide-react';
 import api from '../api/axios';
@@ -86,12 +87,28 @@ function useTodayTasks({ user, todayEvents, lang }) {
     setTasks(t);
     setStatuses(st);
   }, [user]);
+  // Live sync from another device: keep what is shown if the network fails,
+  // and keep the same objects when nothing changed so nothing re-renders.
+  const versionRef = useRef(0);
+  useEffect(() => { versionRef.current += 1; }, [tasks, statuses]);
+  const quietReload = useCallback(async () => {
+    const startedAt = versionRef.current;
+    try {
+      const [t, st] = await Promise.all([
+        loadDailyTasks(user, { strict: true }),
+        loadTodayStatuses(user, { strict: true })
+      ]);
+      if (versionRef.current !== startedAt) return; // a mark was made meanwhile; keep it
+      setTasks(prev => (sameData(prev, t) ? prev : t));
+      setStatuses(prev => (sameData(prev, st) ? prev : st));
+    } catch (e) {}
+  }, [user]);
   useEffect(() => {
     reload();
-    const onChange = () => reload();
+    const onChange = (e) => (e && e.detail && e.detail.background ? quietReload() : reload());
     try { window.addEventListener(TASKS_CHANGED_EVENT, onChange); } catch (e) {}
     return () => { try { window.removeEventListener(TASKS_CHANGED_EVENT, onChange); } catch (e) {} };
-  }, [reload]);
+  }, [reload, quietReload]);
   const items = useMemo(() => buildTodayItems({ todayEvents, dailyTasks: tasks || [], lang }), [todayEvents, tasks, lang]);
   return { items, tasks, statuses, setStatuses, reload, loaded: tasks !== null };
 }
