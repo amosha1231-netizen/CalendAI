@@ -125,6 +125,7 @@ console.log('=== CalendAI Startup Environment Check ===');
 console.log('GOOGLE_CLIENT_ID:', process.env.GOOGLE_CLIENT_ID ? '✅ SET' : '❌ MISSING');
 console.log('GOOGLE_CLIENT_SECRET:', process.env.GOOGLE_CLIENT_SECRET ? '✅ SET' : '❌ MISSING');
 console.log('MONGODB_URI:', (process.env.MONGODB_URI || process.env.MONGO_URI) ? '✅ SET' : '❌ MISSING (will use default)');
+console.log('ANTHROPIC_API_KEY:', process.env.ANTHROPIC_API_KEY ? '✅ SET (AI = Claude)' : '❌ MISSING (AI falls back to OpenRouter/DeepSeek)');
 console.log('OPENROUTER_API_KEY:', process.env.OPENROUTER_API_KEY ? '✅ SET' : '❌ MISSING');
 console.log('SESSION_SECRET:', process.env.SESSION_SECRET ? '✅ SET' : '❌ MISSING (will use default)');
 console.log('NODE_ENV:', process.env.NODE_ENV || 'not set');
@@ -668,14 +669,14 @@ async function checkAICredits(userId) {
  * 
  * @param {string} userId - The user's MongoDB _id.
  * @param {Object} usage - The usage object from OpenRouter response ({ prompt_tokens, completion_tokens, total_tokens }).
- * @param {string} [modelName] - The model name (e.g., 'deepseek/deepseek-chat').
+ * @param {string} [modelName] - The model name (e.g., 'claude-haiku-5-5').
  * @param {string} [action] - The action that triggered the deduction (e.g., 'parse-schedule', 'quick-add', 'reschedule').
  * @param {string} [requestText] - What the user asked. Stored ONLY for owner accounts
  *   (OWNER_EMAILS), so the owner can see what his own requests cost. Other users'
  *   request text is never stored in the ledger.
  * @returns {Promise<{remainingCredits: number|null, costInfo: Object|null}>}
  */
-async function deductAICredit(userId, usage = null, modelName = 'deepseek/deepseek-chat', action = 'ai-call', requestText = null) {
+async function deductAICredit(userId, usage = null, modelName = 'claude-haiku-5-5', action = 'ai-call', requestText = null) {
   if (!mongoose.Types.ObjectId.isValid(userId)) {
     return { remainingCredits: null, costInfo: null };
   }
@@ -2610,7 +2611,7 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
 
     // Charge for the AI call before anything is saved, so a refused charge
     // never leaves half-saved reminders or events behind.
-    const { remainingCredits } = await deductAICredit(userId, parsedResult.usage, parsedResult.modelName || 'deepseek/deepseek-chat', 'parse-schedule', text);
+    const { remainingCredits } = await deductAICredit(userId, parsedResult.usage, parsedResult.modelName || 'claude-haiku-5-5', 'parse-schedule', text);
 
     // ── PREVIEW: return what the AI understood without saving anything. The
     // client shows it for confirmation and saves it via /api/parse-schedule/confirm.
@@ -2745,7 +2746,7 @@ app.post('/api/parse-image', aiLimiter, upload.single('image'), async (req, res)
       });
     }
 
-    const { remainingCredits } = await deductAICredit(userId, parsedResult.usage, parsedResult.modelName || 'google/gemini-2.0-flash-exp', 'parse-image', '📷 (תמונה)');
+    const { remainingCredits } = await deductAICredit(userId, parsedResult.usage, parsedResult.modelName || 'claude-haiku-5-5', 'parse-image', '📷 (תמונה)');
     syncTodayWithCurrentDay(schedule);
     // Save to MongoDB for logged-in users
     if (mongoose.Types.ObjectId.isValid(userId)) {
@@ -2898,7 +2899,7 @@ async function runQuickAdd(userId, userData, text, source = 'quick-add') {
     });
   }
 
-  const { remainingCredits } = await deductAICredit(userId, parsedResult.usage, parsedResult.modelName || 'deepseek/deepseek-chat', source, text);
+  const { remainingCredits } = await deductAICredit(userId, parsedResult.usage, parsedResult.modelName || 'claude-haiku-5-5', source, text);
   syncTodayWithCurrentDay(schedule);
   // Save to MongoDB for logged-in users
   if (userId && mongoose.Types.ObjectId.isValid(userId)) {
@@ -3501,7 +3502,7 @@ app.post('/api/reschedule', aiLimiter, async (req, res) => {
     const currentSchedule = getUserSchedule(userId);
     const result = await rescheduleWithGemini(currentSchedule, effectiveReason);
 
-    const { remainingCredits } = await deductAICredit(userId, result.usage, result.modelName || 'deepseek/deepseek-chat', 'reschedule', effectiveReason);
+    const { remainingCredits } = await deductAICredit(userId, result.usage, result.modelName || 'claude-haiku-5-5', 'reschedule', effectiveReason);
     // Save to MongoDB for logged-in users
     if (mongoose.Types.ObjectId.isValid(userId)) {
       await saveScheduleToMongo(userId, result.newSchedule);

@@ -1,38 +1,4 @@
-const OpenAI = require('openai');
-
-let openaiClient = null;
-let modelName = null;
-
-/**
- * Initialize the DeepSeek AI model via OpenRouter.
- * Called lazily to ensure OPENROUTER_API_KEY is available.
- */
-function initModel() {
-  if (openaiClient) return;
-  const apiKey = process.env.OPENROUTER_API_KEY?.trim();
-  if (!apiKey || apiKey === 'your_openrouter_api_key_here') {
-    console.warn('OPENROUTER_API_KEY not configured. AI features will use fallback parser.');
-    return;
-  }
-  try {
-    openaiClient = new OpenAI({
-      baseURL: 'https://openrouter.ai/api/v1',
-      apiKey: apiKey,
-      // DeepSeek on OpenRouter is sometimes rate-limited upstream (429
-      // "engine_overloaded"). Retry a few more times with the SDK's backoff
-      // before the request is given up.
-      maxRetries: 4,
-      defaultHeaders: {
-        'HTTP-Referer': process.env.BASE_URL || 'https://calendai.org',
-        'X-Title': 'CalendAI',
-      },
-    });
-    modelName = 'deepseek/deepseek-chat';
-    console.log('✅ DeepSeek AI model initialized via OpenRouter (deepseek/deepseek-chat)');
-  } catch (e) {
-    console.error('Failed to initialize DeepSeek AI model:', e.message);
-  }
-}
+const { isAIConfigured, completeJson } = require('./aiClient');
 
 /**
  * Build the system instruction prompt for the AI.
@@ -186,24 +152,6 @@ const RECURRING_REMINDER_RULES = `
 `;
 
 /**
- * Token usage of an OpenRouter completion, plus the real cost OpenRouter charged
- * (usage.cost, in USD) when it reports one. Billing charges that real cost
- * × markup (config/pricing.js); see services/tokenTracker.js.
- */
-function extractUsage(completion) {
-  const u = completion && completion.usage;
-  if (!u) return null;
-  const usage = {
-    prompt_tokens: u.prompt_tokens || 0,
-    completion_tokens: u.completion_tokens || 0,
-    total_tokens: u.total_tokens || 0
-  };
-  const cost = u.cost == null ? NaN : Number(u.cost);
-  if (Number.isFinite(cost) && cost >= 0) usage.cost = cost;
-  return usage;
-}
-
-/**
  * Parse a free-text Hebrew (or English) scheduling request into structured events.
  * Now accepts existing schedule data for conflict-aware scheduling.
  * @param {string} text - The user's natural language request.
@@ -216,8 +164,7 @@ function extractUsage(completion) {
  */
 
 async function parseWithGemini(text, options = {}) {
-  initModel();
-  if (!openaiClient) {
+  if (!isAIConfigured()) {
     const { fallbackParseAdvice } = require('./aiFallback');
     return fallbackParseAdvice(text);
   }
@@ -924,21 +871,11 @@ ${RECURRING_REMINDER_RULES}
   `;
 
   try {
-    const completion = await openaiClient.chat.completions.create({
-      model: modelName,
-      messages: [
-        { role: 'system', content: systemInstruction },
-        { role: 'user', content: userPrompt }
-      ],
-      temperature: 0.3,
-      response_format: { type: 'json_object' },
-      usage: { include: true }, // OpenRouter returns the real charged cost in usage.cost
+    const { parsed, usage, modelName } = await completeJson({
+      system: systemInstruction,
+      user: userPrompt,
+      label: 'parse',
     });
-
-    const raw = completion.choices?.[0]?.message?.content || '{}';
-    const parsed = JSON.parse(raw);
-    // ── Extract token usage from OpenRouter response ──
-    const usage = extractUsage(completion);
     if (usage) {
       console.log(`[Token Usage] parseWithGemini — Prompt: ${usage.prompt_tokens}, Completion: ${usage.completion_tokens}, Total: ${usage.total_tokens}`);
     }
@@ -1054,12 +991,12 @@ ${RECURRING_REMINDER_RULES}
     }
 
     // If nothing matched, use fallback
-    console.warn('DeepSeek returned unexpected structure, using fallback. Raw:', raw.slice(0, 200));
+    console.warn('AI returned unexpected structure, using fallback. Keys:', Object.keys(parsed || {}).join(','));
     const { fallbackParseAdvice } = require('./aiFallback');
     return fallbackParseAdvice(text);
 
   } catch (error) {
-    console.error('DeepSeek parse failed, using fallback:', error);
+    console.error('AI parse failed, using fallback:', error);
     const { fallbackParseAdvice } = require('./aiFallback');
     return fallbackParseAdvice(text);
   }
@@ -1079,15 +1016,14 @@ function cleanTitle(title) {
 }
 
 /**
- * Parse an image (screenshot, class schedule,calendar image)using a vision-capable model via OpenRouter.
+ * Parse an image (screenshot, class schedule,calendar image)using a vision-capable model (see services/aiClient.js).
  * The image is sent as base64 data URL, and the AI extracts schedule events from it.
  * @param {string} base64Image - The base64-encoded image data (without data URL prefix).
  * @param {string} [mimeType] - The MIME type of the image(e.g.,'image/jpeg','image/png').
  * @returns {Promise<Object>} Parsed result with events, replyMessage, etc.
  */
 async function parseImageWithVision(base64Image,mimeType = 'image/jpeg') {
-  initModel();
-  if (!openaiClient) {
+  if (!isAIConfigured()) {
     const{ fallbackParseAdvice } = require('./aiFallback');
     return fallbackParseAdvice('[תמונה] התמונה לא עובדה עקב חוסר ב-AI.'); 
   }
@@ -1126,38 +1062,16 @@ RULES:
 
 Current date context: ${todayString}, day: ${todayEnglish}`;
 
-  const userPrompt = [
-    {
-      type: 'text',
-      text: `Analyze this image and extract all the schedule events visible in it. Today is ${todayString} (${todayEnglish}). Respond in Hebrew.`
-    },
-    {
-      type: 'image_url',
-      image_url: {
-        url: `data:${mimeType};base64,${base64Image}`,
-        detail: 'high'
-      }
-    }
-  ];
+  const userPrompt = `Analyze this image and extract all the schedule events visible in it. Today is ${todayString} (${todayEnglish}). Respond in Hebrew.`;
 
   try {
-    // Use a vision-capable model via OpenRouter
-    const visionModel = 'google/gemini-2.0-flash-exp';  // Supports vision
-    const completion = await openaiClient.chat.completions.create({
-      model: visionModel,
-      messages: [
-        { role: 'system', content: systemInstruction },
-        { role: 'user', content: userPrompt }
-      ],
-      temperature:0.2,
-      response_format: { type: 'json_object' },
-      usage: { include: true }, // OpenRouter returns the real charged cost in usage.cost
-      max_tokens: 4096
+    const { parsed, usage, modelName: visionModel } = await completeJson({
+      system: systemInstruction,
+      user: userPrompt,
+      image: { data: base64Image, mimeType },
+      maxTokens: 4096,
+      label: 'vision',
     });
-
-    const raw = completion.choices?.[0]?.message?.content || '{}';
-    const parsed = JSON.parse(raw);
-    const usage = extractUsage(completion);
 
     // Handle error response
     if (parsed.error) {
@@ -1211,8 +1125,7 @@ Current date context: ${todayString}, day: ${todayEnglish}`;
  * @returns {Promise<Object>} Parsed result with events, replyMessage, etc.
  */
 async function parseWithGeminiSmart(text, options = {}) {
-  initModel();
-  if (!openaiClient) {
+  if (!isAIConfigured()) {
     const { fallbackParseAdvice } = require('./aiFallback');
     return fallbackParseAdvice(text);
   }
@@ -1654,22 +1567,11 @@ ${RECURRING_REMINDER_RULES}
   `;
 
   try {
-    const completion = await openaiClient.chat.completions.create({
-      model: modelName,
-      messages: [
-        { role: 'system', content: systemInstruction },
-        { role: 'user', content: prompt }
-      ],
-      temperature: 0.3,
-      response_format: { type: 'json_object' },
-      usage: { include: true }, // OpenRouter returns the real charged cost in usage.cost
+    const { parsed, usage, modelName } = await completeJson({
+      system: systemInstruction,
+      user: prompt,
+      label: 'parse-smart',
     });
-
-    const raw = completion.choices?.[0]?.message?.content || '{}';
-    const parsed = JSON.parse(raw);
-
-    // ── Extract token usage from OpenRouter response ──
-    const usage = extractUsage(completion);
     if (usage) {
       console.log(`[Token Usage] parseWithGeminiSmart — Prompt: ${usage.prompt_tokens}, Completion: ${usage.completion_tokens}, Total: ${usage.total_tokens}`);
     }
@@ -1784,23 +1686,22 @@ ${RECURRING_REMINDER_RULES}
     }
 
     // If nothing matched, use fallback
-    console.warn('DeepSeek returned unexpected structure, using fallback. Raw:', raw.slice(0, 200));
+    console.warn('AI returned unexpected structure, using fallback. Keys:', Object.keys(parsed || {}).join(','));
     const { fallbackParseAdvice } = require('./aiFallback');
     return fallbackParseAdvice(text);
 
   } catch (error) {
-    console.error('DeepSeek smart parse failed, using fallback:', error);
+    console.error('AI smart parse failed, using fallback:', error);
     const { fallbackParseAdvice } = require('./aiFallback');
     return fallbackParseAdvice(text);
   }
 }
 
 /**
- * Reschedule events using DeepSeek AI.
+ * Reschedule events using the AI model (see services/aiClient.js).
  */
 async function rescheduleWithGemini(currentSchedule, reason) {
-  initModel();
-  if (!openaiClient) {
+  if (!isAIConfigured()) {
     throw new Error("AI model is not initialized.");
   }
 
@@ -1849,22 +1750,11 @@ async function rescheduleWithGemini(currentSchedule, reason) {
   `;
 
   try {
-    const completion = await openaiClient.chat.completions.create({
-      model: modelName,
-      messages: [
-        { role: 'system', content: systemInstruction },
-        { role: 'user', content: prompt }
-      ],
-      temperature: 0.3,
-      response_format: { type: 'json_object' },
-      usage: { include: true }, // OpenRouter returns the real charged cost in usage.cost
+    const { parsed, usage, modelName } = await completeJson({
+      system: systemInstruction,
+      user: prompt,
+      label: 'reschedule',
     });
-
-    const raw = completion.choices?.[0]?.message?.content || '{}';
-    const parsed = JSON.parse(raw);
-
-    // ── Extract token usage from OpenRouter response ──
-    const usage = extractUsage(completion);
     if (usage) {
       console.log(`[Token Usage] rescheduleWithGemini — Prompt: ${usage.prompt_tokens}, Completion: ${usage.completion_tokens}, Total: ${usage.total_tokens}`);
     }
@@ -1876,7 +1766,7 @@ async function rescheduleWithGemini(currentSchedule, reason) {
     return { ...parsed, usage, modelName };
 
   } catch (error) {
-    console.error('DeepSeek reschedule failed:', error);
+    console.error('AI reschedule failed:', error);
     throw new Error('Failed to get a valid reschedule plan from AI.');
   }
 }

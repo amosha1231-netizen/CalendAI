@@ -144,7 +144,7 @@ export default function AdminCosts() {
                     <div className="mt-2 text-[11px] text-slate-400 flex flex-wrap gap-x-3">
                       <span>{Number(r.totalTokens || 0).toLocaleString()} טוקנים</span>
                       <span>{r.credits} קרדיטים</span>
-                      <span>{r.realCostIsExact ? 'עלות מדויקת מ-OpenRouter' : 'עלות משוערת'}</span>
+                      <span>{r.realCostIsExact ? 'עלות מדויקת לפי הטוקנים' : 'עלות משוערת'}</span>
                     </div>
                   </li>
                 ))}

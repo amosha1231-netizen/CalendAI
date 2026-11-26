@@ -14,7 +14,7 @@ const en = {
   back: 'Back to CalendAI',
   rights: 'All rights reserved.',
   title: 'Privacy Policy',
-  updated: 'Last updated: November 15, 2026',
+  updated: 'Last updated: November 26, 2026',
   intro: [
     'This Privacy Policy explains what information **CalendAI** ("we", "our", or "the App") collects when you use the website www.calendai.org and the CalendAI apps for Android and iOS, why we collect it, who we share it with, and the choices and rights you have. CalendAI is operated from Israel, and we are responsible for the personal information described here.',
     'You are not legally required to give us any of this information. However, without some of it (for example, an email address for an account) we cannot provide the relevant feature.'
@@ -51,7 +51,7 @@ const en = {
     {
       id: 'ai', icon: Sparkles, color: 'text-purple-500', title: 'AI Processing',
       blocks: [
-        { p: 'When you use an AI feature, the text or image you submit, together with the context needed to answer (such as the current date, your time zone, and relevant parts of your schedule in CalendAI), is sent to **OpenRouter**, which passes it to an AI model provider (currently DeepSeek models, and a vision model for images). These providers may process the data in other countries, including the United States and China. See [OpenRouter\'s Privacy Policy](https://openrouter.ai/privacy).' },
+        { p: 'When you use an AI feature, the text or image you submit, together with the context needed to answer (such as the current date, your time zone, and relevant parts of your schedule in CalendAI), is sent to **Anthropic**, the provider of the Claude AI model, which processes it to produce the answer. Anthropic does not use data sent through its API to train its models. Anthropic may process the data in other countries, including the United States. See [Anthropic\'s Privacy Policy](https://www.anthropic.com/legal/privacy).' },
         { p: 'We do not use your information to train AI models. Please avoid entering sensitive information that is not needed for scheduling.' }
       ]
     },
@@ -75,7 +75,7 @@ const en = {
         { p: 'We share information only with service providers that help us run CalendAI, and only as needed for their role:' },
         { ul: [
           '**Hosting and database:** Render (servers) and our cloud database provider.',
-          '**AI:** OpenRouter and the AI model providers it routes to.',
+          '**AI:** Anthropic (Claude).',
           '**Calendars and sign-in:** Google and Microsoft, when you connect them.',
           '**Payments:** Lemon Squeezy (website purchases), RevenueCat, Apple App Store, and Google Play (app purchases).',
           '**Notifications:** the push services of your browser or device (such as Google Firebase Cloud Messaging and Apple Push Notification service).',
@@ -156,7 +156,7 @@ const he = {
   back: 'חזרה ל-CalendAI',
   rights: 'כל הזכויות שמורות.',
   title: 'מדיניות פרטיות',
-  updated: 'עודכן לאחרונה: 15 בנובמבר 2026',
+  updated: 'עודכן לאחרונה: 26 בנובמבר 2026',
   intro: [
     'מדיניות פרטיות זו מסבירה איזה מידע **CalendAI** ("אנחנו", "האפליקציה") אוספת כשאתם משתמשים באתר www.calendai.org ובאפליקציות CalendAI ל-Android ול-iOS, למה אנחנו אוספים אותו, עם מי אנחנו משתפים אותו, ואילו בחירות וזכויות יש לכם. CalendAI מופעלת מישראל, ואנחנו האחראים למידע האישי המתואר כאן. המדיניות מנוסחת בלשון רבים מטעמי נוחות, ומתייחסת לכל המגדרים.',
     'אינכם חייבים לפי חוק למסור לנו את המידע הזה. עם זאת, בלי חלק ממנו (למשל, כתובת אימייל לחשבון) לא נוכל לספק את הפיצ\'ר הרלוונטי.'
@@ -193,7 +193,7 @@ const he = {
     {
       id: 'ai', icon: Sparkles, color: 'text-purple-500', title: 'עיבוד בבינה מלאכותית',
       blocks: [
-        { p: 'כשאתם משתמשים בפיצ\'ר AI, הטקסט או התמונה ששלחתם, יחד עם ההקשר הדרוש לתשובה (כמו התאריך, אזור הזמן וחלקים רלוונטיים מהלו"ז שלכם ב-CalendAI), נשלחים ל-**OpenRouter**, שמעבירה אותם לספק מודל AI (כיום מודלים של DeepSeek, ומודל ראייה לתמונות). ספקים אלה עשויים לעבד את המידע במדינות אחרות, כולל ארצות הברית וסין. ראו את [מדיניות הפרטיות של OpenRouter](https://openrouter.ai/privacy).' },
+        { p: 'כשאתם משתמשים בפיצ\'ר AI, הטקסט או התמונה ששלחתם, יחד עם ההקשר הדרוש לתשובה (כמו התאריך, אזור הזמן וחלקים רלוונטיים מהלו"ז שלכם ב-CalendAI), נשלחים ל-**Anthropic**, ספקית מודל ה-AI ‏Claude, שמעבדת אותם כדי להפיק את התשובה. Anthropic לא משתמשת במידע שנשלח דרך ה-API שלה כדי לאמן את המודלים שלה. Anthropic עשויה לעבד את המידע במדינות אחרות, כולל ארצות הברית. ראו את [מדיניות הפרטיות של Anthropic](https://www.anthropic.com/legal/privacy).' },
         { p: 'איננו משתמשים במידע שלכם כדי לאמן מודלי AI. אנא הימנעו מהזנת מידע רגיש שאינו נחוץ לתזמון.' }
       ]
     },
@@ -217,7 +217,7 @@ const he = {
         { p: 'אנחנו משתפים מידע רק עם נותני שירות שעוזרים לנו להפעיל את CalendAI, ורק במידה הדרושה לתפקידם:' },
         { ul: [
           '**אחסון ומסד נתונים:** Render (שרתים) וספק מסד הנתונים בענן שלנו.',
-          '**AI:** OpenRouter וספקי מודלי ה-AI שהיא מעבירה אליהם.',
+          '**AI:** Anthropic ‏(Claude).',
           '**יומנים והתחברות:** Google ו-Microsoft, כשאתם מחברים אותם.',
           '**תשלומים:** Lemon Squeezy (רכישות באתר), RevenueCat, Apple App Store ו-Google Play (רכישות באפליקציה).',
           '**התראות:** שירותי ה-push של הדפדפן או המכשיר (כמו Google Firebase Cloud Messaging ו-Apple Push Notification service).',

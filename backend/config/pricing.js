@@ -4,11 +4,12 @@
 // How a request is charged:
 //   points = provider's real cost in USD × MARKUP × POINTS_PER_DOLLAR
 //
-// The real cost is what OpenRouter actually charged for that call
-// (usage.cost on the response), so a provider price change is passed on
-// automatically. If OpenRouter does not report a cost, the tokens are priced
-// from OpenRouter's live model price list (refreshed every few hours), and
-// only if that is unreachable too, from FALLBACK_MODEL_PRICES below.
+// The AI is Claude Haiku 5.5 on the Anthropic API (services/aiClient.js). Its
+// cost per call is computed from the token counts Anthropic returns and
+// CLAUDE_PRICES below; update those if Anthropic changes its prices.
+// (Old OpenRouter path, used only until ANTHROPIC_API_KEY is set: the real cost
+// OpenRouter reports in usage.cost, else its live price list, else
+// FALLBACK_MODEL_PRICES.)
 //
 // Pro is ₪29/month (the price itself lives in Lemon Squeezy / the stores).
 // At MARKUP 3, a Pro user who spends all 3,000 points costs at most
@@ -50,8 +51,18 @@ const DEFAULTS = {
  * (deepseek-chat measured at ≈ $0.27–0.33 per 1M tokens, mostly input).
  */
 const FALLBACK_MODEL_PRICES = {
+  'claude-haiku-5-5': { input: 0.10, output: 0.50 },
   'deepseek/deepseek-chat': { input: 0.35, output: 1.20 },
   default: { input: 1.00, output: 3.00 }
+};
+
+/**
+ * Anthropic API prices in USD per 1M tokens (prompts up to 100K tokens).
+ * Cache writes cost 1.25x input and cache reads 0.1x input (applied in
+ * services/aiClient.js). Checked 2026-11-26.
+ */
+const CLAUDE_PRICES = {
+  'claude-haiku-5-5': { input: 0.10, output: 0.50 }
 };
 
 const pricing = {
@@ -64,6 +75,7 @@ const pricing = {
   get ownerPointsFloor() { return DEFAULTS.OWNER_POINTS_FLOOR; },
   get livePriceRefreshMs() { return DEFAULTS.LIVE_PRICE_REFRESH_MS; },
   fallbackModelPrices: FALLBACK_MODEL_PRICES,
+  claudePrices: CLAUDE_PRICES,
   DEFAULTS
 };
 

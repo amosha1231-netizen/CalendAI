@@ -10,6 +10,8 @@ services:
     envVars:
       - key: PORT
         value: "10000"
+      - key: ANTHROPIC_API_KEY
+        sync: false
       - key: OPENROUTER_API_KEY
         sync: false
       - key: LEMON_SQUEEZY_API_KEY

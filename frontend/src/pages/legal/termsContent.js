@@ -55,7 +55,7 @@ const en = {
     {
       id: 'ai', icon: Sparkles, color: 'text-purple-500', title: 'AI Features',
       blocks: [
-        { p: 'Some features use artificial intelligence provided by third parties (currently through OpenRouter). AI can make mistakes: it may misunderstand a request, set the wrong date or time, or miss details. **Please check events and reminders created by AI before you rely on them.**' },
+        { p: 'Some features use artificial intelligence provided by third parties (currently Claude, by Anthropic). AI can make mistakes: it may misunderstand a request, set the wrong date or time, or miss details. **Please check events and reminders created by AI before you rely on them.**' },
         { p: 'Text, voice transcripts, and images you submit to AI features are sent to our AI provider for processing, as described in our [Privacy Policy](/privacy). Please do not include sensitive information (such as health, financial, or ID details) that you do not need in order to schedule something.' },
         { p: 'AI suggestions are not professional advice (medical, legal, financial, or otherwise).' }
       ]
@@ -146,7 +146,7 @@ const en = {
     {
       id: 'third-parties', icon: ExternalLink, color: 'text-indigo-500', title: 'Third-Party Services',
       blocks: [
-        { p: 'CalendAI works with services run by other companies, including Google, Microsoft, OpenRouter and AI model providers, Lemon Squeezy, RevenueCat, Apple, and Google Play. Your use of those services is also subject to their own terms and privacy policies. We are not responsible for services we do not control, including their availability.' }
+        { p: 'CalendAI works with services run by other companies, including Google, Microsoft, Anthropic, Lemon Squeezy, RevenueCat, Apple, and Google Play. Your use of those services is also subject to their own terms and privacy policies. We are not responsible for services we do not control, including their availability.' }
       ]
     },
     {
@@ -253,7 +253,7 @@ const he = {
     {
       id: 'ai', icon: Sparkles, color: 'text-purple-500', title: 'פיצ\'רים של בינה מלאכותית',
       blocks: [
-        { p: 'חלק מהפיצ\'רים משתמשים בבינה מלאכותית של צדדים שלישיים (כיום דרך OpenRouter). בינה מלאכותית עלולה לטעות: להבין בקשה לא נכון, לקבוע תאריך או שעה שגויים או להשמיט פרטים. **אנא בדקו אירועים ותזכורות שנוצרו בעזרת AI לפני שאתם מסתמכים עליהם.**' },
+        { p: 'חלק מהפיצ\'רים משתמשים בבינה מלאכותית של צדדים שלישיים (כיום Claude של Anthropic). בינה מלאכותית עלולה לטעות: להבין בקשה לא נכון, לקבוע תאריך או שעה שגויים או להשמיט פרטים. **אנא בדקו אירועים ותזכורות שנוצרו בעזרת AI לפני שאתם מסתמכים עליהם.**' },
         { p: 'טקסט, תמלול קולי ותמונות שאתם שולחים לפיצ\'רי ה-AI מועברים לספק ה-AI שלנו לעיבוד, כמתואר ב[מדיניות הפרטיות](/privacy). אנא אל תכללו מידע רגיש (כמו מידע רפואי, פיננסי או מספרי זהות) שאינו נחוץ כדי לתזמן משהו.' },
         { p: 'הצעות ה-AI אינן ייעוץ מקצועי (רפואי, משפטי, פיננסי או אחר).' }
       ]
@@ -344,7 +344,7 @@ const he = {
     {
       id: 'third-parties', icon: ExternalLink, color: 'text-indigo-500', title: 'שירותי צד שלישי',
       blocks: [
-        { p: 'CalendAI עובדת עם שירותים של חברות אחרות, כולל Google, Microsoft, OpenRouter וספקי מודלי AI, Lemon Squeezy, RevenueCat, Apple ו-Google Play. השימוש בשירותים אלה כפוף גם לתנאים ולמדיניות הפרטיות שלהם. איננו אחראים לשירותים שאינם בשליטתנו, כולל לזמינותם.' }
+        { p: 'CalendAI עובדת עם שירותים של חברות אחרות, כולל Google, Microsoft, Anthropic, Lemon Squeezy, RevenueCat, Apple ו-Google Play. השימוש בשירותים אלה כפוף גם לתנאים ולמדיניות הפרטיות שלהם. איננו אחראים לשירותים שאינם בשליטתנו, כולל לזמינותם.' }
       ]
     },
     {
