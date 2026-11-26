@@ -1,0 +1,9 @@
+/* Hebrew Siri phrases for the "add event" action (keys match SiriIntents.swift). */
+"Add an event in ${applicationName}" = "תוסיף אירוע ב${applicationName}";
+"Add an event with ${applicationName}" = "תוסיפי אירוע ב${applicationName}";
+"Add to ${applicationName}" = "תוסיף ל${applicationName}";
+"New event in ${applicationName}" = "אירוע חדש ב${applicationName}";
+"Schedule in ${applicationName}" = "תקבע ב${applicationName}";
+"Write in ${applicationName}" = "תרשום ב${applicationName}";
+"${applicationName} add an event" = "${applicationName} תוסיף אירוע";
+"${applicationName} new event" = "${applicationName} אירוע חדש";
