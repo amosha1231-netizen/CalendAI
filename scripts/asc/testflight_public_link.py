@@ -131,8 +131,10 @@ call("POST", f"/v1/betaGroups/{group['id']}/relationships/builds",
 step("Submit for Beta App Review")
 sub = call("POST", "/v1/betaAppReviewSubmissions", {"data": {"type": "betaAppReviewSubmissions",
            "relationships": {"build": {"data": {"type": "builds", "id": build["id"]}}}}}, ok=(201, 409, 422))
-state = call("GET", f"/v1/builds/{build['id']}/betaAppReviewSubmission")
-print("review state:", (state or {}).get("data", {}).get("attributes", {}).get("betaReviewState") if state else None)
+if sub and sub.get("errors"):
+    print("submission response:", json.dumps(sub["errors"])[:1500])
+state = call("GET", f"/v1/builds/{build['id']}/betaAppReviewSubmission", ok=(200, 404))
+print("review state:", ((state or {}).get("data") or {}).get("attributes", {}).get("betaReviewState"))
 detail = call("GET", f"/v1/builds/{build['id']}/buildBetaDetail")
 if detail: print("build beta detail:", detail["data"]["attributes"])
 
