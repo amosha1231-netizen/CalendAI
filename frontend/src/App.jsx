@@ -29,6 +29,7 @@ import Routines, { consumeSharedRoutineParam, clearSharedRoutineParam } from "./
 import WeekStrip from "./components/WeekStrip";
 import { formatTimeString } from "./utils/timeFormat";
 import { TasksTodayCard, TasksSheet, notifyTasksChanged } from "./components/TasksToday";
+import { startLiveSync, sameData } from "./utils/liveSync";
 import PlansSheet from "./components/PlansSheet";
 import Reminders, { RemindersPinger, ReminderChip, remindersOnDate, consumeRemindersParam } from "./components/Reminders";
 
@@ -744,17 +745,37 @@ function AppRoutes() {
     safeStorage.setItem('calendai-pwa-banner-dismissed', 'true');
   };
 
-  const fetchSchedule = useCallback(async () => {
+  // Bumped on every schedule change, so a background refresh that started
+  // before a local edit never overwrites that edit with older server data.
+  const scheduleVersionRef = useRef(0);
+  useEffect(() => { scheduleVersionRef.current += 1; }, [schedule]);
+
+  const fetchSchedule = useCallback(async ({ background = false } = {}) => {
+    const startedAt = scheduleVersionRef.current;
     try {
-      const res = await fetch(`${API_BASE}/api/schedule`, { credentials: "include", headers: getAuthHeaders() });
+      const res = await fetch(`${API_BASE}/api/schedule`, { credentials: "include", headers: getAuthHeaders(), cache: "no-store" });
       if (res.ok) {
         const data = await res.json();
-        if (data.schedule) setSchedule(data.schedule);
+        if (!data.schedule) return;
+        if (background && scheduleVersionRef.current !== startedAt) return;
+        // Same data: keep the old object so nothing re-renders or reloads.
+        setSchedule(prev => (sameData(prev, data.schedule) ? prev : data.schedule));
       }
     } catch (err) {
-      console.error("Failed to fetch schedule:", err);
+      if (!background) console.error("Failed to fetch schedule:", err);
     }
   }, []);
+
+  // Changes made in another browser or device on the same account show up here
+  // when this tab comes back into view, and every minute while it is open.
+  const signedIn = Boolean(user);
+  useEffect(() => {
+    if (!signedIn) return undefined;
+    return startLiveSync(() => {
+      fetchSchedule({ background: true });
+      notifyTasksChanged({ background: true });
+    });
+  }, [signedIn, fetchSchedule]);
 
   const refreshUserCredits = useCallback(async () => {
     if (!user) return;

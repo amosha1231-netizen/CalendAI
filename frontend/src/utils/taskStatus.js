@@ -66,12 +66,13 @@ function localRange(from, to) {
 }
 
 /** Load marks for [from, to] (inclusive date keys). */
-export async function fetchTaskStatuses(user, from, to) {
+export async function fetchTaskStatuses(user, from, to, { strict = false } = {}) {
   if (!user) return localRange(from, to);
   try {
     const res = await api.get('/api/task-status', { params: { from, to } });
     return Array.isArray(res.data?.items) ? res.data.items : [];
   } catch (e) {
+    if (strict) throw e;
     return localRange(from, to);
   }
 }
