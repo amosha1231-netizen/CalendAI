@@ -7017,3 +7017,56 @@ No code changes this round beyond this file.
 motzei-Shabbat parity), no master movement beyond what round 109 already
 reported, no new PR against this branch. Open items unchanged from round
 109 (see above).
+
+## Round 111: re-verify baseline, no drift since round 110
+
+Fresh clone; `npm install` in both `frontend/` and `backend/`. `npm run
+build` (frontend): clean. `node --test "test/**/*.test.js"` (backend): 317
+tests, 301 pass, 16 fail — confirmed by name (tests 5-8, 87-95, 152-154) to
+be the exact same documented `mongodb-memory-server`-blocked set as every
+prior round; not a regression. `node --check` on all seven backend scope
+files under direct edit this feature (`MutualBooking.js`,
+`ProviderBooking.js`, `mutualRoutes.js`, `providerRoutes.js`,
+`googleCalendar.js`, `mutualAvailability.js`, `test/mutualBooking.test.js`):
+all OK (frontend JSX scope files verified via the successful Vite build).
+Re-verified items 1-5 directly against current code (not just the
+checkmarks): `setInputText("")` still fires immediately in `handleParse`
+(`frontend/src/App.jsx:1138`); `multer` + `POST /api/parse-image` +
+`parseImageWithVision` still present and wired
+(`backend/server.js:2511`, `backend/services/aiService.js:1032`); the
+frontend upload button still calls `handleParseImage` →
+`${API_BASE}/api/parse-image` (`frontend/src/App.jsx:1051,1067`). All
+items 1-5 genuinely hold.
+
+Drift check: `git fetch origin master` — unchanged since round 109/110
+(`2089f58`, PR #78 motzei-Shabbat). `list_pull_requests` (state=open): four
+open PRs (#79, #69, #59, #30), none targeting or overlapping this branch's
+scope files. `list_pull_requests` (head=this branch, state=all): still
+only the two already-closed PRs (#17, #28) — no open PR for
+`wip/mutual-provider-booking`. No response yet to the round 100/103
+merge-decision escalation, or to round 109's motzei-Shabbat feature-parity
+question.
+
+Did not re-run the merge-tree conflict check or spawn a fresh full
+adversarial review this round — master hasn't moved and nothing in the 10
+mutual/provider files has changed since round 109's checks, consistent
+with the round 105-108/110 pattern of not re-doing work when nothing
+changed. No code changes this round beyond this file.
+
+**Not sending a push notification this round.** Nothing new since round
+109/110 — same conflict state, same two open questions (merge/PR decision;
+motzei-Shabbat parity), no master movement, no new PR against this
+branch. Re-notifying now would be the same noise rounds 110 already
+declined to make.
+
+Open items unchanged from round 109/110:
+1. Merge/PR decision for `wip/mutual-provider-booking` — still the only
+   blocker. Recommend prioritizing this immediately.
+2. Should mutual/provider booking also support motzei Shabbat (Saturday
+   night) scheduling, matching the single-person path master shipped in
+   PR #78? Net-new scope if yes.
+3. Whether to keep running this scheduled sweep — periodic drift checks
+   are earning their cost again now that master is moving; recommend
+   keeping the schedule at least until the merge decision lands.
+4. Should a provider booking's synced Google Calendar event description
+   include the guest's phone number/notes (currently name only)?
