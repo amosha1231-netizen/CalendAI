@@ -7070,3 +7070,51 @@ Open items unchanged from round 109/110:
    keeping the schedule at least until the merge decision lands.
 4. Should a provider booking's synced Google Calendar event description
    include the guest's phone number/notes (currently name only)?
+
+## Round 112: re-verify baseline, no drift since round 111
+
+Fresh clone; `npm install` in both `frontend/` and `backend/`. `npm run
+build` (frontend): clean. `node --test "test/**/*.test.js"` (backend): a
+first run reported 315 tests/17 fail (two fewer tests, one more failure
+than the documented baseline) — re-ran once more to rule out a new
+regression before investigating further, and the re-run came back exactly
+at the documented baseline: 317 tests, 301 pass, 16 fail, same named set by
+test number (5-8, 87-95, 152-154). The first run's 315/17 is consistent
+with the `test/accountRoutes.test.js` IPC/reporter flake already documented
+in `AGENTS.md` (dropping/corrupting a file's results under concurrency),
+not a real regression — not investigated further since the known-flake
+explanation fully accounts for the shape of the discrepancy and the clean
+re-run confirms it. `node --check` on all seven backend scope files under
+direct edit this feature (`MutualBooking.js`, `ProviderBooking.js`,
+`mutualRoutes.js`, `providerRoutes.js`, `googleCalendar.js`,
+`mutualAvailability.js`, `test/mutualBooking.test.js`): all OK. Re-verified
+items 1-5 directly against current code: `setInputText("")` still fires
+immediately in `handleParse` (`frontend/src/App.jsx:1138`); `multer` +
+`POST /api/parse-image` + `parseImageWithVision` still present and wired
+(`backend/server.js:2511`, `backend/services/aiService.js:1032`); the
+frontend upload button still calls `handleParseImage` →
+`${API_BASE}/api/parse-image` (`frontend/src/App.jsx:1051,1067`). All
+items 1-5 genuinely hold, still `[x]`.
+
+Drift check: `git fetch origin master` — unchanged since round 109-111
+(`2089f58`, PR #78 motzei-Shabbat). `list_pull_requests` (state=open): same
+four open PRs (#79, #69, #59, #30), none targeting or overlapping this
+branch's scope files. `list_pull_requests` (head=this branch, state=all):
+still only the two already-closed PRs (#17, #28) — no open PR for
+`wip/mutual-provider-booking`. No response yet to the round 100/103
+merge-decision escalation, round 109's motzei-Shabbat feature-parity
+question, or round 109's note about the growing `MutualScheduler.jsx`
+merge-conflict surface.
+
+Did not re-run the merge-tree conflict check or spawn a fresh adversarial
+review this round — master hasn't moved and nothing in the 10 mutual/
+provider scope files has changed since round 109's checks. No code changes
+this round beyond this file.
+
+**Not sending a push notification this round.** Nothing new since round
+109-111 — same conflict state, same three open questions (merge/PR
+decision; motzei-Shabbat parity; whether to keep the schedule running), no
+master movement, no new PR against this branch. Re-notifying now would be
+the same noise rounds 110-111 already declined to make.
+
+Open items unchanged from round 109-111 (see above, items 1-4).
