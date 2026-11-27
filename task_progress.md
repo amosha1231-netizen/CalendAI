@@ -6909,3 +6909,77 @@ Open items unchanged (see round 104 for full detail):
    the schedule until the merge decision is made.
 3. Should a provider booking's synced Google Calendar event description
    include the guest's phone number/notes (currently name only)?
+
+## Round 109: master moved significantly — new overlapping feature (motzei Shabbat), conflict surface grew; re-notifying
+
+Fresh clone, `npm install` in both `frontend/` and `backend/`. `npm run
+build` (frontend): clean. `node --test "test/**/*.test.js"` (backend): 317
+tests, 301 pass, 16 fail — same documented `mongodb-memory-server`-blocked
+set as every prior round (tests 5-8, 87-95, 152-154), confirmed by name;
+not a regression. `node --check` on all seven backend scope files: all OK
+(frontend JSX scope files verified via the successful Vite build instead,
+same as prior rounds). No bugs found in the 10 mutual/provider scope files
+themselves this round — still nothing new since round 63.
+
+**Master has moved for the first time since round 104**, and materially:
+`git fetch origin master` now shows `2089f58` (PR #78, merged since this
+branch's clone was taken — `git checkout` on this run reported "leaving 17
+commits behind"), vs. `8cc26ef` confirmed unchanged through round 108.
+Diffing `8cc26ef..2089f58` for files this branch touches shows master's
+PR #78 ("Allow scheduling on motzei Shabbat") added motzei-Shabbat-aware
+(Saturday-night) scheduling to the **single-person** scheduling path,
+touching `backend/services/mutualAvailability.js` and
+`frontend/src/components/MutualScheduler.jsx` directly — both files this
+branch also edits for mutual/provider booking.
+
+Re-ran the merge-tree check (trial merge in a scratch worktree, aborted
+and removed after inspection — no working-tree or branch state changed).
+Conflict surface **grew** from the round-104 baseline:
+- `backend/server.js`: still 3 conflicting hunks (unchanged shape).
+- `frontend/src/components/MutualScheduler.jsx`: still 1 conflict region,
+  but now spans ~276 lines (227-503) instead of the smaller hunk seen
+  through round 104-108, because master rewrote the day-list/start-time-
+  window logic in the same functions this branch's mutual-scheduling UI
+  touches.
+- `backend/services/mutualAvailability.js` merged clean (no textual
+  conflict), but that's misleading: this branch's `isSlotMutuallyFree` /
+  `getMutualFreeSlots` still hard-exclude all of Saturday via
+  `shabbatService.isShabbatDay(dayName)` (unchanged from round 1), while
+  master's sibling single-person path now offers Saturday night via
+  `shabbatService.motzashStartMinutes(...)`. A clean textual merge would
+  silently leave mutual/provider booking *without* the motzei-Shabbat
+  feature its sibling booking path just gained — a real feature-parity
+  gap, not just a merge hunk, and not something `git merge` will flag.
+
+This is new information, not a repeat of the round 104-107 standoff:
+master hadn't moved in 45 rounds and now has, directly inside this
+branch's scope files, in a way that makes the eventual merge/rebase both
+textually harder (bigger `MutualScheduler.jsx` hunk) and functionally
+riskier (silent feature-parity gap if resolved naively). Sending a push
+notification this round — this is exactly the kind of change the
+standing escalation (round 100/103) was waiting to hear about, and it
+compounds the longer the merge decision stays open.
+
+No code changes this round beyond this file (did not attempt to resolve
+the conflict or add motzei-Shabbat support to mutual/provider booking
+without product sign-off — that's a UX/scope decision, not a bug fix).
+
+Open items, updated:
+1. Merge/PR decision for `wip/mutual-provider-booking` — still the only
+   blocker, now more urgent: the longer it waits, the bigger/riskier the
+   eventual merge gets (see this round's `MutualScheduler.jsx` conflict
+   growth). Recommend prioritizing this immediately.
+2. New decision needed: should mutual/provider booking also support
+   motzei Shabbat (Saturday night) scheduling, matching the single-person
+   path master just shipped in PR #78? If yes, that's net-new scope for
+   this branch (port `motzashStartMinutes` handling into
+   `mutualAvailability.js` and `MutualScheduler.jsx`'s mutual-booking UI)
+   that should land before or as part of the merge, not after — otherwise
+   mutual/provider booking regresses relative to its sibling feature the
+   moment this branch merges.
+3. Whether to keep running this scheduled sweep at all — reconsidered:
+   given master is now moving again, periodic drift checks are earning
+   their cost again; recommend keeping the schedule at least until the
+   merge decision lands.
+4. Should a provider booking's synced Google Calendar event description
+   include the guest's phone number/notes (currently name only)?
