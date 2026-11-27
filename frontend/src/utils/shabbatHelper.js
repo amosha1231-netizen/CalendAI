@@ -100,3 +100,27 @@ export function getShabbatStatus(location) {
     timezone: loc.timeZone
   };
 }
+
+/**
+ * Minutes since local midnight from which a Saturday is open again (motzei
+ * Shabbat): havdalah at the user's location, rounded up to 5 minutes.
+ * Mirrors backend shabbatService.motzashStartMinutes.
+ * @param {Date} saturday - Any time on that Saturday (local calendar day).
+ */
+export function motzashStartMinutes(saturday = new Date(), location) {
+  try {
+    const loc = location || getUserLocation();
+    const probe = new Date(Date.UTC(saturday.getFullYear(), saturday.getMonth(), saturday.getDate(), 12));
+    const { end } = getShabbatWindow(probe, loc);
+    const { totalMinutes } = getLocalParts(end, loc.timeZone);
+    return Math.min(24 * 60, Math.ceil(totalMinutes / 5) * 5);
+  } catch (e) {
+    return 20 * 60;
+  }
+}
+
+/** "HH:MM" of motzashStartMinutes. */
+export function motzashStartClock(saturday, location) {
+  const m = motzashStartMinutes(saturday, location);
+  return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+}

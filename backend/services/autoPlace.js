@@ -7,6 +7,7 @@
 // or the other events in the same request. An event with no time that sits
 // between two events of the same request is placed between them.
 const { getScheduleEventsForDate, occurrenceDateOf, isZeroDurationEvent } = require('./scheduleOccurrence');
+const shabbatService = require('./shabbatService');
 
 const STEP = 5; // minutes; placed times are rounded to this
 const DEFAULT_DURATION = 30;
@@ -81,7 +82,7 @@ function firstFreeStart(busy, duration, from, until) {
  * to a free window. `todayName` resolves "Today"; `nowMinutes` keeps events
  * for today out of the past.
  */
-function placeUntimedEvents(events, schedule, { todayName, todayIso, nowMinutes = null } = {}) {
+function placeUntimedEvents(events, schedule, { todayName, todayIso, nowMinutes = null, location } = {}) {
   if (!Array.isArray(events) || !todayIso) return events;
   const out = events.map(ev => (ev && typeof ev === 'object' ? { ...ev } : ev));
   const dates = out.map(ev => {
@@ -132,13 +133,22 @@ function placeUntimedEvents(events, schedule, { todayName, todayIso, nowMinutes 
       if (prevEnd !== null && nextStart === null) upper = Math.max(upper, prevEnd + duration);
     }
     if (date === todayIso && nowMinutes !== null) lower = Math.max(lower, nowMinutes);
+    // Saturday: only from motzei Shabbat (havdalah at the user's location).
+    const saturdayFloor = new Date(`${date}T12:00:00Z`).getUTCDay() === 6
+      ? shabbatService.motzashStartMinutes(date, location)
+      : null;
+    if (saturdayFloor !== null) {
+      lower = Math.max(lower, saturdayFloor);
+      upper = Math.max(upper, lower + duration);
+    }
 
     const preferred = Math.min(Math.max(start, lower), upper);
     let chosen = firstFreeStart(busy, duration, preferred, upper);
     if (chosen === null) chosen = firstFreeStart(busy, duration, lower, upper);
     // No room between the neighbours: fall back to the whole day.
     if (chosen === null && !partWindow) {
-      const dayLower = date === todayIso && nowMinutes !== null ? Math.max(DAY_WINDOW.start, nowMinutes) : DAY_WINDOW.start;
+      let dayLower = date === todayIso && nowMinutes !== null ? Math.max(DAY_WINDOW.start, nowMinutes) : DAY_WINDOW.start;
+      if (saturdayFloor !== null) dayLower = Math.max(dayLower, saturdayFloor);
       chosen = firstFreeStart(busy, duration, Math.max(preferred, dayLower), DAY_WINDOW.end);
       if (chosen === null) chosen = firstFreeStart(busy, duration, dayLower, DAY_WINDOW.end);
     }

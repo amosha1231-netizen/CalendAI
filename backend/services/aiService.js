@@ -1,15 +1,25 @@
 const { isAIConfigured, completeJson } = require('./aiClient');
+const shabbatService = require('./shabbatService');
+
+/** When motzei Shabbat starts this week ("HH:MM", havdalah at the user's time zone). */
+function motzashClockFor(options = {}) {
+  try {
+    return shabbatService.motzashStartClock(undefined, options.timeZone ? { timeZone: options.timeZone } : undefined);
+  } catch (err) {
+    return '20:00';
+  }
+}
 
 /**
  * Build the system instruction prompt for the AI.
  * The AI returns JSON with a clean summary (no time/day phrases) and separate dateTime fields.
  */
-function buildSystemInstruction() {
+function buildSystemInstruction(motzashClock = '20:00') {
   return `You are an intelligent calendar assistant for the "CalendAI" app.
 Your job is to parse free-text requests in Hebrew and return a JSON array of events to be scheduled.
 
 CRITICAL RULES:
-1. SHABBAT GUARD: You are STRICTLY FORBIDDEN from scheduling any events on Saturday (Shabbat). If a user explicitly requests an event on Saturday, do NOT return any events. Instead, return a JSON with an error message:
+1. SHABBAT GUARD: You are STRICTLY FORBIDDEN from scheduling any events during Shabbat: Friday from 16:00, and Saturday until motzei Shabbat at ${motzashClock}. Motzei Shabbat (מוצאי שבת / מוצ"ש / מוצאש / Saturday night) from ${motzashClock} onward is ALLOWED: schedule such requests on Saturday at or after ${motzashClock} (default 20:30 if no time was given, or ${motzashClock} if that is later). If a user requests an event during Shabbat itself, do NOT return any events. Instead, return a JSON with an error message:
 { "error": "שבת שלום! המערכת שומרת שבת ולא ניתן לקבוע אירועים ביום זה. נשמח לתאם ליום חול או למוצאי השבת." }
 
 2. MULTIPLE EVENTS: If the user asks for a recurring or multiple events (e.g., "3 אימונים השבוע בבוקר"), you MUST generate an array of multiple distinct events spread across the upcoming week (e.g., Sunday, Tuesday, Thursday). Do not group them into one event.
@@ -61,7 +71,7 @@ Return ONLY valid JSON in this format:
     { "summary": "string (clean title, NO time/day info)", "day": "string (e.g., Sunday)", "startTime": "HH:MM (24-hour format, e.g., 14:30 or 18:00)", "endTime": "HH:MM (24-hour format, e.g., 15:30 or 19:00)" }
   ]
 }
-OR if it's Saturday:
+OR if the event falls during Shabbat (before motzei Shabbat):
 {
   "error": "string"
 }
@@ -164,6 +174,7 @@ const RECURRING_REMINDER_RULES = `
  */
 
 async function parseWithGemini(text, options = {}) {
+  const motzashClock = motzashClockFor(options);
   if (!isAIConfigured()) {
     const { fallbackParseAdvice } = require('./aiFallback');
     return fallbackParseAdvice(text);
@@ -211,7 +222,7 @@ async function parseWithGemini(text, options = {}) {
     }
   }
 
-  const systemInstruction = buildSystemInstruction();
+  const systemInstruction = buildSystemInstruction(motzashClock);
 
   const userPrompt = `
     ═════════════════════════════════════════════════════
@@ -252,7 +263,7 @@ async function parseWithGemini(text, options = {}) {
     ═════════════════════════════════════════════════════
     CRITICAL RULES — SHABBAT GUARD, MULTIPLE EVENTS, SMART NAMING
     ═════════════════════════════════════════════════════
-    1. **SHABBAT GUARD**: You are STRICTLY FORBIDDEN from scheduling any events on Saturday (Shabbat). If a user explicitly requests an event on Saturday, do NOT return any events. Instead, return a JSON with an error message:
+    1. **SHABBAT GUARD**: You are STRICTLY FORBIDDEN from scheduling any events during Shabbat (Friday from 16:00, Saturday until motzei Shabbat at ${motzashClock}). Motzei Shabbat (מוצאי שבת / מוצ"ש / מוצאש / Saturday night) from ${motzashClock} onward is ALLOWED. If a user requests an event during Shabbat itself, do NOT return any events. Instead, return a JSON with an error message:
     { "error": "שבת שלום! המערכת שומרת שבת ולא ניתן לקבוע אירועים ביום זה. נשמח לתאם ליום חול או למוצאי השבת." }
 
     2. **MULTIPLE EVENTS**: If the user asks for a recurring or multiple events (e.g., "3 אימונים השבוע בבוקר"), you MUST generate an array of multiple distinct events spread across the upcoming week (e.g., Sunday, Tuesday, Thursday). Do not group them into one event.
@@ -411,11 +422,11 @@ async function parseWithGemini(text, options = {}) {
 
     **Definition of Shabbat blocking hours**:
     - **Friday (יום שישי)**: From 16:00 (04:00 PM) and onward — Shabbat has started. DO NOT schedule any events starting at or after this time on Friday.
-    - **Saturday (יום שבת / Shabbat / Saturday)**: All day until 20:00 (08:00 PM) — Shabbat. DO NOT schedule any events on Saturday until after 20:00.
+    - **Saturday (יום שבת / Shabbat / Saturday)**: All day until ${motzashClock} (havdalah this week) — Shabbat. DO NOT schedule any events on Saturday that start before ${motzashClock}. From ${motzashClock} onward it is motzei Shabbat and events ARE allowed.
     - **Exception**: Sleep events that span from Friday night into Saturday morning are acceptable ONLY if they are standard sleep hours (11:00 PM to 07:00 AM). For example, sleeping from Friday 11:00 PM to Saturday 07:00 AM is allowed.
 
     **What to do when a user requests a Shabbat event**:
-    - If ANY parsed event falls within Shabbat (Friday after 16:00 or any time Saturday), you MUST NOT return that event.
+    - If ANY parsed event falls within Shabbat (Friday after 16:00, or Saturday before ${motzashClock}), you MUST NOT return that event.
     - Instead, return ONLY:
     { "error": "שבת שלום! המערכת שומרת שבת ולא ניתן לקבוע אירועים ביום זה. נשמח לתאם ליום חול או למוצאי השבת." }
 
@@ -423,7 +434,7 @@ async function parseWithGemini(text, options = {}) {
 
     **Detection tips**:
     - If the user says "שבת", "יום שבת", "Saturday", "שישי בערב" (Friday evening), these are all shabbat-time indicators.
-    - If the user says "במוצאי שבת" / "Saturday night" / "after shabbat" → schedule after 20:00 on Saturday (08:00 PM).
+    - If the user says "במוצאי שבת" / "מוצ"ש" / "מוצאש" / "Saturday night" / "after shabbat" → this is NOT a Shabbat request: schedule it on Saturday ("day": "Saturday") at the requested time, which must be at or after ${motzashClock}. With no time given, use 20:30 (or ${motzashClock} if later). If the requested time is before ${motzashClock}, move it to ${motzashClock}.
     - Use the current date and time context provided above to determine which day of the week the requested date falls on.
 
     ═════════════════════════════════════════════════════
@@ -1125,6 +1136,7 @@ Current date context: ${todayString}, day: ${todayEnglish}`;
  * @returns {Promise<Object>} Parsed result with events, replyMessage, etc.
  */
 async function parseWithGeminiSmart(text, options = {}) {
+  const motzashClock = motzashClockFor(options);
   if (!isAIConfigured()) {
     const { fallbackParseAdvice } = require('./aiFallback');
     return fallbackParseAdvice(text);
@@ -1172,7 +1184,7 @@ async function parseWithGeminiSmart(text, options = {}) {
     }
   }
 
-  const systemInstruction = buildSystemInstruction();
+  const systemInstruction = buildSystemInstruction(motzashClock);
 
   const prompt = `
     ═════════════════════════════════════════════════════
@@ -1226,7 +1238,7 @@ async function parseWithGeminiSmart(text, options = {}) {
     ═════════════════════════════════════════════════════
     CRITICAL RULES — SHABBAT GUARD, MULTIPLE EVENTS, SMART NAMING
     ═════════════════════════════════════════════════════
-    1. **SHABBAT GUARD**: You are STRICTLY FORBIDDEN from scheduling any events on Saturday (Shabbat). If a user explicitly requests an event on Saturday, do NOT return any events. Instead, return a JSON with an error message:
+    1. **SHABBAT GUARD**: You are STRICTLY FORBIDDEN from scheduling any events during Shabbat (Friday from 16:00, Saturday until motzei Shabbat at ${motzashClock}). Motzei Shabbat (מוצאי שבת / מוצ"ש / מוצאש / Saturday night) from ${motzashClock} onward is ALLOWED. If a user requests an event during Shabbat itself, do NOT return any events. Instead, return a JSON with an error message:
     { "error": "שבת שלום! המערכת שומרת שבת ולא ניתן לקבוע אירועים ביום זה. נשמח לתאם ליום חול או למוצאי השבת." }
 
     2. **MULTIPLE EVENTS**: If the user asks for a recurring or multiple events (e.g., "3 אימונים השבוע בבוקר"), you MUST generate an array of multiple distinct events spread across the upcoming week (e.g., Sunday, Tuesday, Thursday). Do not group them into one event.
@@ -1385,11 +1397,11 @@ async function parseWithGeminiSmart(text, options = {}) {
 
     **Definition of Shabbat blocking hours**:
     - **Friday (יום שישי)**: From 16:00 (04:00 PM) and onward — Shabbat has started. DO NOT schedule any events starting at or after this time on Friday.
-    - **Saturday (יום שבת / Shabbat / Saturday)**: All day until 20:00 (08:00 PM) — Shabbat. DO NOT schedule any events on Saturday until after 20:00.
+    - **Saturday (יום שבת / Shabbat / Saturday)**: All day until ${motzashClock} (havdalah this week) — Shabbat. DO NOT schedule any events on Saturday that start before ${motzashClock}. From ${motzashClock} onward it is motzei Shabbat and events ARE allowed.
     - **Exception**: Sleep events that span from Friday night into Saturday morning are acceptable ONLY if they are standard sleep hours (11:00 PM to 07:00 AM). For example, sleeping from Friday 11:00 PM to Saturday 07:00 AM is allowed.
 
     **What to do when a user requests a Shabbat event**:
-    - If ANY parsed event falls within Shabbat (Friday after 16:00 or any time Saturday), you MUST NOT return that event.
+    - If ANY parsed event falls within Shabbat (Friday after 16:00, or Saturday before ${motzashClock}), you MUST NOT return that event.
     - Instead, return ONLY:
     { "error": "שבת שלום! המערכת שומרת שבת ולא ניתן לקבוע אירועים ביום זה. נשמח לתאם ליום חול או למוצאי השבת." }
 
@@ -1397,7 +1409,7 @@ async function parseWithGeminiSmart(text, options = {}) {
 
     **Detection tips**:
     - If the user says "שבת", "יום שבת", "Saturday", "שישי בערב" (Friday evening), these are all shabbat-time indicators.
-    - If the user says "במוצאי שבת" / "Saturday night" / "after shabbat" → schedule after 20:00 on Saturday (08:00 PM).
+    - If the user says "במוצאי שבת" / "מוצ"ש" / "מוצאש" / "Saturday night" / "after shabbat" → this is NOT a Shabbat request: schedule it on Saturday ("day": "Saturday") at the requested time, which must be at or after ${motzashClock}. With no time given, use 20:30 (or ${motzashClock} if later). If the requested time is before ${motzashClock}, move it to ${motzashClock}.
     - Use the current date and time context provided above to determine which day of the week the requested date falls on.
 
     ═════════════════════════════════════════════════════

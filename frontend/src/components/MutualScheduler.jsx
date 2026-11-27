@@ -2,6 +2,7 @@ import React, { useState, useCallback, useEffect, useRef, useMemo } from "react"
 import { Calendar, Clock, Loader2, X, Check, Mail, AlertCircle, Users, Sparkles, Phone, Send, Copy, MessageCircle, ShieldCheck, ArrowRight, UserCheck } from "lucide-react";
 import safeStorage from "../utils/safeStorage";
 import { detectContact } from "../utils/contactDetect";
+import { motzashStartMinutes, motzashStartClock } from "../utils/shabbatHelper";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
 
@@ -10,12 +11,25 @@ const DAY_NAMES_HE = {
   Sunday: 'ראשון', Monday: 'שני', Tuesday: 'שלישי',
   Wednesday: 'רביעי', Thursday: 'חמישי', Friday: 'שישי', Saturday: 'שבת'
 };
-const DAY_SHORT_HE = ['א׳', 'ב׳', 'ג׳', 'ד׳', 'ה׳', 'ו׳', 'ש׳'];
-const DAY_SHORT_EN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const DAY_SHORT_HE = ['א׳', 'ב׳', 'ג׳', 'ד׳', 'ה׳', 'ו׳', 'מוצ״ש'];
+const DAY_SHORT_EN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat night'];
 
 const PICK_DAYS = 14;          // how far ahead the host can offer times
 const DAY_START_MIN = 8 * 60;  // first start time offered
 const DAY_END_MIN = 22 * 60;   // meetings must end by then
+const MOTZASH_END_MIN = 23 * 60; // Saturday night runs a bit later
+
+/**
+ * The window of start times offered on a day. Saturday only opens at motzei
+ * Shabbat (havdalah where the user is), rounded up to the next half hour.
+ */
+function dayWindowFor(date) {
+  if (date && date.getDay() === 6) {
+    const from = Math.ceil(motzashStartMinutes(date) / STEP_MIN) * STEP_MIN;
+    return { start: Math.max(DAY_START_MIN, from), end: MOTZASH_END_MIN };
+  }
+  return { start: DAY_START_MIN, end: DAY_END_MIN };
+}
 const STEP_MIN = 30;
 const MAX_SLOTS = 30;          // matches the server's cap
 const MAX_GROUP = 10;          // friends besides the host (server allows up to 20)
@@ -142,7 +156,7 @@ export default function MutualScheduler({ lang, t, locationId, schedule, onClose
     const base = new Date();
     for (let i = 0; i < PICK_DAYS + 2 && out.length < PICK_DAYS; i++) {
       const d = new Date(base.getFullYear(), base.getMonth(), base.getDate() + i);
-      if (d.getDay() === 6) continue; // no meetings on Shabbat
+      // Saturday is offered for motzei Shabbat only (see dayWindowFor).
       out.push(d);
     }
     return out;
@@ -246,11 +260,13 @@ export default function MutualScheduler({ lang, t, locationId, schedule, onClose
   const nowMin = (() => { const n = new Date(); return n.getHours() * 60 + n.getMinutes(); })();
   const isToday = activeDay && isoOf(activeDay) === isoOf(new Date());
 
+  const activeWindow = dayWindowFor(activeDay);
+  const isMotzash = !!activeDay && activeDay.getDay() === 6;
   const startTimes = useMemo(() => {
     const out = [];
-    for (let s = DAY_START_MIN; s + duration <= DAY_END_MIN; s += STEP_MIN) out.push(s);
+    for (let s = activeWindow.start; s + duration <= activeWindow.end; s += STEP_MIN) out.push(s);
     return out;
-  }, [duration]);
+  }, [duration, activeWindow.start, activeWindow.end]);
 
   const slotState = (start) => {
     if (isToday && start <= nowMin) return { disabled: true, reason: 'past' };
@@ -396,7 +412,8 @@ export default function MutualScheduler({ lang, t, locationId, schedule, onClose
       const [y, m, d] = p.date.split('-').map(Number);
       const date = new Date(y, m - 1, d);
       const end = p.start + duration;
-      if (end > DAY_END_MIN) return false;
+      const win = dayWindowFor(date);
+      if (p.start < win.start || end > win.end) return false;
       return !busyWindowsFor(schedule, date).some(([bs, be]) => p.start < be && end > bs);
     }));
   }, [duration, schedule]);
@@ -784,6 +801,11 @@ export default function MutualScheduler({ lang, t, locationId, schedule, onClose
             })}
           </div>
 
+          {isMotzash && (
+            <p className="text-xs text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2 mt-2 mb-0">
+              {L(`🕯️ מוצאי שבת: אפשר להציע זמנים מצאת השבת (${motzashStartClock(activeDay)}).`, `🕯️ Saturday night: times start after Shabbat ends (${motzashStartClock(activeDay)}).`)}
+            </p>
+          )}
           <div className="flex gap-2 mt-2 overflow-x-auto pb-1">
             {DAY_PARTS.map(([he, en, from, to]) => {
               const available = partStarts(from, to).length > 0;

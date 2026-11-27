@@ -35,7 +35,7 @@ const path = require('path');
 const rateLimit = require('express-rate-limit');
 const crypto = require('crypto'); // For Lemon Squeezy webhook HMAC signature verification
 const multer = require('multer');
-const { getRequestLocation, getRequestTimeZone, isValidTimeZone } = require('./services/userLocation');
+const { getRequestLocation, getRequestTimeZone, isValidTimeZone, buildLocation } = require('./services/userLocation');
 const { getScheduleEventsForDate, isZeroDurationEvent, occurrenceDateOf, nextDateForDay, pinUndatedOneOffs } = require('./services/scheduleOccurrence');
 const { detectContact } = require('./services/contactDetect');
 const { notifyUser } = require('./services/userNotify');
@@ -838,6 +838,46 @@ function checkShabbatBlock(startDate) {
  */
 function isShabbat(day) {
   return shabbatService.isShabbatDay(day);
+}
+
+/** Where the requesting user is, for Shabbat times (time zone → city coordinates). */
+function currentShabbatLocation() {
+  return buildLocation({ timeZone: getCurrentRequestTimeZone() });
+}
+
+/**
+ * Time-aware Shabbat guard for a new event: Saturday is blocked until motzei
+ * Shabbat (havdalah at the user's location), so "מוצ״ש 21:00" is allowed.
+ * A Saturday event with no start time is still blocked.
+ * @param {string} day - Weekday name ("Saturday", "שבת", ...)
+ * @param {string} [startTime] - "HH:MM AM/PM" or "HH:MM"
+ * @param {string} [date] - YYYY-MM-DD when the event has a specific date
+ */
+function isShabbatEvent(day, startTime, date) {
+  const iso = isoDateOnly(date);
+  if (!isShabbat(day) && !(iso && shabbatService.isShabbatDay(dayNameOfIso(iso)))) return false;
+  return shabbatService.isShabbatSlot({
+    date: iso || undefined,
+    dayName: 'Saturday',
+    startMin: timeToMinutes(startTime),
+    location: currentShabbatLocation()
+  });
+}
+
+function isoDateOnly(value) {
+  const iso = value instanceof Date ? '' : String(value || '').slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(iso) ? iso : '';
+}
+
+function dayNameOfIso(iso) {
+  if (!isoDateOnly(iso)) return '';
+  return ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][new Date(`${isoDateOnly(iso)}T12:00:00Z`).getUTCDay()];
+}
+
+/** Hebrew message for a blocked Saturday event, naming when motzei Shabbat starts. */
+function shabbatBlockedMessage(date) {
+  const clock = shabbatService.motzashStartClock(isoDateOnly(date) || undefined, currentShabbatLocation());
+  return `שבת שלום 🕯️ המערכת אינה מאפשרת קביעת פעילויות בשבת. אפשר לקבוע במוצאי שבת, מ-${clock}.`;
 }
 
 // ──────────────────────────────────────────────
@@ -2081,10 +2121,20 @@ function syncTodayWithCurrentDay(schedule) {
 function findFreeSlotsForDay(schedule, dayName, locationId, dayEventsOverride = null, dateISO = null) {
   const dayEvents = dayEventsOverride || schedule[dayName] || [];
   const locData = resolveUserLocation(locationId);
-  const dayStart = locData ? parseTimeToMinutes24(locData.defaultDayStart) : 6 * 60;
-  const dayEnd = locData ? parseTimeToMinutes24(locData.defaultDayEnd) : 23 * 60;
+  let dayStart = locData ? parseTimeToMinutes24(locData.defaultDayStart) : 6 * 60;
+  let dayEnd = locData ? parseTimeToMinutes24(locData.defaultDayEnd) : 23 * 60;
   
   if (dayStart === null || dayEnd === null) return [];
+
+  // Shabbat: Saturday opens at motzei Shabbat (havdalah at the user's
+  // location); Friday closes at the usual 16:00 cutoff.
+  const slotDayName = dateISO ? dayNameOfIso(dateISO) : (dayName === 'Today' ? getTodayDayName() : dayName);
+  if (shabbatService.isShabbatDay(slotDayName)) {
+    dayStart = Math.max(dayStart, shabbatService.motzashStartMinutes(dateISO || undefined, currentShabbatLocation()));
+  } else if (slotDayName === 'Friday') {
+    dayEnd = Math.min(dayEnd, shabbatService.FRIDAY_SHABBAT_CUTOFF_MIN);
+  }
+  if (dayEnd <= dayStart) return [];
   
   // FUTURE-ONLY SLOTS (CRITICAL): For today, never offer free windows in the past —
   // only suggest slots from the current time onward.
@@ -2260,11 +2310,11 @@ app.post('/api/schedule/add-to-free-slot', async (req, res) => {
     
     const actualDay = day === 'Today' ? todayName : day;
     
-    // ── HARD SHABBAT GUARD: Block adding events on Saturday ──
-    if (isShabbat(actualDay)) {
+    // ── HARD SHABBAT GUARD: Saturday only from motzei Shabbat ──
+    if (isShabbatEvent(actualDay, startTime, req.body.targetDate || req.body.date)) {
       return res.status(400).json({
         isBlocked: true,
-        blockedMessage: 'שבת שלום 🕯️ המערכת אינה מאפשרת קביעת פעילויות בשבת. נשמח לתאם למוצאי השבת או ליום חול.'
+        blockedMessage: shabbatBlockedMessage(req.body.targetDate || req.body.date)
       });
     }
     
@@ -2391,7 +2441,7 @@ function buildParsePreview(parsedEvents, schedule, { remindersAsPings, ...prepar
   const previewEvents = [];
   for (const event of parsedEvents) {
     const prepared = prepareParsedEvent(event, { ...prepareOptions, todayIso });
-    if (isShabbat(prepared.day)) continue;
+    if (isShabbatEvent(prepared.day, prepared.startTime, prepared.targetDate)) continue;
     // Reminders become pings, not calendar blocks, so they never clash.
     if (remindersAsPings && prepared.isReminder === true) {
       previewEvents.push({ ...prepared, conflicts: [] });
@@ -2445,8 +2495,8 @@ async function commitParsedEvents(req, userId, schedule, parsedEvents, { text, t
     const eventWithRecurrence = prepareParsedEvent(event, { todayName, todayIso, recurrence, locationId, eventType, duration });
     const { day } = eventWithRecurrence;
 
-    // ── HARD SHABBAT GUARD: Filter out any event scheduled on Saturday ──
-    if (isShabbat(day)) {
+    // ── HARD SHABBAT GUARD: Saturday only from motzei Shabbat ──
+    if (isShabbatEvent(day, eventWithRecurrence.startTime, eventWithRecurrence.targetDate)) {
       console.warn(`[Shabbat Guard] Blocked event "${event.title}" with day "${day}" from being saved.`);
       continue;
     }
@@ -2592,11 +2642,11 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
     if (classification.route === 'fast') {
       // FAST TRACK: User specified a specific time → no need to fetch busy slots,
       // just parse and schedule immediately (speed is the priority).
-      parsedResult = await parseWithGemini(text, { eventType, duration });
+      parsedResult = await parseWithGemini(text, { eventType, duration, timeZone: getCurrentRequestTimeZone() });
     } else {
       // SMART TRACK: User made a general request → inject busy slots into the AI
       // prompt with the 15-minute buffer instruction.
-      parsedResult = await parseWithGeminiSmart(text, { eventType, duration, busySlots });
+      parsedResult = await parseWithGeminiSmart(text, { eventType, duration, busySlots, timeZone: getCurrentRequestTimeZone() });
     }
     
     // Handle Shabbat block response from AI
@@ -2625,7 +2675,7 @@ app.post('/api/parse-schedule', aiLimiter, async (req, res) => {
     // Events said without a time go to a real free window (see services/autoPlace).
     const parsedEvents = placeUntimedEvents(
       applyTaskIntent(Array.isArray(parsedResult.events) ? parsedResult.events : [], text),
-      schedule, { todayName, todayIso: getTodayIso(), nowMinutes: getCurrentMinutes() });
+      schedule, { todayName, todayIso: getTodayIso(), nowMinutes: getCurrentMinutes(), location: currentShabbatLocation() });
     const { replyMessage } = parsedResult;
     const locationId = location || DEFAULT_LOCATION_ID;
 
@@ -2733,8 +2783,8 @@ app.post('/api/parse-image', aiLimiter, upload.single('image'), async (req, res)
         day = todayName;
       }
 
-      // ── HARD SHABBAT GUARD ──
-      if (isShabbat(day)) {
+      // ── HARD SHABBAT GUARD: Saturday only from motzei Shabbat ──
+      if (isShabbatEvent(day, event.startTime, event.targetDate || event.date)) {
         console.warn(`[Vision Shabbat Guard] Blocked event "${event.title}" with day "${day}".`);
         shabbatFilteredEvents.push(event);
         continue;
@@ -2835,10 +2885,10 @@ async function runQuickAdd(userId, userData, text, source = 'quick-add') {
   let parsedResult;
   if (classification.route === 'fast') {
     // FAST TRACK: User specified a specific time → no need to fetch busy slots
-    parsedResult = await parseWithGemini(text, { busySlots: [], schedule: {} });
+    parsedResult = await parseWithGemini(text, { busySlots: [], schedule: {}, timeZone: getCurrentRequestTimeZone() });
   } else {
     // SMART TRACK: User made a general request → inject busy slots with 15-min buffer
-    parsedResult = await parseWithGeminiSmart(text, { busySlots });
+    parsedResult = await parseWithGeminiSmart(text, { busySlots, timeZone: getCurrentRequestTimeZone() });
   }
   
   // Handle Shabbat block response from AI
@@ -2866,7 +2916,7 @@ async function runQuickAdd(userId, userData, text, source = 'quick-add') {
 
   const { replyMessage } = parsedResult;
   const parsedEvents = Array.isArray(parsedResult.events)
-    ? placeUntimedEvents(parsedResult.events, schedule, { todayName, todayIso: getTodayIso(), nowMinutes: getCurrentMinutes() })
+    ? placeUntimedEvents(parsedResult.events, schedule, { todayName, todayIso: getTodayIso(), nowMinutes: getCurrentMinutes(), location: currentShabbatLocation() })
     : parsedResult.events;
 
   if (!parsedEvents || parsedEvents.length === 0) {
@@ -2884,8 +2934,8 @@ async function runQuickAdd(userId, userData, text, source = 'quick-add') {
       day = todayName;
     }
 
-    // ── HARD SHABBAT GUARD: Filter out any event scheduled on Saturday ──
-    if (isShabbat(day)) {
+    // ── HARD SHABBAT GUARD: Saturday only from motzei Shabbat ──
+    if (isShabbatEvent(day, event.startTime, event.targetDate || event.date)) {
       console.warn(`[Shabbat Guard] Quick-add blocked event "${event.title}" with day "${day}".`);
       shabbatFilteredEvents.push(event);
       continue;
@@ -4077,8 +4127,8 @@ app.post('/api/booking/create-link', async (req, res) => {
     // several days. Every dated slot must be a real, non-Shabbat ISO date.
     const isIsoDate = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
     const slotDates = !isLocked ? slots.map(s => (s && s.date != null ? s.date : null)) : [];
-    if (slotDates.some(d => d !== null && (!isIsoDate(d) || new Date(`${d}T00:00:00Z`).getUTCDay() === 6))) {
-      return res.status(400).json({ error: 'Each slot date must be a valid non-Shabbat ISO date (YYYY-MM-DD).' });
+    if (slotDates.some(d => d !== null && !isIsoDate(d))) {
+      return res.status(400).json({ error: 'Each slot date must be a valid ISO date (YYYY-MM-DD).' });
     }
     if (!date && slotDates.some(Boolean)) date = slotDates.filter(Boolean).sort()[0];
     const contact = detectContact(typeof inviteeContact === 'string' ? inviteeContact.slice(0, 200) : '');
@@ -4098,7 +4148,19 @@ app.post('/api/booking/create-link', async (req, res) => {
     const bookingId = `dyn_${crypto.randomBytes(18).toString('hex')}`;
     const validDays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     const bookingDay = date ? ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][new Date(`${date}T00:00:00Z`).getUTCDay()] : day;
-    if (!validDays.includes(bookingDay) || bookingDay === 'Saturday') return res.status(400).json({ error: 'A valid non-Shabbat day is required.' });
+    if (!validDays.includes(bookingDay)) return res.status(400).json({ error: 'A valid day is required.' });
+    // Shabbat: a Saturday time must start at motzei Shabbat or later.
+    const shabbatLocation = currentShabbatLocation();
+    const offeredStarts = isLocked
+      ? [{ day: bookingDay, date: date || null, startMin: timeToMinutes(startTime) }]
+      : slots.map(s => {
+          const slotDate = s.date || date || null;
+          return { day: slotDate ? dayNameOfIso(slotDate) : bookingDay, date: slotDate, startMin: Number(s.hour) * 60 + Number(s.minute) };
+        });
+    if (offeredStarts.some(o => shabbatService.isShabbatDay(o.day) && shabbatService.isShabbatSlot({ date: o.date || undefined, dayName: o.day, startMin: o.startMin, location: shabbatLocation }))) {
+      const satDate = (offeredStarts.find(o => shabbatService.isShabbatDay(o.day)) || {}).date;
+      return res.status(400).json({ error: `On Saturday only times from motzei Shabbat (${shabbatService.motzashStartClock(satDate || undefined, shabbatLocation)}) can be offered.`, code: 'shabbat' });
+    }
     if (isLocked && (timeToMinutes(startTime) === null || timeToMinutes(endTime) === null || timeToMinutes(endTime) <= timeToMinutes(startTime))) {
       return res.status(400).json({ error: 'Invalid locked booking time range.' });
     }

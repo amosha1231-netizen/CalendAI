@@ -1,3 +1,4 @@
+const shabbatService = require('../services/shabbatService');
 // ──────────────────────────────────────────────
 // Characterization tests for mutual-availability's pure interval/date math:
 //   intersectFree(), mergeIntervals(), getLocalScheduleBusy(),
@@ -484,7 +485,7 @@ test('getMutualFreeSlots: clips today\'s window to the current time but leaves l
   }
 });
 
-test('getMutualFreeSlots: skips Saturday entirely and caps Friday at the Shabbat-start cutoff', async () => {
+test('getMutualFreeSlots: Saturday only from motzei Shabbat, and Friday capped at the Shabbat-start cutoff', async () => {
   // 2026-01-01T08:00:00Z is 10:00 AM in Asia/Jerusalem, a Thursday, so with
   // rangeDays=3 the window covers Thu 1/1, Fri 1/2 and Sat 1/3 — exactly the
   // Friday-cutoff/Saturday-skip combination isSlotMutuallyFree enforces
@@ -500,7 +501,15 @@ test('getMutualFreeSlots: skips Saturday entirely and caps Friday at the Shabbat
 
     const results = await getMutualFreeSlots(host, invitee, { locationId: 'jerusalem', duration: 30, rangeDays: 3 });
 
-    assert.ok(!results.some(r => r.date === '2026-01-03'), 'Saturday (Shabbat) must never appear in the results');
+    const saturday = results.find(r => r.date === '2026-01-03');
+    assert.ok(saturday && saturday.freeSlots.length, 'Saturday night (motzei Shabbat) should be offered');
+    const motzash = shabbatService.motzashStartMinutes('2026-01-03', { timeZone: 'Asia/Jerusalem' });
+    for (const slot of saturday.freeSlots) {
+      const [sh, sm] = slot.startTime.replace(/\s*(AM|PM)/i, '').split(':').map(Number);
+      const pm = /PM/i.test(slot.startTime);
+      const startMin = ((pm && sh !== 12 ? sh + 12 : (!pm && sh === 12 ? 0 : sh)) * 60) + sm;
+      assert.ok(startMin >= motzash, `Saturday slot ${slot.startTime} starts before motzei Shabbat`);
+    }
 
     const friday = results.find(r => r.date === '2026-01-02');
     assert.ok(friday && friday.freeSlots.length, 'Friday should still offer slots before the Shabbat-start cutoff');

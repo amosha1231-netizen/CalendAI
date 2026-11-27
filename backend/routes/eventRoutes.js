@@ -17,39 +17,45 @@ const User = require('../models/User');
 const Event = require('../models/Event');
 const { nextDateForDay, toIsoDay } = require('../services/scheduleOccurrence');
 
-// ── Helper: Check Shabbat Block ──
-function isShabbatTime(date) {
-  const day = date.getDay();
-  const hours = date.getHours();
-  const minutes = date.getMinutes();
-  const totalMinutes = hours * 60 + minutes;
-  if (day === 5 && totalMinutes >= 960) return true;
-  if (day === 6 && totalMinutes < 1200) return true;
-  return false;
-}
+// ── Helper: Shabbat guard ──
+// Saturday is closed until motzei Shabbat (havdalah at the user's location);
+// Friday closes at 16:00. See services/shabbatService.js.
+const shabbatService = require('../services/shabbatService');
+const { getRequestLocation } = require('../services/userLocation');
 
-function checkShabbatBlock(startDate) {
-  const date = startDate instanceof Date ? startDate : new Date(startDate);
-  if (isNaN(date.getTime())) return { isBlocked: false, message: '' };
-  if (isShabbatTime(date)) {
-    return {
-      isBlocked: true,
-      message: 'לא ניתן לקבוע פגישות במהלך השבת. נשמח לתאם מועד לפני כניסת השבת או במוצאי השבת.'
-    };
+/** "HH:MM AM/PM" or "HH:MM" → minutes since midnight, or null. */
+function clockToMinutes(value) {
+  const m = String(value || '').match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+  if (!m) return null;
+  let h = parseInt(m[1], 10);
+  const min = parseInt(m[2], 10);
+  if (m[3]) {
+    const pm = m[3].toUpperCase() === 'PM';
+    if (pm && h !== 12) h += 12;
+    if (!pm && h === 12) h = 0;
   }
-  return { isBlocked: false, message: '' };
+  return h * 60 + min;
 }
 
 /**
- * Day-based Shabbat guard: checks if the event day name is Saturday (שבת).
- * This is a hard guard that works regardless of time-based checks.
- * @param {string} day - The day name (e.g., "Saturday", "שבת")
- * @returns {boolean} - True if the day is Shabbat/Saturday.
+ * Would an event on `day` at `startTime` (optionally on `targetDate`) fall in
+ * Shabbat? Motzei Shabbat is allowed; a Saturday event with no time is not.
  */
-function isShabbat(day) {
-  if (!day) return false;
-  const d = day.toLowerCase();
-  return d.includes('שבת') || d.includes('saturday');
+function isShabbatEvent(req, day, startTime, targetDate) {
+  const iso = targetDate ? String(targetDate instanceof Date ? targetDate.toISOString() : targetDate).slice(0, 10) : undefined;
+  const location = getRequestLocation(req);
+  const startMin = clockToMinutes(startTime);
+  const isoIsSaturday = /^\d{4}-\d{2}-\d{2}$/.test(iso || '') && new Date(`${iso}T12:00:00Z`).getUTCDay() === 6;
+  if (shabbatService.isShabbatDay(day) || isoIsSaturday) {
+    return shabbatService.isShabbatSlot({ date: isoIsSaturday ? iso : undefined, dayName: 'Saturday', startMin, location });
+  }
+  return day === 'Friday' && startMin !== null && startMin >= shabbatService.FRIDAY_SHABBAT_CUTOFF_MIN;
+}
+
+function shabbatBlockedMessage(req, targetDate) {
+  const iso = targetDate ? String(targetDate).slice(0, 10) : undefined;
+  const clock = shabbatService.motzashStartClock(/^\d{4}-\d{2}-\d{2}$/.test(iso || '') ? iso : undefined, getRequestLocation(req));
+  return `שבת שלום 🕯️ המערכת אינה מאפשרת קביעת פעילויות בשבת. אפשר לקבוע במוצאי שבת, מ-${clock}.`;
 }
 
 function getTodayDayName() {
@@ -132,36 +138,9 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'title and day are required.' });
     }
 
-    // ── HARD SHABBAT GUARD: Block event creation on Saturday ──
-    if (isShabbat(day)) {
-      return res.status(400).json({
-        isBlocked: true,
-        blockedMessage: 'שבת שלום 🕯️ המערכת אינה מאפשרת קביעת פעילויות בשבת. נשמח לתאם למוצאי השבת או ליום חול.'
-      });
-    }
-
-    // Check Shabbat block if startTime is provided
-    if (startTime) {
-      const dayIndex = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].indexOf(day);
-      if (dayIndex >= 0) {
-        const now = new Date();
-        const eventDate = new Date(now);
-        eventDate.setDate(now.getDate() + ((dayIndex + 7 - now.getDay()) % 7));
-
-        const timeMatch = startTime.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
-        if (timeMatch) {
-          let hours = parseInt(timeMatch[1], 10);
-          const minutes = parseInt(timeMatch[2], 10);
-          if (timeMatch[3].toUpperCase() === 'PM' && hours !== 12) hours += 12;
-          if (timeMatch[3].toUpperCase() === 'AM' && hours === 12) hours = 0;
-          eventDate.setHours(hours, minutes, 0, 0);
-
-          const shabbatCheck = checkShabbatBlock(eventDate);
-          if (shabbatCheck.isBlocked) {
-            return res.status(400).json({ isBlocked: true, blockedMessage: shabbatCheck.message });
-          }
-        }
-      }
+    // ── HARD SHABBAT GUARD: Saturday only from motzei Shabbat, Friday until 16:00 ──
+    if (isShabbatEvent(req, day, startTime, targetDate)) {
+      return res.status(400).json({ isBlocked: true, blockedMessage: shabbatBlockedMessage(req, targetDate) });
     }
 
     // ALWAYS bind the event to the authenticated user - never trust client-provided userId
@@ -239,12 +218,14 @@ router.put('/:eventId', async (req, res) => {
     delete updates.userId; // Never allow changing ownership
     delete updates._id;
 
-    // ── HARD SHABBAT GUARD: Block updating event to Saturday ──
-    if (updates.day && isShabbat(updates.day)) {
-      return res.status(400).json({
-        isBlocked: true,
-        blockedMessage: 'שבת שלום 🕯️ המערכת אינה מאפשרת קביעת פעילויות בשבת. נשמח לתאם למוצאי השבת או ליום חול.'
-      });
+    // ── HARD SHABBAT GUARD: Saturday only from motzei Shabbat ──
+    if (updates.day && shabbatService.isShabbatDay(updates.day)) {
+      const current = updates.startTime ? null : await Event.findOne({ _id: eventId, userId: new mongoose.Types.ObjectId(userId) }).select('startTime targetDate').lean();
+      const startTime = updates.startTime || current?.startTime;
+      const targetDate = updates.targetDate || current?.targetDate;
+      if (isShabbatEvent(req, updates.day, startTime, targetDate)) {
+        return res.status(400).json({ isBlocked: true, blockedMessage: shabbatBlockedMessage(req, targetDate) });
+      }
     }
 
     // Find the event - MUST match both _id AND userId (ownership check)

@@ -383,7 +383,7 @@ export default function MeetingWizard({ schedule, lang, t, hostName = 'Host', lo
                             : 'bg-white border-slate-200 text-slate-600 hover:border-blue-300'
                       }`}
                     >
-                      <span className="font-semibold">{lang === 'he' ? DAY_NAMES_HE[dayKey] : dayKey.slice(0, 3)}</span>
+                      <span className="font-semibold">{dayKey === 'Saturday' ? (lang === 'he' ? 'מוצ״ש' : 'Sat night') : (lang === 'he' ? DAY_NAMES_HE[dayKey] : dayKey.slice(0, 3))}</span>
                       <span className="text-[10px] opacity-75">{dayNum}/{month}</span>
                     </button>
                   );

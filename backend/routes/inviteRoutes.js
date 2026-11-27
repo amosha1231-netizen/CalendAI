@@ -66,8 +66,8 @@ function formatTime12(totalMinutes) {
 
 /**
  * Validate the date/time window shared by both routes. Applies the same
- * Shabbat rules as the rest of the app: nothing on Saturday, and on Friday
- * nothing running past the 16:00 cutoff.
+ * Shabbat rules as the rest of the app: on Saturday only from motzei Shabbat
+ * (havdalah), and on Friday nothing running past the 16:00 cutoff.
  */
 function parseWindow(body, timeZone) {
   const { date, startTime, endTime } = body || {};
@@ -79,7 +79,10 @@ function parseWindow(body, timeZone) {
   if (date < todayIsoInTimeZone(timeZone)) throw badRequest('date_in_past', 'The date is in the past.');
 
   const dayName = DAY_NAMES[new Date(`${date}T12:00:00Z`).getUTCDay()];
-  if (shabbatService.isShabbatDay(dayName) || (dayName === 'Friday' && endMin > FRIDAY_SHABBAT_CUTOFF_MIN)) {
+  const onShabbat = shabbatService.isShabbatDay(dayName)
+    ? startMin < shabbatService.motzashStartMinutes(date, { timeZone })
+    : (dayName === 'Friday' && endMin > FRIDAY_SHABBAT_CUTOFF_MIN);
+  if (onShabbat) {
     throw badRequest('shabbat', 'Meetings cannot be scheduled on Shabbat.');
   }
   return { date, startMin, endMin, dayName };
