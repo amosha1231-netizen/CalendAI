@@ -2915,12 +2915,25 @@ async function runQuickAdd(userId, userData, text, source = 'quick-add') {
   }
 
   const { replyMessage } = parsedResult;
+  // "תזכיר לי" / "משימה" must ping here too, as in /api/parse-schedule.
   const parsedEvents = Array.isArray(parsedResult.events)
-    ? placeUntimedEvents(parsedResult.events, schedule, { todayName, todayIso: getTodayIso(), nowMinutes: getCurrentMinutes(), location: currentShabbatLocation() })
+    ? placeUntimedEvents(applyTaskIntent(parsedResult.events, text), schedule, { todayName, todayIso: getTodayIso(), nowMinutes: getCurrentMinutes(), location: currentShabbatLocation() })
     : parsedResult.events;
 
   if (!parsedEvents || parsedEvents.length === 0) {
     return reply(400, { success: false, error: 'Could not parse any events from the provided text.' });
+  }
+
+  // ── REMINDERS: a reminder becomes a Reminder ping, not a calendar block
+  // (same as commitParsedEvents). Guests keep the calendar event.
+  const isUser = Boolean(userId) && mongoose.Types.ObjectId.isValid(userId);
+  const timeZone = getCurrentRequestTimeZone();
+  let eventsToSchedule = parsedEvents;
+  let reminderSpecs = [];
+  if (isUser) {
+    const split = reminderSpecsFromEvents(parsedEvents, { timeZone, todayName, text });
+    reminderSpecs = split.reminders;
+    if (reminderSpecs.length) eventsToSchedule = split.remainingEvents;
   }
 
   // (schedule already loaded above)
@@ -2928,7 +2941,7 @@ async function runQuickAdd(userId, userData, text, source = 'quick-add') {
   const addedEvents = [];
   const shabbatFilteredEvents = [];
 
-  for (const event of parsedEvents) {
+  for (const event of eventsToSchedule) {
     let day = event.day || todayName;
     if (day === 'Today') {
       day = todayName;
@@ -2970,7 +2983,7 @@ async function runQuickAdd(userId, userData, text, source = 'quick-add') {
   }
 
   // If ALL events were filtered out for Shabbat, return an error
-  if (addedEvents.length === 0 && shabbatFilteredEvents.length > 0) {
+  if (addedEvents.length === 0 && reminderSpecs.length === 0 && shabbatFilteredEvents.length > 0) {
     return reply(400, {
       success: false,
       isBlocked: true,
@@ -2980,6 +2993,21 @@ async function runQuickAdd(userId, userData, text, source = 'quick-add') {
   }
 
   const { remainingCredits } = await deductAICredit(userId, parsedResult.usage, parsedResult.modelName || 'claude-haiku-5-5', source, text);
+
+  // Charged first, so a refused charge never leaves pings behind.
+  let createdReminders = [];
+  if (isUser) {
+    if (reminderSpecs.length) {
+      createdReminders = await createReminders(userId, reminderSpecs, { timeZone, source: 'ai', sourceText: text });
+    }
+    // ── TASKS: stay in the calendar (done mark) and also ping at their start time.
+    const { reminders: taskPingSpecs } = reminderSpecsFromEvents(taskPingEvents(addedEvents), { timeZone, todayName, text });
+    if (taskPingSpecs.length) {
+      const taskPings = await createReminders(userId, taskPingSpecs, { timeZone, source: 'ai', sourceText: text, kind: 'task' });
+      createdReminders = createdReminders.concat(taskPings);
+    }
+    if (createdReminders.length) console.log(`[${source}] Created ${createdReminders.length} ping(s) for user ${userId}`);
+  }
   syncTodayWithCurrentDay(schedule);
   // Save to MongoDB for logged-in users
   if (userId && mongoose.Types.ObjectId.isValid(userId)) {
@@ -2994,7 +3022,9 @@ async function runQuickAdd(userId, userData, text, source = 'quick-add') {
   const displayName = userData?.displayName || userData?.email || '';
 
   let message;
-  if (eventCount === 1) {
+  if (eventCount === 0 && createdReminders.length) {
+    message = replyMessage || `נוספו ${createdReminders.length} תזכורות.`;
+  } else if (eventCount === 1) {
     message = replyMessage || `האירוע "${firstEvent.title}" נקבע בהצלחה ליום ${firstEvent.day} בשעה ${firstEvent.startTime}.`;
   } else {
     message = replyMessage || `${eventCount} אירועים נוספו בהצלחה.`;
@@ -3021,6 +3051,7 @@ async function runQuickAdd(userId, userData, text, source = 'quick-add') {
     success: true,
     message,
     events: addedEvents,
+    reminders: createdReminders.length ? createdReminders : undefined,
     count: eventCount,
     aiCredits: remainingCredits,
     googleCalendar: {
