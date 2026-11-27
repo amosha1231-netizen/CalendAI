@@ -245,7 +245,7 @@ const translations = {
     sidebarAnalytics: '📊 ניתוח פעילות',
     sidebarPro: '⚡ שדרוג ל-Pro',
     sidebarSettings: '⚙️ הגדרות',
-    sidebarInstall: '📱 הוסף למסך הבית',
+    sidebarInstall: '📱 הורדת האפליקציה',
     analyticsTitle: 'ניתוח פעילות',
     analyticsSport: 'ספורט',
     analyticsWork: 'עבודה',
