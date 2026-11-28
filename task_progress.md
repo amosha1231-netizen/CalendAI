@@ -7153,3 +7153,42 @@ movement, no new PR against this branch. Re-notifying now would be the
 same noise rounds 110-112 already declined to make.
 
 Open items unchanged from round 109-112 (see above, items 1-4).
+
+## Round 114: re-verify baseline, no drift since round 113
+
+Fresh clone; `npm install` in both `frontend/` and `backend/`. `npm run
+build` (frontend): clean. `node --test "test/**/*.test.js"` (backend): 317
+tests, 301 pass, 16 fail; confirmed by name against the documented
+baseline — `test/accountRoutes.test.js` whole-file IPC/reporter flake
+(AGENTS.md-documented, intermittent) plus the `mongodb-memory-server`
+sandbox-network-blocked concurrency/cancel tests (mutual session claim,
+`cancelMutualSession`, provider booking claim/cancel) and the owner-refill
+tests; not a regression. `node --check` on all seven backend scope files
+under direct edit this feature (`MutualBooking.js`, `ProviderBooking.js`,
+`mutualRoutes.js`, `providerRoutes.js`, `googleCalendar.js`,
+`mutualAvailability.js`, `test/mutualBooking.test.js`): all OK (frontend
+JSX scope files verified via the successful Vite build). Items 1-5
+unchanged, still `[x]`.
+
+Drift check: `git fetch origin master` — unchanged since round 109-113
+(`2089f58`, PR #78 motzei-Shabbat). `list_pull_requests` (state=open): same
+four open PRs (#79, #69, #59, #30), none targeting or overlapping this
+branch's scope files. No open PR for `wip/mutual-provider-booking`. No
+response yet to the round 100/103 merge-decision escalation, round 109's
+motzei-Shabbat feature-parity question, or round 109's note about the
+growing `MutualScheduler.jsx` merge-conflict surface.
+
+Did not re-run the merge-tree conflict check or spawn a fresh adversarial
+review this round — master hasn't moved and nothing in the 10 mutual/
+provider scope files has changed since round 109's checks. No code changes
+this round beyond this file.
+
+**Not sending a push notification this round.** Nothing new since round
+109-113 — same conflict state, same open questions, no master movement,
+no new PR against this branch. Re-notifying now would be the same noise
+rounds 110-113 already declined to make.
+
+Open items unchanged from round 109-113 (merge/PR decision for this
+branch; motzei-Shabbat parity for mutual/provider booking; whether to keep
+this schedule running given the sustained no-op streak; guest phone/notes
+in synced Google Calendar event descriptions).
