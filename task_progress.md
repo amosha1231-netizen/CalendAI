@@ -7118,3 +7118,38 @@ master movement, no new PR against this branch. Re-notifying now would be
 the same noise rounds 110-111 already declined to make.
 
 Open items unchanged from round 109-111 (see above, items 1-4).
+
+## Round 113: re-verify baseline, no drift since round 112
+
+Fresh clone; `npm install` in both `frontend/` and `backend/`. `npm run
+build` (frontend): clean. `node --test "test/**/*.test.js"` (backend): 317
+tests, 301 pass, 16 fail — matched by test number against the documented
+baseline (5-8, 87-95, 152-154); same `mongodb-memory-server`
+sandbox-network set, not a regression. `node --check` on all seven backend
+scope files under direct edit this feature (`MutualBooking.js`,
+`ProviderBooking.js`, `mutualRoutes.js`, `providerRoutes.js`,
+`googleCalendar.js`, `mutualAvailability.js`, `test/mutualBooking.test.js`):
+all OK (frontend JSX scope files verified via the successful Vite build).
+
+Drift check: `git fetch origin master` — unchanged since round 109-112
+(`2089f58`, PR #78 motzei-Shabbat). `list_pull_requests` (state=open): same
+four open PRs (#79, #69, #59, #30), none targeting or overlapping this
+branch's scope files. `list_pull_requests` (head=this branch, state=all):
+still only the two already-closed PRs (#17, #28) — no open PR for
+`wip/mutual-provider-booking`. No response yet to the round 100/103
+merge-decision escalation, round 109's motzei-Shabbat feature-parity
+question, or round 109's note about the growing `MutualScheduler.jsx`
+merge-conflict surface.
+
+Did not re-run the merge-tree conflict check or spawn a fresh adversarial
+review this round — master hasn't moved and nothing in the 10 mutual/
+provider scope files has changed since round 109's checks. No code changes
+this round beyond this file.
+
+**Not sending a push notification this round.** Nothing new since round
+109-112 — same conflict state, same open questions (merge/PR decision;
+motzei-Shabbat parity; whether to keep the schedule running), no master
+movement, no new PR against this branch. Re-notifying now would be the
+same noise rounds 110-112 already declined to make.
+
+Open items unchanged from round 109-112 (see above, items 1-4).
