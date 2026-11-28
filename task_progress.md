@@ -7192,3 +7192,64 @@ Open items unchanged from round 109-113 (merge/PR decision for this
 branch; motzei-Shabbat parity for mutual/provider booking; whether to keep
 this schedule running given the sustained no-op streak; guest phone/notes
 in synced Google Calendar event descriptions).
+
+## Round 115: re-verify baseline + fresh adversarial review, no drift since round 114
+
+Fresh clone; `npm install` in both `frontend/` and `backend/`. `npm run
+build` (frontend): clean. `node --test "test/**/*.test.js"` (backend): 317
+tests, 301 pass, 16 fail, confirmed by name identical to the documented
+baseline (5-8, 87-95, 152-154 — `mongodb-memory-server` sandbox-network-
+blocked; not a regression). `node --check` on all seven backend scope
+files: all OK.
+
+Unlike rounds 110-114 (which skipped re-review since nothing had changed),
+this round did a genuine fresh adversarial read of all 11 mutual/provider
+scope files, deliberately not trusting the "no new bugs" conclusion of
+prior rounds at face value: read `mutualAvailability.js` and
+`mutualRoutes.js` directly; dispatched an independent subagent to do the
+same for the other 9 (`MutualBooking.js`, `ProviderBooking.js`,
+`providerRoutes.js`, `googleCalendar.js`, `mutualBooking.test.js`,
+`MutualScheduler.jsx`, `ProviderBookingView.jsx`, `ProviderDirectory.jsx`,
+`ProviderProfileEditor.jsx`), specifically checking for races, double-
+booking, timezone/date bugs, unguarded type coercion into Mongoose casts,
+direct `localStorage` use, and reverted/bypassed prior fixes. **No new
+bugs found** — every race/timezone/rollback/injection risk already has an
+explicit, commented guard (atomic `findOneAndUpdate` claims, the
+`withProviderDateLock` + `winsOverlapRace` 3-way-race resolution, fail-
+closed Google freebusy/calendar-sync error handling, no direct storage
+access in any frontend file). Consistent with round 63 onward.
+
+Drift check: `git fetch origin master` — still `2089f58` (PR #78),
+unchanged since round 109. `list_pull_requests` (state=open): same four
+PRs (#79, #69, #59, #30); confirmed none touch this branch's
+mutual/provider-specific files directly (#79 and #30 touch shared
+`server.js`, #30 also touches `App.jsx` — same shared-file conflict risk
+already known, nothing new). `list_pull_requests` (head=this branch,
+state=all): still only the two closed PRs (#17, #28) — no open PR for
+`wip/mutual-provider-booking`. No response yet to the round 100/103
+merge-decision escalation, round 109's motzei-Shabbat feature-parity
+question, or the growing `MutualScheduler.jsx` merge-conflict surface.
+
+Did not re-run the merge-tree trial-merge check this round (master hasn't
+moved since round 109, so the conflict shape already measured there still
+holds). No code changes this round beyond this file.
+
+**Not sending a push notification this round.** Nothing material changed
+since round 109's escalation (last one sent) — same conflict state, same
+three open product/process questions, no master movement, no new PR
+against this branch, and this round's deeper fresh review (rather than
+the lighter skip-if-unchanged check of rounds 110-114) still turned up
+nothing new to report. Re-notifying now would be the same noise rounds
+110-114 already declined to make.
+
+Open items unchanged from round 109-114:
+1. Merge/PR decision for `wip/mutual-provider-booking` — still the sole
+   blocker (open since round 63/100/103).
+2. Should mutual/provider booking gain motzei-Shabbat (Saturday night)
+   support to match master's PR #78 on the single-person path? Net-new
+   scope, not a bug fix — needs product sign-off either way.
+3. Whether to keep this scheduled sweep running at all, now at 115 rounds
+   with the same three questions unanswered since round 100 (first) /
+   109 (most recent escalation).
+4. Should a provider booking's synced Google Calendar event description
+   include the guest's phone number/notes (currently name only)?
